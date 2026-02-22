@@ -244,6 +244,16 @@ final class TelegramBot: @unchecked Sendable {
 
     // MARK: - Send Message
 
+    /// Send a notification to the configured Telegram chat (called from GUI notification system)
+    func sendNotification(_ text: String) {
+        let token = getToken()
+        let chatId = getAllowed()
+        guard !token.isEmpty, chatId != 0, isRunning else { return }
+        Task {
+            await sendMessage(token: token, chatId: chatId, text: text)
+        }
+    }
+
     private func sendMessage(token: String, chatId: Int64, text: String) async {
         guard let url = URL(string: "https://api.telegram.org/bot\(token)/sendMessage") else { return }
 

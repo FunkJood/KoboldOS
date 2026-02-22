@@ -1,9 +1,8 @@
+#if os(macOS)
 import Foundation
 import Contacts
 
-// MARK: - ContactsTool
-// Search and read contacts via Apple Contacts framework.
-
+// MARK: - ContactsTool (macOS implementation)
 public struct ContactsTool: Tool, @unchecked Sendable {
     public let name = "contacts"
     public let description = "Kontakte durchsuchen (search) oder auflisten (list_recent)"
@@ -120,3 +119,29 @@ public struct ContactsTool: Tool, @unchecked Sendable {
         return out + "\n"
     }
 }
+
+#elseif os(Linux)
+import Foundation
+
+// MARK: - ContactsTool (Linux implementation - placeholder)
+public struct ContactsTool: Tool, Sendable {
+    public let name = "contacts"
+    public let description = "Kontakte durchsuchen (deaktiviert auf Linux)"
+    public let riskLevel: RiskLevel = .low
+
+    public var schema: ToolSchema {
+        ToolSchema(
+            properties: [
+                "action": ToolSchemaProperty(type: "string", description: "search | list_recent", required: true)
+            ],
+            required: ["action"]
+        )
+    }
+
+    public init() {}
+
+    public func execute(arguments: [String: String]) async throws -> String {
+        return "Kontakte-Funktionen sind auf Linux deaktiviert. Verwenden Sie eine externe Kontaktverwaltung."
+    }
+}
+#endif

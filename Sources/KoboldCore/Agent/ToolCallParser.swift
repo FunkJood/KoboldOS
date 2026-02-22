@@ -38,34 +38,61 @@ public struct ToolCallParser: Sendable {
     // MARK: - Parse LLM Response (AgentZero-style)
 
     public func parse(response: String) -> [ParsedToolCall] {
-        // Strategy: extract JSON from response, then parse tool_name/tool_args
+        // Strip <think>...</think> tags (Qwen3 thinking mode) before parsing
+        let cleaned = stripThinkTags(response)
 
         // Step 1: Try to extract a JSON object from the response
-        if let json = extractAndParseJSON(from: response) {
+        if let json = extractAndParseJSON(from: cleaned) {
             if let call = parseAgentJSON(json) {
                 return [call]
             }
         }
 
         // Step 2: Try XML-style <tool_call> (backwards compat)
-        let xmlCalls = parseXMLStyle(response)
+        let xmlCalls = parseXMLStyle(cleaned)
         if !xmlCalls.isEmpty { return xmlCalls }
 
         // Step 3: Try code blocks
-        let codeCalls = parseJSONCodeBlocks(response)
+        let codeCalls = parseJSONCodeBlocks(cleaned)
         if !codeCalls.isEmpty { return codeCalls }
 
-        // Step 4: If response looks like plain text with no JSON at all,
-        // treat it as an implicit "response" tool call (the LLM just answered directly)
-        if !response.contains("{") {
-            return [ParsedToolCall(
-                name: "response",
-                arguments: ["text": response.trimmingCharacters(in: .whitespacesAndNewlines)],
-                thoughts: []
-            )]
+        // Step 4: If no tool call was extracted, treat as implicit "response"
+        // Extract readable text — strip any JSON artifacts for user display
+        let text = extractReadableText(from: cleaned)
+        return [ParsedToolCall(
+            name: "response",
+            arguments: ["text": text],
+            thoughts: []
+        )]
+    }
+
+    /// Strip <think>...</think> blocks that Qwen3 and similar models emit
+    private func stripThinkTags(_ text: String) -> String {
+        text.replacingOccurrences(
+            of: "<think>[\\s\\S]*?</think>\\s*",
+            with: "",
+            options: .regularExpression
+        ).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Extract readable text from a possibly JSON-contaminated response
+    private func extractReadableText(from text: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // If it looks like a JSON object, try to extract "text" or "content" field
+        if trimmed.hasPrefix("{"), let json = extractAndParseJSON(from: trimmed) {
+            // Try to find a user-facing text field
+            if let t = json["text"] as? String { return t }
+            if let t = json["content"] as? String { return t }
+            if let args = json["tool_args"] as? [String: Any], let t = args["text"] as? String { return t }
+            // Last resort: return thoughts if available
+            if let thoughts = json["thoughts"] as? [String], !thoughts.isEmpty {
+                return thoughts.joined(separator: " ")
+            }
         }
 
-        return []
+        // Not JSON — return as-is
+        return trimmed
     }
 
     // MARK: - Format Tool Result (fed back to LLM)

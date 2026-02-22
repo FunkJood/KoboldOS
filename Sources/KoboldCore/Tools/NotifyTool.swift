@@ -1,8 +1,8 @@
+#if os(macOS)
 import Foundation
 @preconcurrency import UserNotifications
 
-// MARK: - NotifyTool — Send macOS push notifications from the agent
-
+// MARK: - NotifyTool (macOS implementation)
 public struct NotifyTool: Tool, Sendable {
     public let name = "notify_user"
     public let description = "Sende eine macOS Push-Benachrichtigung an den Nutzer"
@@ -62,3 +62,38 @@ public struct NotifyTool: Tool, Sendable {
         return "Benachrichtigung gesendet: \(title) — \(body)"
     }
 }
+
+#elseif os(Linux)
+import Foundation
+
+// MARK: - NotifyTool (Linux implementation - placeholder)
+public struct NotifyTool: Tool, Sendable {
+    public let name = "notify_user"
+    public let description = "Sende eine Benachrichtigung an den Nutzer (deaktiviert auf Linux)"
+    public let riskLevel: RiskLevel = .low
+
+    public var schema: ToolSchema {
+        ToolSchema(
+            properties: [
+                "title": ToolSchemaProperty(
+                    type: "string",
+                    description: "Titel der Benachrichtigung",
+                    required: true
+                ),
+                "body": ToolSchemaProperty(
+                    type: "string",
+                    description: "Inhalt der Benachrichtigung",
+                    required: true
+                )
+            ],
+            required: ["title", "body"]
+        )
+    }
+
+    public init() {}
+
+    public func execute(arguments: [String: String]) async throws -> String {
+        return "Benachrichtigungen sind auf Linux deaktiviert. Verwenden Sie stdout oder eine Logging-Lösung."
+    }
+}
+#endif

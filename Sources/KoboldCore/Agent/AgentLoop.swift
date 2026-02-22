@@ -131,13 +131,24 @@ public actor AgentLoop {
         await registry.register(WorkflowManageTool())
         // New tools
         await registry.register(NotifyTool())
+
+        // Register platform-specific tools conditionally
+        #if os(macOS)
         await registry.register(AppleScriptTool())
         // Apple Integration tools
         await registry.register(CalendarTool())
         await registry.register(ContactsTool())
+        #endif
+
         // Sub-agent delegation (AgentZero-style call_subordinate) — pass provider config + parent memory
         await registry.register(DelegateTaskTool(providerConfig: providerConfig, parentMemory: coreMemory))
         await registry.register(DelegateParallelTool(providerConfig: providerConfig, parentMemory: coreMemory))
+        // Google API tool (OAuth2-authenticated requests) - macOS only
+        #if os(macOS)
+        await registry.register(GoogleApiTool())
+        #endif
+        // Telegram send tool
+        await registry.register(TelegramTool())
     }
 
     // MARK: - Configuration
@@ -280,17 +291,12 @@ public actor AgentLoop {
             // Parse the response — always expect JSON with tool_name/tool_args
             let parsedCalls = parser.parse(response: llmResponse)
 
-            // If parsing returned nothing (shouldn't happen due to fallback), treat as direct answer
-            if parsedCalls.isEmpty {
-                let answer = llmResponse.trimmingCharacters(in: .whitespacesAndNewlines)
-                conversationHistory.append("Assistant: \(answer)")
-                conversationMessages.append(["role": "user", "content": userMessage])
-                conversationMessages.append(["role": "assistant", "content": answer])
-                trimConversationMessages()
-                return AgentResult(finalOutput: answer, steps: steps, success: true)
-            }
-
-            let parsed = parsedCalls[0] // AgentZero pattern: one tool per turn
+            // Parser now always returns at least a "response" fallback
+            let parsed = parsedCalls.first ?? ParsedToolCall(
+                name: "response",
+                arguments: ["text": llmResponse.trimmingCharacters(in: .whitespacesAndNewlines)],
+                thoughts: []
+            )
             let confidence = parsed.confidence
 
             // Record thoughts
@@ -617,23 +623,12 @@ public actor AgentLoop {
 
                     let parsedCalls = self.parser.parse(response: llmResponse)
 
-                    if parsedCalls.isEmpty {
-                        let answer = llmResponse.trimmingCharacters(in: .whitespacesAndNewlines)
-                        conversationHistory.append("Assistant: \(answer)")
-                        self.conversationMessages.append(["role": "user", "content": userMessage])
-                        self.conversationMessages.append(["role": "assistant", "content": answer])
-                        self.trimConversationMessages()
-                        let finalStep = AgentStep(
-                            stepNumber: stepCount, type: .finalAnswer,
-                            content: answer, toolCallName: nil,
-                            toolResultSuccess: true, timestamp: Date()
-                        )
-                        continuation.yield(finalStep)
-                        continuation.finish()
-                        return
-                    }
-
-                    let parsed = parsedCalls[0]
+                    // Parser now always returns at least a "response" fallback
+                    let parsed = parsedCalls.first ?? ParsedToolCall(
+                        name: "response",
+                        arguments: ["text": llmResponse.trimmingCharacters(in: .whitespacesAndNewlines)],
+                        thoughts: []
+                    )
                     let confidence = parsed.confidence
 
                     // Yield thoughts
@@ -780,6 +775,30 @@ public actor AgentLoop {
     public func getTimelineJSON() async -> String { "{}" }
 
     // MARK: - Tool Descriptions (AgentZero-style with JSON examples)
+
+    private func buildConnectionsContext() -> String {
+        var lines: [String] = []
+
+        // Telegram
+        let telegramToken = UserDefaults.standard.string(forKey: "kobold.telegram.token") ?? ""
+        let telegramChatId = UserDefaults.standard.string(forKey: "kobold.telegram.chatId") ?? ""
+        if !telegramToken.isEmpty && !telegramChatId.isEmpty {
+            lines.append("- Telegram: VERBUNDEN (Chat-ID: \(telegramChatId)). Nutze telegram_send um dem Nutzer Nachrichten per Telegram zu schicken.")
+        } else if !telegramToken.isEmpty {
+            lines.append("- Telegram: Bot-Token konfiguriert, aber keine Chat-ID gesetzt. telegram_send ist eingeschränkt.")
+        }
+
+        // Google
+        let googleConnected = UserDefaults.standard.bool(forKey: "kobold.google.connected")
+        if googleConnected {
+            lines.append("- Google: VERBUNDEN. Nutze google_api für YouTube, Drive, Gmail, Calendar etc.")
+        }
+
+        if lines.isEmpty {
+            return "Keine externen Dienste verbunden."
+        }
+        return lines.joined(separator: "\n")
+    }
 
     private func buildToolDescriptions() -> String {
         return """
@@ -965,6 +984,26 @@ public actor AgentLoop {
         {"tool_name": "shell", "tool_args": {"command": "osascript -e 'tell application \\"Notes\\" to get body of note \\"Einkaufsliste\\" of default account'"}}
         {"tool_name": "shell", "tool_args": {"command": "osascript -e 'tell application \\"Notes\\" to tell default account to make new note at folder \\"Notizen\\" with properties {name:\\"Titel\\", body:\\"Inhalt\\"}'"}}
         ```
+
+        ### google_api
+        Authentifizierte Google-API-Anfragen (YouTube, Drive, Gmail, Calendar, Sheets, Docs, Contacts, Photos, Tasks, Maps).
+        Token wird automatisch aus dem Keychain geladen und bei Bedarf erneuert. Der Nutzer muss sich vorher in den Einstellungen unter Verbindungen → Google angemeldet haben.
+        Base-URL: https://www.googleapis.com/ — gib nur den Pfad danach an.
+        ```json
+        {"tool_name": "google_api", "tool_args": {"endpoint": "youtube/v3/search", "method": "GET", "params": "{\\"part\\": \\"snippet\\", \\"q\\": \\"Swift Tutorial\\", \\"maxResults\\": \\"5\\"}"}}
+        {"tool_name": "google_api", "tool_args": {"endpoint": "drive/v3/files", "method": "GET", "params": "{\\"pageSize\\": \\"10\\", \\"fields\\": \\"files(id,name,mimeType)\\"}"}}
+        {"tool_name": "google_api", "tool_args": {"endpoint": "gmail/v1/users/me/messages", "method": "GET", "params": "{\\"maxResults\\": \\"5\\"}"}}
+        {"tool_name": "google_api", "tool_args": {"endpoint": "calendar/v3/calendars/primary/events", "method": "GET", "params": "{\\"maxResults\\": \\"10\\", \\"orderBy\\": \\"startTime\\", \\"singleEvents\\": \\"true\\", \\"timeMin\\": \\"2026-02-22T00:00:00Z\\"}"}}
+        {"tool_name": "google_api", "tool_args": {"endpoint": "tasks/v1/users/@me/lists", "method": "GET"}}
+        ```
+
+        ### telegram_send
+        Sende eine Nachricht über den konfigurierten Telegram-Bot an den Nutzer.
+        Nutze dieses Tool wenn der Nutzer sagt "schreib mir auf Telegram", "sag mir per Telegram Bescheid", "Telegram-Nachricht senden" oder ähnliches.
+        ```json
+        {"tool_name": "telegram_send", "tool_args": {"message": "Hallo! Deine Aufgabe ist erledigt."}}
+        {"tool_name": "telegram_send", "tool_args": {"message": "Die Datei wurde erfolgreich erstellt und auf dem Desktop gespeichert."}}
+        ```
         """
     }
 
@@ -1006,6 +1045,7 @@ public actor AgentLoop {
 
         let memoryPolicy = UserDefaults.standard.string(forKey: "kobold.agent.memoryPolicy") ?? "auto"
         let behaviorRules = UserDefaults.standard.string(forKey: "kobold.agent.behaviorRules") ?? ""
+        let memoryRules = UserDefaults.standard.string(forKey: "kobold.agent.memoryRules") ?? ""
 
         let personalitySection = (soul.isEmpty && personality.isEmpty) ? "" : """
 
@@ -1037,13 +1077,22 @@ public actor AgentLoop {
         \(behaviorRules)
         """
 
+        let memoryRulesSection = memoryRules.isEmpty ? "" : """
+
+        ## Gedächtnis-Regeln (vom Nutzer definiert — IMMER befolgen!)
+        \(memoryRules)
+        """
+
         return """
         Du bist KoboldOS, ein KI-Agent auf macOS mit echten Tools.
         Du antwortest auf \(agentLang == "auto" ? "der Sprache des Nutzers" : agentLang.isEmpty ? "Deutsch" : agentLang.capitalized).
         Dein Kommunikationsstil ist \(tone).
         Standard-Arbeitsverzeichnis: \(UserDefaults.standard.string(forKey: "kobold.defaultWorkDir") ?? "~/Documents/KoboldOS")
         Nutze dieses Verzeichnis wenn der Nutzer neue Projekte oder Dateien erstellt und keinen Pfad angibt.
-        \(personalitySection)\(memoryPolicySection)\(behaviorRulesSection)
+        \(personalitySection)\(memoryPolicySection)\(behaviorRulesSection)\(memoryRulesSection)
+
+        ## Verbindungen
+        \(buildConnectionsContext())
 
         # ABSOLUTE GRUNDREGEL — NIEMALS AUFGEBEN
         - Du sagst NIEMALS "das kann ich nicht", "das ist mir nicht möglich", "das geht leider nicht" oder ähnliches.

@@ -708,7 +708,7 @@ struct MemoryView: View {
     // MARK: - Archival & Versioning
 
     func loadArchival() async {
-        let store = KoboldCore.ArchivalMemoryStore.shared
+        let store = ArchivalMemoryStore.shared
         let entries = await store.allEntries()
         archivalCount = entries.count
         archivalSize = await store.totalSize()

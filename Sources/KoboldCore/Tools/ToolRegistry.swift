@@ -26,6 +26,14 @@ public actor ToolRegistry {
         register(ShellTool())
         register(HTTPTool())
         register(BrowserTool())
+
+        // Register platform-specific tools conditionally
+        #if os(macOS)
+        register(AppleScriptTool())
+        register(CalendarTool())
+        register(ContactsTool())
+        #endif
+
         print("[ToolRegistry] Setup complete: \(tools.keys.sorted().joined(separator: ", "))")
     }
 

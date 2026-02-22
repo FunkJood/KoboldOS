@@ -1,6 +1,6 @@
 import Foundation
 
-// MARK: - CalculatorPlugin — Sample built-in plugin
+// MARK: - CalculatorPlugin (cross-platform)
 
 public struct CalculatorPlugin: KoboldPlugin {
 
@@ -69,12 +69,20 @@ public struct CalculatorPlugin: KoboldPlugin {
             return "fib(\(n)) = \(fibonacci(n))"
         }
 
-        // Simple arithmetic via NSExpression
+        #if os(macOS)
+        // Simple arithmetic via NSExpression (macOS only)
         let sanitized = sanitizeExpression(expr)
         let nsExpr = NSExpression(format: sanitized)
         if let result = nsExpr.expressionValue(with: nil, context: nil) as? NSNumber {
             return "\(expr) = \(result)"
         }
+        #else
+        // Simple arithmetic evaluation for Linux
+        let result = evaluateSimpleExpression(expr)
+        if result != nil {
+            return "\(expr) = \(result!)"
+        }
+        #endif
 
         throw ToolError.executionFailed("Could not evaluate: \(expr)")
     }
@@ -107,10 +115,50 @@ public struct CalculatorPlugin: KoboldPlugin {
         return b
     }
 
+    #if os(macOS)
     private func sanitizeExpression(_ expr: String) -> String {
         // Only allow digits, operators, parentheses, decimal point
         let allowed = CharacterSet.decimalDigits
             .union(.init(charactersIn: "+-*/().^ "))
         return String(expr.unicodeScalars.filter { allowed.contains($0) })
     }
+    #else
+    private func evaluateSimpleExpression(_ expr: String) -> Double? {
+        // Very basic expression evaluator for Linux
+        let cleanExpr = expr.replacingOccurrences(of: " ", with: "")
+
+        // Handle simple cases
+        if let number = Double(cleanExpr) {
+            return number
+        }
+
+        // Handle basic operations (very simplified)
+        if cleanExpr.contains("+") {
+            let parts = cleanExpr.split(separator: "+").map { Double(String($0)) ?? 0 }
+            return parts.reduce(0, +)
+        }
+
+        if cleanExpr.contains("*") {
+            let parts = cleanExpr.split(separator: "*").map { Double(String($0)) ?? 1 }
+            return parts.reduce(1, *)
+        }
+
+        if cleanExpr.contains("-") {
+            let parts = cleanExpr.split(separator: "-").map { Double(String($0)) ?? 0 }
+            if parts.count == 2 {
+                return parts[0] - parts[1]
+            }
+        }
+
+        if cleanExpr.contains("/") {
+            let parts = cleanExpr.split(separator: "/").map { Double(String($0)) ?? 1 }
+            if parts.count == 2 && parts[1] != 0 {
+                return parts[0] / parts[1]
+            }
+        }
+
+        // Cannot evaluate
+        return nil
+    }
+    #endif
 }

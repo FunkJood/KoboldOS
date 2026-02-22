@@ -983,6 +983,7 @@ public actor DaemonListener {
 
 // MARK: - Raw TCP Socket Wrappers
 
+#if os(macOS)
 import Darwin
 
 private class ServerSocket: @unchecked Sendable {
@@ -1093,3 +1094,6 @@ private class ClientSocket: @unchecked Sendable {
         Darwin.close(fd)
     }
 }
+#elseif os(Linux)
+// Linux socket implementation is in LinuxSocket.swift
+#endif

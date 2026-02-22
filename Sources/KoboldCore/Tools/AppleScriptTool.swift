@@ -1,7 +1,7 @@
+#if os(macOS)
 import Foundation
 
-// MARK: - AppleScriptTool — Control macOS apps (Safari, Messages, Mail) via osascript
-
+// MARK: - AppleScriptTool (macOS implementation)
 public struct AppleScriptTool: Tool, Sendable {
     public let name = "applescript"
     public let description = "Steuere macOS-Apps (Safari, Messages, Mail) via AppleScript"
@@ -247,3 +247,39 @@ public struct AppleScriptTool: Tool, Sendable {
              .replacingOccurrences(of: "\"", with: "\\\"")
     }
 }
+
+#elseif os(Linux)
+import Foundation
+
+// MARK: - AppleScriptTool (Linux implementation - placeholder)
+public struct AppleScriptTool: Tool, Sendable {
+    public let name = "applescript"
+    public let description = "Steuere macOS-Apps via AppleScript (deaktiviert auf Linux)"
+    public let riskLevel: RiskLevel = .high
+
+    public var schema: ToolSchema {
+        ToolSchema(
+            properties: [
+                "app": ToolSchemaProperty(
+                    type: "string",
+                    description: "Ziel-App: safari, messages, mail",
+                    enumValues: ["safari", "messages", "mail"],
+                    required: true
+                ),
+                "action": ToolSchemaProperty(
+                    type: "string",
+                    description: "Aktion",
+                    required: true
+                )
+            ],
+            required: ["app", "action"]
+        )
+    }
+
+    public init() {}
+
+    public func execute(arguments: [String: String]) async throws -> String {
+        return "AppleScript-Funktionen sind auf Linux deaktiviert, da sie macOS-spezifisch sind."
+    }
+}
+#endif

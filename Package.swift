@@ -50,11 +50,6 @@ let package = Package(
                 "Agent/AgentMessageBus.swift",
                 "Agent/ToolEngine.swift",
                 "Agent/OllamaAgent.swift",
-            ],
-            linkerSettings: [
-                .linkedFramework("Security"),
-                .linkedFramework("EventKit"),
-                .linkedFramework("Contacts")
             ]
         ),
 

@@ -47,6 +47,17 @@ public actor ToolEngine {
         case "web_fetch":
             let url = args["url"] as? String ?? ""
             result = await webFetch(url)
+        case "google_api":
+            let endpoint = args["endpoint"] as? String ?? ""
+            let method = args["method"] as? String ?? "GET"
+            let paramsStr = args["params"] as? String ?? "{}"
+            let body = args["body"] as? String
+            var params: [String: String]? = nil
+            if let pData = paramsStr.data(using: .utf8),
+               let pDict = try? JSONSerialization.jsonObject(with: pData) as? [String: String] {
+                params = pDict
+            }
+            result = await googleApi(endpoint: endpoint, method: method, params: params, body: body)
         default:
             result = "Error: unknown tool '\(name)'"
         }
@@ -197,6 +208,9 @@ Use tools by outputting a tool call block. One tool per block. Wait for results 
 
 **web_fetch** — Fetch a webpage (HTML stripped to text)
 `{"name": "web_fetch", "args": {"url": "https://example.com"}}`
+
+**google_api** — Make authenticated Google API requests (YouTube, Drive, Gmail, Calendar, etc.)
+`{"name": "google_api", "args": {"endpoint": "youtube/v3/search", "method": "GET", "params": "{\"part\": \"snippet\", \"q\": \"test\"}"}}`
 
 ## Rules
 - Use tools proactively when the user asks you to interact with the system

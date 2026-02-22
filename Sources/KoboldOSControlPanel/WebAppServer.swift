@@ -724,7 +724,7 @@ final class WebAppServer: @unchecked Sendable {
             <div class="nav-section">Navigation</div>
             <div class="nav-item active" onclick="switchTab('chat',this)"><i data-lucide="message-circle"></i><span>Chat</span></div>
             <div class="nav-item" onclick="switchTab('tasks',this)"><i data-lucide="list-checks"></i><span>Aufgaben</span></div>
-            <div class="nav-item" onclick="switchTab('memory',this)"><i data-lucide="brain"></i><span>Ged\\u{00E4}chtnis</span></div>
+            <div class="nav-item" onclick="switchTab('memory',this)"><i data-lucide="brain"></i><span>Gedächtnis</span></div>
             <div class="nav-item" onclick="switchTab('settings',this)"><i data-lucide="settings"></i><span>Einstellungen</span></div>
           </div>
           <div class="sidebar-footer" id="versionFooter">KoboldOS</div>
@@ -782,9 +782,9 @@ final class WebAppServer: @unchecked Sendable {
           <!-- Memory -->
           <div class="tab" id="tab-memory">
             <div class="page-header">
-              <h2>Ged\\u{00E4}chtnis</h2>
+              <h2>Gedächtnis</h2>
               <div style="flex:1"></div>
-              <button class="btn btn-primary btn-sm" onclick="toggleMemForm()"><i data-lucide="plus"></i>Hinzuf\\u{00FC}gen</button>
+              <button class="btn btn-primary btn-sm" onclick="toggleMemForm()"><i data-lucide="plus"></i>Hinzufügen</button>
             </div>
             <div class="page-body">
               <div class="mem-stats" id="memStats"></div>
@@ -999,7 +999,7 @@ final class WebAppServer: @unchecked Sendable {
         }
 
         async function deleteTask(id){
-          if(!confirm('Aufgabe wirklich l\\u{00F6}schen?'))return;
+          if(!confirm('Aufgabe wirklich löschen?'))return;
           await api('/tasks',{method:'POST',body:JSON.stringify({action:'delete',id})});
           loadTasks();
         }
@@ -1117,7 +1117,7 @@ final class WebAppServer: @unchecked Sendable {
                   '</div>';
               }).join('');
             } else {
-              modelList.innerHTML='<div class="glass" style="color:var(--text-secondary);font-size:13px">Keine Modelle verf\\u{00FC}gbar — ist Ollama aktiv?</div>';
+              modelList.innerHTML='<div class="glass" style="color:var(--text-secondary);font-size:13px">Keine Modelle verfügbar — ist Ollama aktiv?</div>';
             }
           }catch(e){
             document.getElementById('settingsMetrics').innerHTML='<div style="color:var(--red);font-size:13px;grid-column:1/-1">Daemon nicht erreichbar</div>';

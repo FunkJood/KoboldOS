@@ -1,4 +1,5 @@
 import SwiftUI
+import KoboldCore
 
 @available(macOS 14.0, *)
 struct MainView: View {
@@ -213,32 +214,89 @@ struct SidebarView: View {
     // MARK: - Workflow Sessions List
     private var workflowSessionsList: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text("Workflow-Chats")
+            // Saved workflow definitions (from agent)
+            HStack(spacing: 6) {
+                Text("Workflows")
                     .font(.caption2.weight(.semibold))
                     .foregroundColor(.secondary)
                     .padding(.leading, 16)
                 Spacer()
+                Button(action: { viewModel.loadWorkflowDefinitions() }) {
+                    Image(systemName: "arrow.clockwise").font(.system(size: 9))
+                }.buttonStyle(.plain).foregroundColor(.secondary)
+                Button(action: {
+                    viewModel.openWorkflowChat(nodeName: "Neuer Workflow")
+                    selectedTab = .chat
+                }) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.koboldEmerald)
+                }
+                .buttonStyle(.plain)
+                .help("Neuen Workflow starten")
+                .padding(.trailing, 12)
             }
             .padding(.vertical, 6)
 
-            if viewModel.workflowSessions.isEmpty {
+            if viewModel.workflowDefinitions.isEmpty && viewModel.workflowSessions.isEmpty {
                 HStack(spacing: 6) {
                     Image(systemName: "point.3.connected.trianglepath.dotted")
                         .font(.system(size: 10))
                         .foregroundColor(.secondary)
-                    Text("Noch keine Workflow-Chats")
+                    Text("Noch keine Workflows")
                         .font(.system(size: 10))
                         .foregroundColor(.secondary)
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 4)
-            } else {
+            }
+
+            ForEach(viewModel.workflowDefinitions, id: \.id) { def in
+                Button(action: {
+                    viewModel.openWorkflowChat(nodeName: def.name)
+                    selectedTab = .chat
+                }) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "gearshape.2.fill")
+                            .font(.system(size: 10))
+                            .foregroundColor(.koboldGold)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(def.name).font(.system(size: 11, weight: .medium)).lineLimit(1)
+                            if !def.description.isEmpty {
+                                Text(def.description).font(.system(size: 9)).foregroundColor(.secondary).lineLimit(1)
+                            }
+                        }
+                        Spacer()
+                        Button(action: { viewModel.deleteWorkflowDefinition(def) }) {
+                            Image(systemName: "trash").font(.system(size: 9))
+                        }.buttonStyle(.plain).foregroundColor(.secondary.opacity(0.6))
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 5)
+                    .background(Color.clear)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+
+            // Workflow chats (sessions)
+            if !viewModel.workflowSessions.isEmpty {
+                Divider().padding(.horizontal, 12).padding(.vertical, 4)
+
+                HStack {
+                    Text("Workflow-Chats")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundColor(.secondary)
+                        .padding(.leading, 16)
+                    Spacer()
+                }
+                .padding(.vertical, 4)
+
                 ForEach(viewModel.workflowSessions) { session in
                     SidebarSessionRow(
                         session: session,
                         isCurrent: session.id == viewModel.currentSessionId,
-                        icon: "point.3.connected.trianglepath.dotted",
+                        icon: "bubble.left.and.bubble.right",
                         accentColor: .koboldGold
                     ) {
                         viewModel.switchToSession(session)
@@ -248,6 +306,7 @@ struct SidebarView: View {
                     }
                 }
             }
+
         }
     }
 
@@ -277,6 +336,7 @@ struct SidebarView: View {
                     isSelected: project.id == viewModel.selectedProjectId
                 ) {
                     viewModel.selectedProjectId = project.id
+                    selectedTab = .workflows
                 } onDelete: {
                     viewModel.deleteProject(project)
                 }
@@ -539,8 +599,8 @@ enum SidebarTab: String, CaseIterable {
     case tasks
     case workflows
     case memory
-    case store
     case agents
+    case store
     case settings
 }
 

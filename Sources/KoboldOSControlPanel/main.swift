@@ -109,6 +109,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Auto-start Telegram bot if configured
+        let telegramToken = UserDefaults.standard.string(forKey: "kobold.telegram.token") ?? ""
+        if !telegramToken.isEmpty {
+            let chatId = Int64(UserDefaults.standard.string(forKey: "kobold.telegram.chatId") ?? "") ?? 0
+            TelegramBot.shared.start(token: telegramToken, allowedChatId: chatId)
+            print("[AppDelegate] Telegram bot auto-started")
+        }
+
         // Retarget the red close button on the main window: HIDE instead of CLOSE.
         // SwiftUI's WindowGroup closes + terminates on the default close action,
         // so we intercept at the button level to prevent that entirely.

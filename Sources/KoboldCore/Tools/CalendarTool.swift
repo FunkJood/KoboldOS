@@ -1,9 +1,8 @@
+#if os(macOS)
 import Foundation
 import EventKit
 
-// MARK: - CalendarTool
-// Read/create calendar events and reminders via EventKit.
-
+// MARK: - CalendarTool (macOS implementation)
 public struct CalendarTool: Tool, @unchecked Sendable {
     public let name = "calendar"
     public let description = "Kalender-Events und Erinnerungen verwalten (list_events, create_event, search_events, list_reminders, create_reminder)"
@@ -191,3 +190,29 @@ public struct CalendarTool: Tool, @unchecked Sendable {
         return "Erinnerung erstellt: \"\(title)\""
     }
 }
+
+#elseif os(Linux)
+import Foundation
+
+// MARK: - CalendarTool (Linux implementation - placeholder)
+public struct CalendarTool: Tool, Sendable {
+    public let name = "calendar"
+    public let description = "Kalender-Events und Erinnerungen verwalten (deaktiviert auf Linux)"
+    public let riskLevel: RiskLevel = .low
+
+    public var schema: ToolSchema {
+        ToolSchema(
+            properties: [
+                "action": ToolSchemaProperty(type: "string", description: "list_events | create_event | search_events | list_reminders | create_reminder", required: true)
+            ],
+            required: ["action"]
+        )
+    }
+
+    public init() {}
+
+    public func execute(arguments: [String: String]) async throws -> String {
+        return "Kalender-Funktionen sind auf Linux deaktiviert. Verwenden Sie eine externe Kalenderlösung."
+    }
+}
+#endif

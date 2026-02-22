@@ -153,10 +153,22 @@ struct GlassChatBubble: View {
                     if isLoading {
                         LoadingDots()
                     } else {
-                        Text(message)
-                            .font(.system(size: 14))
-                            .foregroundColor(isUser ? .white : .primary)
-                            .textSelection(.enabled)
+                        // For very long messages, split into chunks to avoid SwiftUI layout freeze
+                        if message.count > 3000 {
+                            VStack(alignment: .leading, spacing: 0) {
+                                ForEach(Array(message.chunked(into: 2000).enumerated()), id: \.offset) { _, chunk in
+                                    Text(chunk)
+                                        .font(.system(size: 14))
+                                        .foregroundColor(isUser ? .white : .primary)
+                                        .textSelection(.enabled)
+                                }
+                            }
+                        } else {
+                            Text(message)
+                                .font(.system(size: 14))
+                                .foregroundColor(isUser ? .white : .primary)
+                                .textSelection(.enabled)
+                        }
                     }
                 }
                 .padding(.horizontal, 14)
@@ -1080,5 +1092,21 @@ struct SubAgentActivityBanner: View {
                 .padding(.horizontal, 16)
             }
         }
+    }
+}
+
+// MARK: - String Chunking for Large Text Rendering
+
+extension String {
+    func chunked(into size: Int) -> [String] {
+        guard count > size else { return [self] }
+        var chunks: [String] = []
+        var start = startIndex
+        while start < endIndex {
+            let end = index(start, offsetBy: size, limitedBy: endIndex) ?? endIndex
+            chunks.append(String(self[start..<end]))
+            start = end
+        }
+        return chunks
     }
 }

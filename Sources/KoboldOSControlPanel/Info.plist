@@ -42,5 +42,18 @@
     <true/>
     <key>NSLocalNetworkUsageDescription</key>
     <string>KoboldOS benötigt lokalen Netzwerkzugriff für den Daemon-Server und die WebApp-Fernsteuerung.</string>
+
+    <!-- URL Scheme for OAuth2 callbacks -->
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>com.koboldos.oauth</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>koboldos</string>
+            </array>
+        </dict>
+    </array>
 </dict>
 </plist>

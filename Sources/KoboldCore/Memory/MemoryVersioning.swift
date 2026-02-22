@@ -1,5 +1,7 @@
 import Foundation
+#if os(macOS)
 import CommonCrypto
+#endif
 
 // MARK: - MemoryVersionStore
 // Git-style versioning for CoreMemory blocks.
@@ -147,11 +149,6 @@ public actor MemoryVersionStore {
     // MARK: - SHA-256
 
     private func sha256(_ string: String) -> String {
-        guard let data = string.data(using: .utf8) else { return UUID().uuidString }
-        var hash = [UInt8](repeating: 0, count: Int(CC_SHA256_DIGEST_LENGTH))
-        data.withUnsafeBytes {
-            _ = CC_SHA256($0.baseAddress, CC_LONG(data.count), &hash)
-        }
-        return hash.map { String(format: "%02x", $0) }.joined()
+        return KoboldCore.sha256(string)
     }
 }

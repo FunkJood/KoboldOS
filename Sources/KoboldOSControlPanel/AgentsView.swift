@@ -159,6 +159,9 @@ struct AgentsView: View {
                     .help("Ollama Modelle abrufen")
                 }
 
+                // Sessions table (oben)
+                sessionsTable
+
                 ForEach($store.configs) { $config in
                     VStack(spacing: 0) {
                         AgentConfigCard(
@@ -181,9 +184,6 @@ struct AgentsView: View {
                         }
                     }
                 }
-
-                // Sessions table
-                sessionsTable
             }
             .padding(24)
         }

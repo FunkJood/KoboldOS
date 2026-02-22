@@ -91,6 +91,17 @@ cat > dist/KoboldOSv${VERSION}.app/Contents/Info.plist << EOF
     <true/>
     <key>NSLocalNetworkUsageDescription</key>
     <string>KoboldOS benoetigt lokalen Netzwerkzugriff fuer den Daemon-Server und die WebApp-Fernsteuerung.</string>
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>com.koboldos.oauth</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>koboldos</string>
+            </array>
+        </dict>
+    </array>
 </dict>
 </plist>
 EOF

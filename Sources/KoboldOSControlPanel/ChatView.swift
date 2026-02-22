@@ -12,6 +12,7 @@ struct ChatView: View {
     @AppStorage("kobold.koboldName") private var koboldName: String = "KoboldOS"
     @AppStorage("kobold.showAgentSteps") private var showAgentSteps: Bool = true
     @State private var showNotifications: Bool = false
+    @State private var scrollDebounceTask: Task<Void, Never>?
 
     /// Human-readable agent display name for the chat header badge
     var agentDisplayName: String {
@@ -55,8 +56,8 @@ struct ChatView: View {
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
                 }
-                .onChange(of: viewModel.messages.count) { scrollToBottom(proxy: proxy) }
-                .onChange(of: viewModel.agentLoading) { scrollToBottom(proxy: proxy) }
+                .onChange(of: viewModel.messages.count) { debouncedScroll(proxy: proxy) }
+                .onChange(of: viewModel.agentLoading) { debouncedScroll(proxy: proxy) }
             }
 
             GlassDivider()
@@ -377,8 +378,11 @@ struct ChatView: View {
         )
     }
 
-    private func scrollToBottom(proxy: ScrollViewProxy) {
-        DispatchQueue.main.async {
+    private func debouncedScroll(proxy: ScrollViewProxy) {
+        scrollDebounceTask?.cancel()
+        scrollDebounceTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 150_000_000) // 150ms debounce
+            guard !Task.isCancelled else { return }
             if viewModel.agentLoading {
                 proxy.scrollTo("loading", anchor: .bottom)
             } else if let last = viewModel.messages.last {

@@ -25,6 +25,7 @@ class RuntimeManager: ObservableObject {
     @Published var errorMessage: String? = nil
 
     @AppStorage("kobold.port") var port: Int = 8080
+    @AppStorage("kobold.authToken") var authToken: String = "kobold-secret"
 
     private var daemonTask: Task<Void, Never>? = nil
     private var healthTimer: Timer?
@@ -43,7 +44,7 @@ class RuntimeManager: ObservableObject {
         guard daemonTask == nil else { return }
 
         let listenPort = port
-        let token = UserDefaults.standard.string(forKey: "kobold.authToken") ?? "kobold-secret"
+        let token = authToken  // @AppStorage — same source as RuntimeViewModel
 
         daemonTask = Task.detached(priority: .background) {
             let daemon = DaemonListener(port: listenPort, authToken: token)

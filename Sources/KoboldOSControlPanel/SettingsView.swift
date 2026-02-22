@@ -92,7 +92,12 @@ struct SettingsView: View {
     // Working directory
     @AppStorage("kobold.defaultWorkDir") private var defaultWorkDir: String = "~/Documents/KoboldOS"
 
-    private let sections = ["Konto", "Allgemein", "Agent", "Modelle", "Gedächtnis", "Proaktiv", "Berechtigungen", "Datenschutz & Sicherheit", "A2A", "Verbindungen", "Fernsteuerung", "Telegram", "Skills", "Über"]
+    // Google OAuth
+    @AppStorage("kobold.google.clientId") private var googleClientId: String = ""
+    @AppStorage("kobold.google.connected") private var googleConnected: Bool = false
+    @State private var googleEmail: String = ""
+
+    private let sections = ["Konto", "Allgemein", "Agent", "Modelle", "Gedächtnis", "Proaktiv", "Berechtigungen", "Datenschutz & Sicherheit", "A2A", "Verbindungen", "Skills", "Über"]
 
     var body: some View {
         HStack(spacing: 0) {
@@ -131,7 +136,7 @@ struct SettingsView: View {
                     switch selectedSection {
                     case "Konto":                   profileSection()
                     case "Allgemein":                generalSection()
-                    case "Agent":                    agentPersonalitySection(); memoryPolicySection()
+                    case "Agent":                    memoryPolicySection(); agentPersonalitySection()
                     case "Modelle":                  modelsSection()
                     case "Gedächtnis":               memorySettingsSection()
                     case "Proaktiv":                 proactiveSettingsSection()
@@ -139,8 +144,6 @@ struct SettingsView: View {
                     case "Datenschutz & Sicherheit": securitySection()
                     case "A2A":                      a2aSection()
                     case "Verbindungen":             connectionsSection()
-                    case "Fernsteuerung":            remoteControlSection()
-                    case "Telegram":                 telegramSection()
                     case "Skills":                   skillsSettingsSection()
                     default:                         aboutSection()
                     }
@@ -165,8 +168,6 @@ struct SettingsView: View {
         case "Datenschutz & Sicherheit": return "lock.shield.fill"
         case "A2A":                     return "arrow.left.arrow.right"
         case "Verbindungen":            return "link.circle.fill"
-        case "Fernsteuerung":           return "globe"
-        case "Telegram":                return "paperplane.fill"
         case "Skills":                  return "sparkles"
         default:                        return "info.circle.fill"
         }
@@ -267,6 +268,7 @@ struct SettingsView: View {
                 }
                 .padding()
             }
+            .frame(maxHeight: .infinity, alignment: .top)
 
             GroupBox {
                 VStack(alignment: .leading, spacing: 10) {
@@ -281,6 +283,7 @@ struct SettingsView: View {
                 }
                 .padding()
             }
+            .frame(maxHeight: .infinity, alignment: .top)
             settingsSaveButton(section: "Konto")
         }
     }
@@ -291,26 +294,95 @@ struct SettingsView: View {
     private func generalSection() -> some View {
         sectionTitle("Allgemeine Einstellungen")
 
-        // Language
-        GroupBox {
-            VStack(alignment: .leading, spacing: 10) {
-                Label("Sprache", systemImage: "globe").font(.subheadline.bold())
-                Text("Steuert die Interface-Sprache und die Antwortsprache des Agenten.")
-                    .font(.caption).foregroundColor(.secondary)
-                Picker("", selection: Binding(
-                    get: { l10n.language },
-                    set: { l10n.language = $0 }
-                )) {
-                    ForEach(AppLanguage.allCases, id: \.self) { lang in
-                        Text(lang.displayName).tag(lang)
+        // Sprache + Updates nebeneinander
+        HStack(alignment: .top, spacing: 16) {
+            GroupBox {
+                VStack(alignment: .leading, spacing: 10) {
+                    Label("Sprache", systemImage: "globe").font(.subheadline.bold())
+                    Text("Interface- und Antwortsprache.")
+                        .font(.caption).foregroundColor(.secondary)
+                    Picker("", selection: Binding(
+                        get: { l10n.language },
+                        set: { l10n.language = $0 }
+                    )) {
+                        ForEach(AppLanguage.allCases, id: \.self) { lang in
+                            Text(lang.displayName).tag(lang)
+                        }
                     }
+                    .pickerStyle(.menu)
                 }
-                .pickerStyle(.menu)
+                .padding()
             }
-            .padding()
+            .frame(maxHeight: .infinity, alignment: .top)
+
+            GroupBox {
+                VStack(alignment: .leading, spacing: 12) {
+                    Label("Updates", systemImage: "arrow.down.circle.fill").font(.subheadline.bold())
+
+                    HStack {
+                        Text("Version")
+                        Spacer()
+                        Text("Alpha v\(UpdateManager.currentVersion)")
+                            .foregroundColor(.koboldEmerald).fontWeight(.medium)
+                    }
+
+                    Toggle("Auto-Check beim Start", isOn: $autoCheckUpdates)
+                        .toggleStyle(.switch)
+
+                    switch updateManager.state {
+                    case .idle:
+                        EmptyView()
+                    case .checking:
+                        HStack(spacing: 6) {
+                            ProgressView().controlSize(.small)
+                            Text("Suche…").font(.caption).foregroundColor(.secondary)
+                        }
+                    case .upToDate:
+                        HStack(spacing: 6) {
+                            Image(systemName: "checkmark.circle.fill").foregroundColor(.green)
+                            Text("Aktuell").font(.caption).foregroundColor(.green)
+                        }
+                    case .available(let version):
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "arrow.down.circle.fill").foregroundColor(.koboldGold)
+                                Text("v\(version) verfügbar")
+                                    .font(.caption).fontWeight(.medium).foregroundColor(.koboldGold)
+                            }
+                            if let notes = updateManager.releaseNotes, !notes.isEmpty {
+                                Text(notes).font(.system(size: 10)).foregroundColor(.secondary).lineLimit(3)
+                            }
+                            Button("Installieren") {
+                                Task { await updateManager.downloadAndInstall() }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(.koboldEmerald)
+                            .controlSize(.small)
+                        }
+                    case .downloading(let percent):
+                        ProgressView(value: percent).tint(.koboldEmerald)
+                    case .installing:
+                        HStack(spacing: 4) {
+                            ProgressView().controlSize(.small)
+                            Text("Installiere…").font(.caption).foregroundColor(.koboldGold)
+                        }
+                    case .error(let msg):
+                        Text(msg).font(.system(size: 10)).foregroundColor(.red).lineLimit(2)
+                    }
+
+                    Button("Nach Updates suchen") {
+                        Task { await updateManager.checkForUpdates() }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(updateManager.state == .checking)
+                }
+                .padding()
+            }
+            .frame(maxHeight: .infinity, alignment: .top)
         }
 
-        // Row 1: Verbindung + Darstellung (two columns)
+        // Row 1: Verbindung + Darstellung + Sounds
         HStack(alignment: .top, spacing: 16) {
             GroupBox {
                 VStack(alignment: .leading, spacing: 10) {
@@ -336,20 +408,22 @@ struct SettingsView: View {
                 }
                 .padding()
             }
+            .frame(maxHeight: .infinity, alignment: .top)
 
             GroupBox {
                 VStack(alignment: .leading, spacing: 12) {
                     Label("Darstellung", systemImage: "paintbrush.fill").font(.subheadline.bold())
-                    Toggle("Erweiterte Statistiken im Dashboard", isOn: $showAdvancedStats)
+                    Toggle("Erweiterte Statistiken", isOn: $showAdvancedStats)
                         .toggleStyle(.switch)
                 }
                 .padding()
             }
+            .frame(maxHeight: .infinity, alignment: .top)
 
             GroupBox {
                 VStack(alignment: .leading, spacing: 12) {
                     Label("Sounds", systemImage: "speaker.wave.2.fill").font(.subheadline.bold())
-                    Toggle("Systemsounds aktivieren", isOn: $soundsEnabled)
+                    Toggle("Systemsounds", isOn: $soundsEnabled)
                         .toggleStyle(.switch)
                     if soundsEnabled {
                         HStack {
@@ -364,14 +438,13 @@ struct SettingsView: View {
                 }
                 .padding()
             }
+            .frame(maxHeight: .infinity, alignment: .top)
         }
 
-        // Row 2: Arbeitsverzeichnis (full width)
+        // Row 2: Arbeitsverzeichnis
         GroupBox {
             VStack(alignment: .leading, spacing: 10) {
                 Label("Standard-Arbeitsverzeichnis", systemImage: "folder.fill").font(.subheadline.bold())
-                Text("Hier speichert der Agent neue Projekte und Dateien.")
-                    .font(.caption).foregroundColor(.secondary)
                 HStack {
                     Text(defaultWorkDir)
                         .font(.system(.body, design: .monospaced))
@@ -403,12 +476,12 @@ struct SettingsView: View {
             .padding()
         }
 
-        // Row 3: Menüleiste + Autostart (two columns)
+        // Row 3: Menüleiste + Autostart + Einrichtungsassistent + Debug (4 columns)
         HStack(alignment: .top, spacing: 16) {
             GroupBox {
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 10) {
                     Label("Menüleiste", systemImage: "menubar.rectangle").font(.subheadline.bold())
-                    Toggle("In Menüleiste anzeigen", isOn: Binding(
+                    Toggle("Anzeigen", isOn: Binding(
                         get: { menuBarEnabled },
                         set: { enabled in
                             if enabled { MenuBarController.shared.enable() }
@@ -418,12 +491,13 @@ struct SettingsView: View {
                     ))
                     .toggleStyle(.switch)
                     if menuBarEnabled {
-                        Toggle("Beim Schließen minimieren", isOn: $menuBarHideOnClose)
+                        Toggle("Minimieren", isOn: $menuBarHideOnClose)
                             .toggleStyle(.switch)
                     }
                 }
                 .padding()
             }
+            .frame(maxHeight: .infinity, alignment: .top)
 
             GroupBox {
                 VStack(alignment: .leading, spacing: 10) {
@@ -436,129 +510,42 @@ struct SettingsView: View {
                     ))
                     .toggleStyle(.switch)
                     if launchAgent.status == .requiresApproval {
-                        HStack(spacing: 6) {
-                            Image(systemName: "exclamationmark.triangle.fill").foregroundColor(.orange)
-                            Text("In Systemeinstellungen genehmigen.")
-                                .font(.caption).foregroundColor(.orange)
-                        }
+                        Label("Genehmigung nötig", systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption).foregroundColor(.orange)
                     }
                 }
                 .padding()
             }
-        }
+            .frame(maxHeight: .infinity, alignment: .top)
 
-        // Row 3: Updates (full width)
-        GroupBox {
-            VStack(alignment: .leading, spacing: 12) {
-                Label("Updates", systemImage: "arrow.down.circle.fill").font(.subheadline.bold())
-
-                HStack {
-                    Text("Aktuelle Version")
-                    Spacer()
-                    Text("Alpha v\(UpdateManager.currentVersion)")
-                        .foregroundColor(.koboldEmerald).fontWeight(.medium)
-                }
-
-                Toggle("Automatisch beim Start suchen", isOn: $autoCheckUpdates)
-                    .toggleStyle(.switch)
-
-                // Status display
-                switch updateManager.state {
-                case .idle:
-                    EmptyView()
-                case .checking:
-                    HStack(spacing: 6) {
-                        ProgressView().controlSize(.small)
-                        Text("Suche nach Updates…").font(.caption).foregroundColor(.secondary)
-                    }
-                case .upToDate:
-                    HStack(spacing: 6) {
-                        Image(systemName: "checkmark.circle.fill").foregroundColor(.green)
-                        Text("KoboldOS ist aktuell.").font(.caption).foregroundColor(.green)
-                    }
-                case .available(let version):
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "arrow.down.circle.fill").foregroundColor(.koboldGold)
-                            Text("Neue Version verfügbar: v\(version)")
-                                .font(.callout).fontWeight(.medium).foregroundColor(.koboldGold)
-                        }
-                        if let notes = updateManager.releaseNotes, !notes.isEmpty {
-                            Text(notes)
-                                .font(.caption).foregroundColor(.secondary)
-                                .lineLimit(4)
-                                .padding(8)
-                                .background(RoundedRectangle(cornerRadius: 6).fill(Color.koboldSurface))
-                        }
-                        Button("Update installieren & neustarten") {
-                            Task { await updateManager.downloadAndInstall() }
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .tint(.koboldEmerald)
-                    }
-                case .downloading(let percent):
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack {
-                            Text("Lade herunter…").font(.caption)
-                            Spacer()
-                            Text("\(Int(percent * 100))%").font(.caption).foregroundColor(.secondary)
-                        }
-                        ProgressView(value: percent)
-                            .tint(.koboldEmerald)
-                    }
-                case .installing:
-                    HStack(spacing: 6) {
-                        ProgressView().controlSize(.small)
-                        Text("Installiere Update… App startet gleich neu.")
-                            .font(.caption).foregroundColor(.koboldGold)
-                    }
-                case .error(let msg):
-                    HStack(spacing: 6) {
-                        Image(systemName: "xmark.circle.fill").foregroundColor(.red)
-                        Text(msg).font(.caption).foregroundColor(.red)
-                    }
-                }
-
-                HStack {
-                    Button("Nach Updates suchen") {
-                        Task { await updateManager.checkForUpdates() }
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(updateManager.state == .checking)
-
-                    Spacer()
-                }
-            }
-            .padding()
-        }
-
-        // Row 3b: Onboarding + Debug (side by side)
-        HStack(alignment: .top, spacing: 16) {
             GroupBox {
                 VStack(alignment: .leading, spacing: 10) {
-                    Label("Einrichtungsassistent", systemImage: "wand.and.stars").font(.subheadline.bold())
-                    Text("Zeigt den Hatching-Wizard erneut.")
+                    Label("Onboarding", systemImage: "wand.and.stars").font(.subheadline.bold())
+                    Text("Wizard erneut zeigen")
                         .font(.caption).foregroundColor(.secondary)
-                    Button("Onboarding zurücksetzen") {
+                    Button("Zurücksetzen") {
                         UserDefaults.standard.set(false, forKey: "kobold.hasOnboarded")
                     }
                     .buttonStyle(.bordered)
+                    .controlSize(.small)
                 }
                 .padding()
             }
+            .frame(maxHeight: .infinity, alignment: .top)
 
             GroupBox {
                 VStack(alignment: .leading, spacing: 10) {
-                    Label("Debug-Modus", systemImage: "ladybug.fill").font(.subheadline.bold())
+                    Label("Debug", systemImage: "ladybug.fill").font(.subheadline.bold())
                     Toggle("Verbose Logging",
                            isOn: AppStorageToggle("kobold.log.verbose", default: false))
                         .toggleStyle(.switch)
-                    Toggle("Raw Prompts anzeigen",
+                    Toggle("Raw Prompts",
                            isOn: AppStorageToggle("kobold.dev.showRawPrompts", default: false))
                         .toggleStyle(.switch)
                 }
                 .padding()
             }
+            .frame(maxHeight: .infinity, alignment: .top)
         }
 
         // Row 5: Verfügbare Tools
@@ -1042,9 +1029,10 @@ struct SettingsView: View {
         }
 
         // Apple System Permissions — Request macOS access
+        // macOS System-Berechtigungen (zusammengelegt)
         GroupBox {
             VStack(alignment: .leading, spacing: 14) {
-                Label("Apple Systemzugriff", systemImage: "apple.logo").font(.subheadline.bold())
+                Label("macOS System-Berechtigungen", systemImage: "apple.logo").font(.subheadline.bold())
                 Text("Fordere macOS-Systemzugriff an. Diese Berechtigungen werden vom Betriebssystem verwaltet.")
                     .font(.caption).foregroundColor(.secondary)
 
@@ -1066,6 +1054,21 @@ struct SettingsView: View {
                 systemPermRow(title: "Benachrichtigungen", icon: "bell.fill", color: .orange,
                               detail: "Push-Benachrichtigungen auf deinem Mac") {
                     requestNotificationAccess()
+                }
+                Divider()
+                macOSPermRow("Kamera", icon: "camera.fill",
+                             detail: "Für Bild-Aufnahmen und Vision") {
+                    NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera")!)
+                }
+                Divider()
+                macOSPermRow("Mikrofon", icon: "mic.fill",
+                             detail: "Für Audio-Aufnahmen") {
+                    NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!)
+                }
+                Divider()
+                macOSPermRow("Bildschirmaufnahme", icon: "rectangle.dashed",
+                             detail: "Für Screenshot-Tool") {
+                    NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
                 }
                 Divider()
                 HStack {
@@ -1116,61 +1119,39 @@ struct SettingsView: View {
             .padding()
         }
 
-        // Custom blacklist
-        GroupBox {
-            VStack(alignment: .leading, spacing: 8) {
-                Label("Benutzerdefinierte Blacklist", systemImage: "xmark.shield.fill").font(.subheadline.bold())
-                Text("Zusätzlich blockierte Befehle (kommagetrennt). Werden IMMER blockiert, unabhängig vom Tier.")
-                    .font(.caption).foregroundColor(.secondary)
-                TextField("z.B. docker, terraform, ansible", text: Binding(
-                    get: { UserDefaults.standard.string(forKey: "kobold.shell.customBlacklist") ?? "" },
-                    set: { UserDefaults.standard.set($0, forKey: "kobold.shell.customBlacklist") }
-                ))
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(.caption, design: .monospaced))
-            }
-            .padding()
-        }
-
-        // Custom Allowlist
-        GroupBox {
-            VStack(alignment: .leading, spacing: 8) {
-                Label("Benutzerdefinierte Whitelist", systemImage: "checkmark.shield.fill").font(.subheadline.bold())
-                Text("Zusätzlich erlaubte Befehle (kommagetrennt). Werden auch in Safe/Normal-Tier erlaubt.")
-                    .font(.caption).foregroundColor(.secondary)
-                TextField("z.B. python3, node, cargo, docker", text: Binding(
-                    get: { UserDefaults.standard.string(forKey: "kobold.shell.customAllowlist") ?? "" },
-                    set: { UserDefaults.standard.set($0, forKey: "kobold.shell.customAllowlist") }
-                ))
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(.caption, design: .monospaced))
-            }
-            .padding()
-        }
-
-        // macOS permissions
-        GroupBox {
-            VStack(alignment: .leading, spacing: 12) {
-                Label("macOS System-Berechtigungen", systemImage: "apple.logo").font(.subheadline.bold())
-                Text("Diese Berechtigungen werden vom macOS-System verwaltet.")
-                    .font(.caption).foregroundColor(.secondary)
-
-                macOSPermRow("Kamera", icon: "camera.fill",
-                             detail: "Für Bild-Aufnahmen und Vision") {
-                    NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera")!)
+        // Custom blacklist + whitelist
+        HStack(alignment: .top, spacing: 16) {
+            GroupBox {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("Benutzerdefinierte Blacklist", systemImage: "xmark.shield.fill").font(.subheadline.bold())
+                    Text("Zusätzlich blockierte Befehle (kommagetrennt).")
+                        .font(.caption).foregroundColor(.secondary)
+                    TextField("z.B. docker, terraform, ansible", text: Binding(
+                        get: { UserDefaults.standard.string(forKey: "kobold.shell.customBlacklist") ?? "" },
+                        set: { UserDefaults.standard.set($0, forKey: "kobold.shell.customBlacklist") }
+                    ))
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(.caption, design: .monospaced))
                 }
-                Divider()
-                macOSPermRow("Mikrofon", icon: "mic.fill",
-                             detail: "Für Audio-Aufnahmen") {
-                    NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!)
-                }
-                Divider()
-                macOSPermRow("Bildschirmaufnahme", icon: "rectangle.dashed",
-                             detail: "Für Screenshot-Tool") {
-                    NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
-                }
+                .padding()
             }
-            .padding()
+            .frame(maxHeight: .infinity, alignment: .top)
+
+            GroupBox {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("Benutzerdefinierte Whitelist", systemImage: "checkmark.shield.fill").font(.subheadline.bold())
+                    Text("Zusätzlich erlaubte Befehle (kommagetrennt).")
+                        .font(.caption).foregroundColor(.secondary)
+                    TextField("z.B. python3, node, cargo, docker", text: Binding(
+                        get: { UserDefaults.standard.string(forKey: "kobold.shell.customAllowlist") ?? "" },
+                        set: { UserDefaults.standard.set($0, forKey: "kobold.shell.customAllowlist") }
+                    ))
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(.caption, design: .monospaced))
+                }
+                .padding()
+            }
+            .frame(maxHeight: .infinity, alignment: .top)
         }
         settingsSaveButton(section: "Berechtigungen")
     }
@@ -1724,66 +1705,104 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - Verbindungen (formerly Extensions)
+    // MARK: - Verbindungen (WebApp + Telegram + geplante Integrationen)
+
+    @AppStorage("kobold.notificationChannel") private var notificationChannel: String = "gui"
 
     @ViewBuilder
     private func connectionsSection() -> some View {
         sectionTitle("Verbindungen")
 
-        // Info banner
-        HStack(spacing: 10) {
-            Image(systemName: "info.circle.fill")
-                .foregroundColor(.blue)
-            Text("Verbindungen werden in zukünftigen Versionen verfügbar sein. Du kannst bereits jetzt APIs über den Browser-Tool nutzen.")
-                .font(.caption).foregroundColor(.secondary)
+        // Standardnachrichtenkanal
+        GroupBox {
+            VStack(alignment: .leading, spacing: 10) {
+                Label("Standardnachrichtenkanal", systemImage: "bell.badge.fill").font(.subheadline.bold())
+                Text("Wähle wo Updates und Benachrichtigungen ankommen.")
+                    .font(.caption).foregroundColor(.secondary)
+
+                Picker("Kanal", selection: $notificationChannel) {
+                    Label("GUI (Standard)", systemImage: "desktopcomputer").tag("gui")
+                    Label("Telegram", systemImage: "paperplane.fill").tag("telegram")
+                    Label("GUI + Telegram", systemImage: "bell.and.waves.left.and.right.fill").tag("both")
+                }
+                .pickerStyle(.segmented)
+                .frame(maxWidth: 400)
+
+                if notificationChannel.contains("telegram") || notificationChannel == "both" {
+                    if !telegramRunning {
+                        Label("Telegram-Bot ist nicht aktiv — konfiguriere ihn weiter unten.", systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption).foregroundColor(.orange)
+                    }
+                }
+            }
+            .padding()
         }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(Color.blue.opacity(0.08))
-                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.blue.opacity(0.2), lineWidth: 0.5))
-        )
+
+        // Active connections
+        telegramSection()
+
+        // Geplante Integrationen
+        GroupBox {
+            VStack(alignment: .leading, spacing: 10) {
+                Label("Weitere Integrationen", systemImage: "puzzlepiece.extension.fill").font(.subheadline.bold())
+                Text("Kommende Verbindungen — du kannst bereits jetzt APIs über das Shell- und Web-Tool nutzen.")
+                    .font(.caption).foregroundColor(.secondary)
+            }.padding()
+        }
 
         let connectionItems: [(String, String, Color, String)] = [
-            ("Google", "magnifyingglass", .blue, "Google Suche, Drive, Kalender, Gmail"),
-            ("GitHub", "chevron.left.forwardslash.chevron.right", .purple, "Repositories, Issues, Pull Requests"),
-            ("Slack", "number", .green, "Nachrichten senden, Kanäle lesen"),
-            ("Notion", "doc.text.fill", .primary, "Seiten lesen und bearbeiten"),
-            ("SoundCloud", "waveform", .orange, "Tracks, Playlists, Statistiken"),
-            ("Instagram", "camera.fill", .pink, "Posts, Stories, Analytics"),
-            ("Spotify", "music.note", .green, "Playlists, Tracks, Wiedergabe"),
-            ("iMessage", "message.fill", .blue, "Nachrichten lesen und senden"),
+            ("Google",     "globe",                                   .blue,              "Drive, Gmail, YouTube, Kalender"),
+            ("GitHub",     "chevron.left.forwardslash.chevron.right", .purple,            "Repos, Issues, PRs"),
+            ("Spotify",    "music.note",                              .green,             "Playlists, Wiedergabe"),
+            ("Discord",    "bubble.left.and.bubble.right.fill",       .indigo,            "Server, Nachrichten"),
+            ("X / Twitter","at",                                      .primary,           "Posts, DMs, Timeline"),
+            ("Microsoft",  "rectangle.split.3x1.fill",               .blue,              "OneDrive, Outlook, Teams"),
+            ("Dropbox",    "arrow.down.doc.fill",                     .cyan,              "Dateien synchronisieren"),
+            ("Apple",      "applelogo",                               .primary,           "iCloud, Erinnerungen"),
+            ("Amazon",     "cart.fill",                               .orange,            "Bestellungen, Alexa"),
+            ("Twitch",     "tv.fill",                                 .purple,            "Streams, Chat"),
+            ("Reddit",     "text.bubble.fill",                        Color(.systemPink), "Posts, Subreddits"),
+            ("Slack",      "number",                                  .green,             "Nachrichten, Kanäle"),
+            ("Notion",     "doc.text.fill",                           .primary,           "Seiten lesen/bearbeiten"),
+            ("SoundCloud", "waveform",                                .orange,            "Tracks, Playlists"),
+            ("LinkedIn",   "person.crop.rectangle.fill",              .blue,              "Profil, Netzwerk"),
         ]
 
-        LazyVGrid(columns: [GridItem(.flexible(), spacing: 16), GridItem(.flexible(), spacing: 16)], spacing: 16) {
+        LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
             ForEach(connectionItems, id: \.0) { item in
                 GroupBox {
-                    HStack(spacing: 10) {
+                    HStack(spacing: 8) {
                         Image(systemName: item.1)
-                            .font(.system(size: 18, weight: .semibold))
+                            .font(.system(size: 16, weight: .semibold))
                             .foregroundColor(item.2)
-                            .frame(width: 36, height: 36)
+                            .frame(width: 32, height: 32)
                             .background(item.2.opacity(0.12))
-                            .cornerRadius(10)
-                        VStack(alignment: .leading, spacing: 2) {
+                            .cornerRadius(8)
+                        VStack(alignment: .leading, spacing: 1) {
                             Text(item.0)
-                                .font(.system(size: 14, weight: .semibold))
+                                .font(.system(size: 12, weight: .semibold))
                             Text(item.3)
-                                .font(.caption).foregroundColor(.secondary).lineLimit(2)
+                                .font(.system(size: 10)).foregroundColor(.secondary).lineLimit(1)
                         }
                         Spacer()
-                        Text("Geplant")
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundColor(.secondary)
-                            .padding(.horizontal, 6).padding(.vertical, 3)
-                            .background(Capsule().fill(Color.secondary.opacity(0.15)))
                     }
                     .padding(4)
+                    .frame(minHeight: 36)
                 }
-                .opacity(0.6)
+                .overlay(alignment: .topTrailing) {
+                    Text("Geplant")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundColor(.secondary)
+                        .padding(.horizontal, 5).padding(.vertical, 2)
+                        .background(Capsule().fill(Color.secondary.opacity(0.15)))
+                        .padding(6)
+                }
+                .opacity(0.55)
             }
         }
-        settingsSaveButton(section: "Verbindungen")
+
+        // Fernsteuerung ganz unten
+        remoteControlSection()
     }
 
     // MARK: - Gedächtnis
@@ -1803,6 +1822,7 @@ struct SettingsView: View {
                 }
                 .padding()
             }
+            .frame(maxHeight: .infinity, alignment: .top)
             GroupBox {
                 VStack(alignment: .leading, spacing: 10) {
                     Label("Auto-Speichern", systemImage: "arrow.clockwise").font(.subheadline.bold())
@@ -1812,6 +1832,7 @@ struct SettingsView: View {
                 }
                 .padding()
             }
+            .frame(maxHeight: .infinity, alignment: .top)
         }
 
         // Recall settings (AgentZero-style)
@@ -2030,7 +2051,7 @@ struct SettingsView: View {
                                 tunnelURL = ""
                             } else {
                                 let dPort = UserDefaults.standard.integer(forKey: "kobold.port")
-                                let dToken = UserDefaults.standard.string(forKey: "kobold.authToken") ?? "kobold-secret"
+                                let dToken = RuntimeManager.shared.authToken
                                 WebAppServer.shared.start(
                                     port: webAppPort,
                                     daemonPort: dPort == 0 ? 8080 : dPort,
@@ -2187,6 +2208,141 @@ struct SettingsView: View {
         let img = NSImage(size: rep.size)
         img.addRepresentation(rep)
         return img
+    }
+
+    // MARK: - Google OAuth
+
+    @State private var googleSetupExpanded = false
+
+    @ViewBuilder
+    private func googleOAuthSection() -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 14) {
+                // Header
+                HStack(spacing: 10) {
+                    // Google "G" logo
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color(red: 0.259, green: 0.522, blue: 0.957))
+                            .frame(width: 36, height: 36)
+                        Text("G")
+                            .font(.system(size: 20, weight: .bold, design: .rounded))
+                            .foregroundColor(.white)
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Google")
+                            .font(.system(size: 16, weight: .bold))
+                        Text("Drive, Gmail, YouTube, Kalender, Kontakte und mehr")
+                            .font(.caption).foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    if googleConnected {
+                        HStack(spacing: 6) {
+                            Circle().fill(Color.koboldEmerald).frame(width: 8, height: 8)
+                            Text("Verbunden").font(.system(size: 11, weight: .semibold)).foregroundColor(.koboldEmerald)
+                        }
+                    }
+                }
+
+                if googleConnected {
+                    // Connected — show email + sign out
+                    if !googleEmail.isEmpty {
+                        HStack(spacing: 8) {
+                            Image(systemName: "person.circle.fill")
+                                .font(.system(size: 18))
+                                .foregroundColor(.secondary)
+                            Text(googleEmail)
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundColor(.primary)
+                        }
+                    }
+
+                    // Active scopes info
+                    HStack(spacing: 6) {
+                        ForEach(["Drive", "Gmail", "YouTube", "Kalender", "Kontakte"], id: \.self) { name in
+                            Text(name)
+                                .font(.system(size: 9, weight: .medium))
+                                .foregroundColor(.secondary)
+                                .padding(.horizontal, 6).padding(.vertical, 2)
+                                .background(Capsule().fill(Color.secondary.opacity(0.1)))
+                        }
+                        Text("+6")
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundColor(.secondary)
+                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(Capsule().fill(Color.secondary.opacity(0.1)))
+                    }
+
+                    Button("Abmelden") {
+                        Task {
+                            await GoogleOAuth.shared.signOut()
+                            googleConnected = false
+                            googleEmail = ""
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .foregroundColor(.red)
+                    .controlSize(.small)
+                } else {
+                    // Not connected — Sign In button
+                    Button(action: {
+                        GoogleOAuth.shared.signIn()
+                    }) {
+                        HStack(spacing: 12) {
+                            // Google "G" — white circle with colored G
+                            ZStack {
+                                RoundedRectangle(cornerRadius: 4)
+                                    .fill(Color.white)
+                                    .frame(width: 28, height: 28)
+                                Text("G")
+                                    .font(.system(size: 16, weight: .bold, design: .rounded))
+                                    .foregroundColor(Color(red: 0.259, green: 0.522, blue: 0.957)) // Google Blue
+                            }
+                            Text("Sign in with Google")
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundColor(.white)
+                        }
+                        .padding(.leading, 4)
+                        .padding(.trailing, 16)
+                        .padding(.vertical, 4)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(Color(red: 0.259, green: 0.522, blue: 0.957)) // #4285F4
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(googleClientId.isEmpty)
+                    .opacity(googleClientId.isEmpty ? 0.5 : 1.0)
+
+                    if googleClientId.isEmpty {
+                        // Ersteinrichtung — minimaler Setup-Hinweis
+                        DisclosureGroup("Ersteinrichtung", isExpanded: $googleSetupExpanded) {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Einmalig eine Client-ID von Google holen:")
+                                    .font(.caption).foregroundColor(.secondary)
+                                Text("console.cloud.google.com → Projekt → OAuth → Desktop-App")
+                                    .font(.system(size: 10, design: .monospaced)).foregroundColor(.secondary)
+                                TextField("Client ID einfügen", text: $googleClientId)
+                                    .textFieldStyle(.roundedBorder)
+                                    .font(.system(size: 12))
+                            }
+                            .padding(.top, 4)
+                        }
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    }
+                }
+            }
+            .padding()
+        }
+        .onAppear {
+            googleConnected = GoogleOAuth.shared.isConnected
+            googleEmail = GoogleOAuth.shared.userEmail
+        }
+        .onReceive(Timer.publish(every: 2, on: .main, in: .common).autoconnect()) { _ in
+            googleConnected = GoogleOAuth.shared.isConnected
+            googleEmail = GoogleOAuth.shared.userEmail
+        }
     }
 
     // MARK: - Telegram Bot
@@ -2586,6 +2742,7 @@ struct SettingsView: View {
 
     @AppStorage("kobold.agent.memoryPolicy") private var memoryPolicy: String = "auto"
     @AppStorage("kobold.agent.behaviorRules") private var behaviorRules: String = ""
+    @AppStorage("kobold.agent.memoryRules") private var memoryRules: String = ""
 
     @ViewBuilder
     private func memoryPolicySection() -> some View {
@@ -2639,6 +2796,26 @@ struct SettingsView: View {
                         .font(.caption2).foregroundColor(.secondary).italic()
                 }
                 Text("Tipp: Jede Zeile = eine Regel. Der Agent sieht diese in jedem Gespräch.")
+                    .font(.caption2).foregroundColor(.secondary)
+            }.padding(6)
+        }
+
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Label("Gedächtnis-Regeln", systemImage: "brain.fill").font(.subheadline.bold())
+                Text("Freitext-Anweisungen wie der Agent mit Erinnerungen umgehen soll. Z.B. 'Merke dir meine Lieblingsfarbe', 'Vergiss nie meine Termine'.")
+                    .font(.caption).foregroundColor(.secondary)
+                TextEditor(text: $memoryRules)
+                    .font(.system(size: 12, design: .monospaced))
+                    .frame(minHeight: 80, maxHeight: 150)
+                    .padding(6)
+                    .background(Color.black.opacity(0.2)).cornerRadius(8)
+                    .scrollContentBackground(.hidden)
+                if memoryRules.isEmpty {
+                    Text("Keine besonderen Gedächtnis-Regeln definiert — Agent folgt der gewählten Richtlinie.")
+                        .font(.caption2).foregroundColor(.secondary).italic()
+                }
+                Text("Tipp: Hier kannst du dem Agent detailliert sagen, was er sich merken soll und was nicht. Diese Regeln gelten zusätzlich zur gewählten Memory Policy.")
                     .font(.caption2).foregroundColor(.secondary)
             }.padding(6)
         }

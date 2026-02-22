@@ -92,8 +92,12 @@ public actor LLMRunner {
             return false
         }
         let stored = UserDefaults.standard.string(forKey: "kobold.ollamaModel") ?? ""
-        let first = models.compactMap { $0["name"] as? String }.first ?? ""
-        ollamaModel = stored.isEmpty ? first : stored
+        let names = models.compactMap { $0["name"] as? String }
+        // Prefer local models over cloud models for reliability
+        let localModels = names.filter { !$0.contains("cloud") }
+        let fallback = localModels.first ?? names.first ?? ""
+        ollamaModel = stored.isEmpty ? fallback : stored
+        print("[LLMRunner] Ollama model: \(ollamaModel) (stored: '\(stored)', available: \(names.count))")
         return !ollamaModel.isEmpty
     }
 
@@ -154,7 +158,13 @@ public actor LLMRunner {
         guard let url = URL(string: "http://localhost:11434/api/chat") else {
             throw LLMError.generationFailed("Invalid Ollama URL")
         }
-        if ollamaModel.isEmpty { throw LLMError.generationFailed("No Ollama model set") }
+        if ollamaModel.isEmpty {
+            // Auto-detect if model got lost
+            await autoDetect()
+            if ollamaModel.isEmpty {
+                throw LLMError.generationFailed("No Ollama model set — please select a model in Settings")
+            }
+        }
 
         let body: [String: Any] = [
             "model": ollamaModel,
@@ -165,14 +175,37 @@ public actor LLMRunner {
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        guard let httpBody = try? JSONSerialization.data(withJSONObject: body) else {
+            throw LLMError.generationFailed("Could not serialize request body")
+        }
+        req.httpBody = httpBody
         req.timeoutInterval = 120
 
-        let (data, _) = try await URLSession.shared.data(for: req)
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let msg = json["message"] as? [String: Any],
+        let (data, resp) = try await URLSession.shared.data(for: req)
+
+        // Check HTTP status first
+        if let httpResp = resp as? HTTPURLResponse, httpResp.statusCode != 200 {
+            let bodyStr = String(data: data, encoding: .utf8) ?? "no body"
+            print("[LLMRunner] Ollama HTTP \(httpResp.statusCode): \(bodyStr)")
+            throw LLMError.generationFailed("Ollama HTTP \(httpResp.statusCode): \(String(bodyStr.prefix(200)))")
+        }
+
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            let raw = String(data: data, encoding: .utf8) ?? "binary"
+            print("[LLMRunner] Ollama non-JSON response: \(raw.prefix(300))")
+            throw LLMError.generationFailed("Ollama returned non-JSON response")
+        }
+
+        // Check for Ollama error field
+        if let errorMsg = json["error"] as? String {
+            print("[LLMRunner] Ollama error: \(errorMsg)")
+            throw LLMError.generationFailed("Ollama: \(errorMsg)")
+        }
+
+        guard let msg = json["message"] as? [String: Any],
               let content = msg["content"] as? String else {
-            throw LLMError.generationFailed("Invalid Ollama response")
+            print("[LLMRunner] Unexpected Ollama response structure: \(json.keys)")
+            throw LLMError.generationFailed("Invalid Ollama response (missing message.content)")
         }
         return content
     }
