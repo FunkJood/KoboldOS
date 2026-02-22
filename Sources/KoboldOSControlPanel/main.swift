@@ -102,52 +102,68 @@ struct KoboldOSApp: App {
 // MARK: - App Delegate
 
 class AppDelegate: NSObject, NSApplicationDelegate {
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         // NEVER quit when window closes — always minimize to menu bar / dock
         return false
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Intercept window close button: hide instead of close
+        // Retarget the red close button on the main window: HIDE instead of CLOSE.
+        // SwiftUI's WindowGroup closes + terminates on the default close action,
+        // so we intercept at the button level to prevent that entirely.
+        retargetCloseButtons()
+        // Also watch for new windows (sheets, etc.) so we only retarget the main one
         NotificationCenter.default.addObserver(
-            forName: NSWindow.willCloseNotification,
+            forName: NSWindow.didBecomeMainNotification,
             object: nil, queue: .main
-        ) { notif in
-            guard let window = notif.object as? NSWindow,
-                  window.className != "NSStatusBarWindow",
+        ) { [weak self] _ in
+            self?.retargetCloseButtons()
+        }
+    }
+
+    /// Finds the main window's red close button and rewires it to hide instead of close.
+    private func retargetCloseButtons() {
+        for window in NSApp.windows {
+            guard window.className != "NSStatusBarWindow",
                   !window.className.contains("Popover"),
-                  !window.className.contains("Sheet") else { return }
-            // Hide the window and switch to accessory mode (menu bar only)
-            Task { @MainActor in
-                NSApp.setActivationPolicy(.accessory)
+                  !window.className.contains("_NSAlertPanel") else { continue }
+            if let closeButton = window.standardWindowButton(.closeButton) {
+                closeButton.target = self
+                closeButton.action = #selector(hideWindowInsteadOfClose(_:))
             }
         }
     }
 
+    /// Called when the user clicks the red X: hides the window, switches to accessory mode.
+    @objc func hideWindowInsteadOfClose(_ sender: Any?) {
+        guard let window = NSApp.keyWindow ?? NSApp.mainWindow else { return }
+        // Save data before hiding
+        NotificationCenter.default.post(name: .koboldShutdownSave, object: nil)
+        // Hide the window (keeps it alive, just invisible)
+        window.orderOut(nil)
+        // Switch to accessory mode (hides Dock icon, menu bar stays)
+        NSApp.setActivationPolicy(.accessory)
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
-        // Notify all observers to save data before shutdown
         NotificationCenter.default.post(name: .koboldShutdownSave, object: nil)
         RuntimeManager.shared.stopDaemon()
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
-        // Restore regular activation policy when app becomes active
-        Task { @MainActor in
-            NSApp.setActivationPolicy(.regular)
-        }
+        NSApp.setActivationPolicy(.regular)
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        // Clicking dock icon or menu bar: show main window
         if !flag {
-            Task { @MainActor in
-                NSApp.setActivationPolicy(.regular)
-                NSApp.activate(ignoringOtherApps: true)
-                if let window = NSApp.windows.first(where: {
-                    $0.className != "NSStatusBarWindow" && !$0.className.contains("Popover")
-                }) {
-                    window.makeKeyAndOrderFront(nil)
-                }
+            NSApp.setActivationPolicy(.regular)
+            NSApp.activate(ignoringOtherApps: true)
+            // Re-show the hidden main window
+            if let window = NSApp.windows.first(where: {
+                $0.className != "NSStatusBarWindow" && !$0.className.contains("Popover")
+            }) {
+                window.makeKeyAndOrderFront(nil)
             }
         }
         return true
