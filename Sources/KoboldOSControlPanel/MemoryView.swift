@@ -127,6 +127,12 @@ struct MemoryView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 memoryHeader
+                archivalSection
+                versioningSection
+                snapshotsSection
+
+                Divider().padding(.horizontal, 4)
+
                 searchAndFilterBar
                 memoryTypeInfo
                 if !errorMsg.isEmpty {
@@ -141,9 +147,6 @@ struct MemoryView: View {
                     }
                 }
                 memoryList
-                archivalSection
-                versioningSection
-                snapshotsSection
             }
             .padding(24)
         }
