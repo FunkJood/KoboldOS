@@ -42,9 +42,20 @@ class ModelDownloadManager: ObservableObject {
         }
     }
 
-    private func sdModelDirectory() -> URL {
+    func sdModelDirectory() -> URL {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         return appSupport.appendingPathComponent("KoboldOS/models/sd")
+    }
+
+    func modelsRootDirectory() -> URL {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        return appSupport.appendingPathComponent("KoboldOS/models")
+    }
+
+    func openModelsFolder() {
+        let dir = modelsRootDirectory()
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        NSWorkspace.shared.open(dir)
     }
 
     // MARK: - Ollama Chat Model Download

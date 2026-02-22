@@ -751,6 +751,24 @@ struct SettingsView: View {
                 if let error = ModelDownloadManager.shared.lastError {
                     Text(error).font(.caption).foregroundColor(.red)
                 }
+
+                Divider()
+
+                HStack(spacing: 12) {
+                    Button(action: { ModelDownloadManager.shared.openModelsFolder() }) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "folder.fill")
+                                .font(.system(size: 12))
+                            Text("Modell-Ordner öffnen")
+                                .font(.system(size: 12))
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .help("Öffnet den Ordner mit heruntergeladenen Modellen — hier kannst du Modelle manuell austauschen")
+
+                    Text("Eigene CoreML-Modelle in den Ordner legen, um sie zu verwenden.")
+                        .font(.system(size: 10)).foregroundColor(.secondary)
+                }
             }
             .padding()
         }
