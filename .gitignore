@@ -1,0 +1,47 @@
+# Swift / Xcode
+.build/
+*.xcodeproj
+*.xcworkspace
+xcuserdata/
+DerivedData/
+*.pbxuser
+*.mode1v3
+*.mode2v3
+*.perspectivev3
+*.moved-aside
+
+# Build artifacts
+*.app
+*.dmg
+*.dSYM.zip
+*.dSYM
+dist/*.app
+dist/*.dmg
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Debug/test scripts
+debug_*.sh
+test_*.sh
+test_*.py
+test_*.swift
+comprehensive_test.sh
+run_test.sh
+verify_integration.sh
+
+# Dev summaries
+*_SUMMARY.md
+CLAUDE_CODE_DEMO.md
+STATUS_REPORT.md
+UI_ENHANCEMENTS_PLAN.md
