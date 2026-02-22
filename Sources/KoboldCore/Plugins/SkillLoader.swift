@@ -86,7 +86,7 @@ public actor SkillLoader {
 
     // MARK: - Default Skills
 
-    private let currentSkillsVersion = "v0.2.2"
+    private let currentSkillsVersion = "v0.2.3"
 
     private func createDefaultSkillsIfNeeded() {
         let marker = skillsDir.appendingPathComponent(".defaults_installed")

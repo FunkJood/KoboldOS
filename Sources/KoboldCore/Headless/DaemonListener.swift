@@ -7,6 +7,7 @@ public actor DaemonListener {
     private let port: Int
     private let authToken: String
     private var agentLoop: AgentLoop?
+    private let taggedMemoryStore = MemoryStore()
 
     // Metrics
     private var chatRequests = 0
@@ -186,7 +187,7 @@ public actor DaemonListener {
         case "/health":
             return jsonOK([
                 "status": "ok",
-                "version": "0.2.2",
+                "version": "0.2.3",
                 "pid": Int(ProcessInfo.processInfo.processIdentifier),
                 "uptime": Int(Date().timeIntervalSince(startTime))
             ])
@@ -307,6 +308,17 @@ public actor DaemonListener {
         case "/checkpoints/resume":
             guard method == "POST", let body else { return jsonError("No body") }
             return await handleCheckpointResume(body: body)
+
+        // MARK: - Tagged Memory Entries
+        case "/memory/entries":
+            return await handleMemoryEntries(method: method, body: body)
+
+        case "/memory/entries/search":
+            guard method == "POST", let body else { return jsonError("No body") }
+            return await handleMemoryEntriesSearch(body: body)
+
+        case "/memory/entries/tags":
+            return await handleMemoryEntryTags()
 
         // MARK: - Memory Versioning
         case "/memory/versions":
@@ -695,7 +707,7 @@ public actor DaemonListener {
     private func buildAgentCard() -> [String: Any] {
         [
             "name": "KoboldOS",
-            "version": "0.2.2",
+            "version": "0.2.3",
             "description": "Native macOS AI Agent Runtime — local-first, privacy-focused",
             "capabilities": [
                 "streaming": true,
@@ -834,6 +846,82 @@ public actor DaemonListener {
             }
         }
         return jsonOK(["ok": true, "restoredBlocks": blocks.count])
+    }
+
+    // MARK: - Tagged Memory Entries Handlers
+
+    private func handleMemoryEntries(method: String, body: Data?) async -> String {
+        if method == "POST", let body {
+            // Add new entry
+            guard let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+                  let text = json["text"] as? String, !text.isEmpty else {
+                return jsonError("Missing 'text'")
+            }
+            let type = json["type"] as? String ?? "kurzzeit"
+            let tagsRaw = json["tags"] as? [String] ?? []
+            do {
+                let entry = try await taggedMemoryStore.add(text: text, memoryType: type, tags: tagsRaw)
+                return jsonOK(["ok": true, "id": entry.id])
+            } catch {
+                return jsonError("Failed to save: \(error.localizedDescription)")
+            }
+        }
+
+        if method == "DELETE", let body {
+            guard let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+                  let id = json["id"] as? String else {
+                return jsonError("Missing 'id'")
+            }
+            let deleted = try? await taggedMemoryStore.delete(id: id)
+            return jsonOK(["ok": deleted ?? false])
+        }
+
+        // GET — list all entries
+        let entries = await taggedMemoryStore.allEntries()
+        let fmt = ISO8601DateFormatter()
+        let arr: [[String: Any]] = entries.map { e in
+            [
+                "id": e.id,
+                "text": e.text,
+                "type": e.memoryType,
+                "tags": e.tags,
+                "timestamp": fmt.string(from: e.timestamp)
+            ]
+        }
+        let stats = await taggedMemoryStore.stats()
+        return jsonOK(["entries": arr, "total": stats.total, "byType": stats.byType, "tagCount": stats.tagCount])
+    }
+
+    private func handleMemoryEntriesSearch(body: Data) async -> String {
+        guard let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else {
+            return jsonError("Invalid body")
+        }
+        let query = json["query"] as? String ?? ""
+        let type = json["type"] as? String
+        let tags = json["tags"] as? [String]
+        let limit = json["limit"] as? Int ?? 10
+
+        do {
+            let results = try await taggedMemoryStore.smartSearch(query: query, type: type, tags: tags, limit: limit)
+            let fmt = ISO8601DateFormatter()
+            let arr: [[String: Any]] = results.map { e in
+                [
+                    "id": e.id,
+                    "text": e.text,
+                    "type": e.memoryType,
+                    "tags": e.tags,
+                    "timestamp": fmt.string(from: e.timestamp)
+                ]
+            }
+            return jsonOK(["results": arr, "count": results.count])
+        } catch {
+            return jsonError("Search failed: \(error.localizedDescription)")
+        }
+    }
+
+    private func handleMemoryEntryTags() async -> String {
+        let tags = await taggedMemoryStore.allTags()
+        return jsonOK(["tags": tags])
     }
 
     // MARK: - HTTP Helpers

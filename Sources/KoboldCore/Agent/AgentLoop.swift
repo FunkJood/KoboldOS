@@ -83,6 +83,9 @@ public actor AgentLoop {
     private var ruleEngine: ToolRuleEngine
     private var conversationHistory: [String] = []
     private let maxConversationHistory = 50
+    /// Proper message pairs for LLM context injection across turns
+    private var conversationMessages: [[String: String]] = []
+    private let maxConversationPairs = 15
     private var agentType: AgentType = .general
     private var currentProviderConfig: LLMProviderConfig?
 
@@ -111,13 +114,17 @@ public actor AgentLoop {
         await registry.register(ShellTool())
         await registry.register(BrowserTool())
         await registry.register(CalculatorPlugin())
-        // Memory tools
+        // Memory tools (legacy core memory blocks)
         await registry.register(CoreMemoryReadTool(memory: coreMemory))
         await registry.register(CoreMemoryAppendTool(memory: coreMemory))
         await registry.register(CoreMemoryReplaceTool(memory: coreMemory))
         // Archival memory tools (Letta/MemGPT paging)
         await registry.register(ArchivalMemorySearchTool(store: archivalStore))
         await registry.register(ArchivalMemoryInsertTool(store: archivalStore))
+        // Tagged memory tools (new tag-based system)
+        await registry.register(MemorySaveTool(store: memoryStore))
+        await registry.register(MemoryRecallTool(store: memoryStore))
+        await registry.register(MemoryForgetTool(store: memoryStore))
         // Management tools
         await registry.register(SkillWriteTool())
         await registry.register(TaskManageTool())
@@ -145,12 +152,23 @@ public actor AgentLoop {
     }
 
     public func setSystemPrompt(_ p: String) { /* stored in coreMemory persona block */ }
-    public func clearHistory() { conversationHistory = [] }
+    public func clearHistory() {
+        conversationHistory = []
+        conversationMessages = []
+    }
 
     /// Trim conversation history to prevent unbounded memory growth
     private func trimConversationHistory() {
         if conversationHistory.count > maxConversationHistory {
             conversationHistory.removeFirst(conversationHistory.count - maxConversationHistory)
+        }
+    }
+
+    /// Trim conversation messages (proper LLM message pairs) to last N pairs
+    private func trimConversationMessages() {
+        let maxMessages = maxConversationPairs * 2
+        if conversationMessages.count > maxMessages {
+            conversationMessages.removeFirst(conversationMessages.count - maxMessages)
         }
     }
 
@@ -222,12 +240,20 @@ public actor AgentLoop {
 
         // Build initial system prompt with current memory
         let compiledMemory = await coreMemory.compile()
-        let sysPrompt = buildSystemPrompt(toolDescriptions: toolDescriptions, compiledMemory: compiledMemory) + skillsPrompt + selfCheckPrompt + confidencePrompt + archivalPrompt
+
+        // Smart memory retrieval: search tagged memories relevant to this query
+        let relevantMemories = await smartMemoryRetrieval(query: userMessage)
+        let memoryRetrievalPrompt = relevantMemories.isEmpty ? "" : "\n\n## Relevante Erinnerungen (automatisch geladen)\n\(relevantMemories)"
+
+        let sysPrompt = buildSystemPrompt(toolDescriptions: toolDescriptions, compiledMemory: compiledMemory) + skillsPrompt + selfCheckPrompt + confidencePrompt + archivalPrompt + memoryRetrievalPrompt
 
         var messages: [[String: String]] = [
-            ["role": "system", "content": sysPrompt],
-            ["role": "user", "content": userMessage]
+            ["role": "system", "content": sysPrompt]
         ]
+        // Inject prior conversation context so the LLM sees the full conversation
+        messages.append(contentsOf: conversationMessages)
+        // Add current user message
+        messages.append(["role": "user", "content": userMessage])
 
         for stepCount in 1...agentType.stepLimit {
             // Refresh memory in system prompt every step (agent sees its own updates)
@@ -258,6 +284,9 @@ public actor AgentLoop {
             if parsedCalls.isEmpty {
                 let answer = llmResponse.trimmingCharacters(in: .whitespacesAndNewlines)
                 conversationHistory.append("Assistant: \(answer)")
+                conversationMessages.append(["role": "user", "content": userMessage])
+                conversationMessages.append(["role": "assistant", "content": answer])
+                trimConversationMessages()
                 return AgentResult(finalOutput: answer, steps: steps, success: true)
             }
 
@@ -278,6 +307,10 @@ public actor AgentLoop {
             if parsed.name == "response" {
                 let answer = parsed.arguments["text"] ?? llmResponse
                 conversationHistory.append("Assistant: \(answer)")
+                // Store proper message pair for next conversation turn
+                conversationMessages.append(["role": "user", "content": userMessage])
+                conversationMessages.append(["role": "assistant", "content": answer])
+                trimConversationMessages()
                 steps.append(AgentStep(
                     stepNumber: stepCount, type: .finalAnswer,
                     content: answer, toolCallName: "response",
@@ -537,12 +570,19 @@ public actor AgentLoop {
                 let toolDescriptions = buildToolDescriptions()
                 let skillsPrompt = await SkillLoader.shared.enabledSkillsPrompt()
                 let initialMemory = await coreMemory.compile()
-                let sysPrompt = buildSystemPrompt(toolDescriptions: toolDescriptions, compiledMemory: initialMemory) + skillsPrompt
+
+                // Smart memory retrieval for streaming
+                let relevantMemories = await self.smartMemoryRetrieval(query: userMessage)
+                let memoryRetrievalPrompt = relevantMemories.isEmpty ? "" : "\n\n## Relevante Erinnerungen (automatisch geladen)\n\(relevantMemories)"
+
+                let sysPrompt = buildSystemPrompt(toolDescriptions: toolDescriptions, compiledMemory: initialMemory) + skillsPrompt + memoryRetrievalPrompt
 
                 var messages: [[String: String]] = [
-                    ["role": "system", "content": sysPrompt],
-                    ["role": "user", "content": userMessage]
+                    ["role": "system", "content": sysPrompt]
                 ]
+                // Inject prior conversation context
+                messages.append(contentsOf: self.conversationMessages)
+                messages.append(["role": "user", "content": userMessage])
                 var lastMemorySnapshot = initialMemory
 
                 for stepCount in 1...agentType.stepLimit {
@@ -580,6 +620,9 @@ public actor AgentLoop {
                     if parsedCalls.isEmpty {
                         let answer = llmResponse.trimmingCharacters(in: .whitespacesAndNewlines)
                         conversationHistory.append("Assistant: \(answer)")
+                        self.conversationMessages.append(["role": "user", "content": userMessage])
+                        self.conversationMessages.append(["role": "assistant", "content": answer])
+                        self.trimConversationMessages()
                         let finalStep = AgentStep(
                             stepNumber: stepCount, type: .finalAnswer,
                             content: answer, toolCallName: nil,
@@ -608,6 +651,10 @@ public actor AgentLoop {
                     if parsed.name == "response" {
                         let answer = parsed.arguments["text"] ?? llmResponse
                         conversationHistory.append("Assistant: \(answer)")
+                        // Store proper message pair for next conversation turn
+                        self.conversationMessages.append(["role": "user", "content": userMessage])
+                        self.conversationMessages.append(["role": "assistant", "content": answer])
+                        self.trimConversationMessages()
                         let finalStep = AgentStep(
                             stepNumber: stepCount, type: .finalAnswer,
                             content: answer, toolCallName: "response",
@@ -842,6 +889,29 @@ public actor AgentLoop {
         {"tool_name": "delegate_parallel", "tool_args": {"tasks": "[{\\"profile\\": \\"coder\\", \\"message\\": \\"Schreibe Tests\\"}, {\\"profile\\": \\"researcher\\", \\"message\\": \\"Recherchiere Best Practices\\"}]"}}
         ```
 
+        ### memory_save
+        Speichere eine einzelne Erinnerung mit Tags. BEVORZUGE dieses Tool für neue Erinnerungen!
+        Typen: "langzeit" (Fakten über Nutzer), "kurzzeit" (aktueller Kontext), "wissen" (gelernte Lösungen)
+        ```json
+        {"tool_name": "memory_save", "tool_args": {"text": "Tim ist Entwickler und arbeitet an KoboldOS", "type": "langzeit", "tags": "persönlich,beruf"}}
+        {"tool_name": "memory_save", "tool_args": {"text": "Python venv: python3 -m venv .venv && source .venv/bin/activate", "type": "wissen", "tags": "python,entwicklung,snippet"}}
+        {"tool_name": "memory_save", "tool_args": {"text": "Arbeitet gerade an Memory-System Verbesserung", "type": "kurzzeit", "tags": "projekt,aktuell"}}
+        ```
+
+        ### memory_recall
+        Durchsuche alle Erinnerungen nach Text, Typ oder Tags.
+        ```json
+        {"tool_name": "memory_recall", "tool_args": {"query": "Python venv"}}
+        {"tool_name": "memory_recall", "tool_args": {"query": "", "type": "langzeit"}}
+        {"tool_name": "memory_recall", "tool_args": {"query": "API", "tags": "coding"}}
+        ```
+
+        ### memory_forget
+        Lösche eine einzelne Erinnerung anhand ihrer ID.
+        ```json
+        {"tool_name": "memory_forget", "tool_args": {"id": "abc-123-def"}}
+        ```
+
         ### archival_memory_search
         Durchsuche archivierte Erinnerungen die aus dem Core Memory ausgelagert wurden.
         ```json
@@ -896,6 +966,26 @@ public actor AgentLoop {
         {"tool_name": "shell", "tool_args": {"command": "osascript -e 'tell application \\"Notes\\" to tell default account to make new note at folder \\"Notizen\\" with properties {name:\\"Titel\\", body:\\"Inhalt\\"}'"}}
         ```
         """
+    }
+
+    // MARK: - Smart Memory Retrieval
+
+    private let memoryStore = MemoryStore()
+
+    /// Search tagged memories relevant to the user's query and return formatted context
+    private func smartMemoryRetrieval(query: String, limit: Int = 5) async -> String {
+        guard !query.isEmpty else { return "" }
+        do {
+            let results = try await memoryStore.smartSearch(query: query, limit: limit)
+            guard !results.isEmpty else { return "" }
+            return results.map { entry in
+                let tags = entry.tags.isEmpty ? "" : " [\(entry.tags.joined(separator: ", "))]"
+                let type = entry.memoryType.isEmpty ? "" : "(\(entry.memoryType))"
+                return "- \(type)\(tags) \(entry.text)"
+            }.joined(separator: "\n")
+        } catch {
+            return ""
+        }
     }
 
     // MARK: - System Prompt (AgentZero-style JSON communication)
@@ -978,50 +1068,52 @@ public actor AgentLoop {
         ```
 
         # Regeln
+        0. KONTEXT-BEWUSSTSEIN — KRITISCHE REGEL:
+           Du MUSST den gesamten bisherigen Gesprächsverlauf als Kontext verstehen und nutzen.
+           - Wenn der Nutzer "sie", "die", "das", "es", "davon" sagt, beziehe es auf das letzte Thema im Gespräch.
+           - Wenn der Nutzer eine Folge-Anweisung gibt (z.B. "sortiere sie", "lösch die", "mach das"), WEISST du aus dem Kontext was gemeint ist.
+           - Du fragst NIEMALS "Was meinst du?" wenn die Antwort im bisherigen Gesprächsverlauf steht.
+           - Beispiel: Nutzer fragt "Wie viele E-Mails habe ich?" → du antwortest "18.591" → Nutzer sagt "sortiere sie und lösch Werbung" → DU WEISST dass "sie" = E-Mails bedeutet. Handle sofort.
+           - Beispiel: Nutzer fragt "Zeige Dateien auf Desktop" → du zeigst sie → Nutzer sagt "lösch die großen" → DU WEISST dass "die großen" = große Dateien auf dem Desktop.
+           - Lies IMMER die vorherigen Nachrichten bevor du antwortest. Jede Nachricht hat Kontext aus der vorherigen.
+           - Wenn du dir unsicher bist, lies nochmal die letzten 3-5 Nachrichten im Verlauf. Die Antwort steht dort.
         1. JEDE Antwort ist ein JSON-Objekt mit thoughts, tool_name, tool_args — das ist dein INTERNES Format, der Nutzer sieht es NICHT
         2. Kein Text außerhalb des JSON erlaubt
         3. Um dem Nutzer zu antworten: benutze IMMER das "response" Tool — das ist der EINZIGE Weg wie der Nutzer dich hört
         4. Um Aufgaben auszuführen: benutze das passende Tool
         5. Pro Antwort EIN Tool, dann warte auf das Ergebnis
         WICHTIG: JSON ist dein internes Denkformat. Der Nutzer sieht NUR die Ausgabe des "response" Tools. Zeige ihm NIEMALS JSON, Fehlercodes oder technische Meldungen direkt.
-        6. DREISTUFIGES GEDÄCHTNIS — Du hast 3 Memory-Blöcke die du aktiv verwalten MUSST:
+        6. TAG-BASIERTES GEDÄCHTNIS — Speichere EINZELNE kleine Erinnerungen mit Tags, NICHT große Textblöcke!
 
-           ▸ "human" (LANGZEIT) — Permanente Informationen über Nutzer UND dich selbst:
-             - Über den Nutzer: Name, Beruf, Wohnort, Alter, Sprachen, Vorlieben, Anweisungen, Gewohnheiten
-             - Über dich selbst: Dein Name, deine Persönlichkeit, wie der Nutzer dich nennt
-             - Beziehung: Kommunikationsstil, Anrede, spezielle Wünsche
-             → DAUERHAFT. Ändert sich selten. Nur mit core_memory_replace aktualisieren.
+           Nutze BEVORZUGT das memory_save Tool (NICHT core_memory_append für neue Infos):
+           ```
+           memory_save → Einzelne Erinnerung mit Typ + Tags speichern
+           memory_recall → Erinnerungen nach Text/Typ/Tags durchsuchen
+           memory_forget → Einzelne Erinnerung löschen
+           ```
 
-           ▸ "short_term" (KURZZEIT) — Flüchtiger Sitzungskontext:
-             - Aktuelles Gesprächsthema, laufende Dateipfade, temporäre Notizen
-             - Unwichtige Gesprächsfragmente, Smalltalk, Zwischenergebnisse
-             - Alles was nach der Sitzung irrelevant wird
-             → TEMPORÄR. Regelmäßig überschreiben/löschen wenn Thema wechselt.
+           TYPEN:
+           ▸ "langzeit" — Permanente Fakten über den Nutzer und dich:
+             Name, Beruf, Vorlieben, Anweisungen, Gewohnheiten, dein Name
+           ▸ "kurzzeit" — Flüchtiger Sitzungskontext:
+             Aktuelles Thema, laufende Aufgabe, temporäre Notizen
+           ▸ "wissen" — Gelerntes Wissen und Lösungen:
+             Code-Snippets, API-Endpoints, Troubleshooting, Befehle
 
-           ▸ "knowledge" (WISSEN) — Gelerntes Wissen und funktionierende Lösungen:
-             - Code-Snippets die funktioniert haben (z.B. "Swift: URLSession timeout setzen: request.timeoutInterval = 30")
-             - Troubleshooting-Schritte (z.B. "Ollama startet nicht → brew services restart ollama")
-             - API-Endpoints, Konfigurationen, Pfade die wieder gebraucht werden
-             - Schulbuchwissen, Fakten, Definitionen die der Nutzer lernen wollte
-             - Funktionierende Befehle und Workflows
-             - Skills und Fähigkeiten die du gelernt hast
-             → PERMANENT. Wächst über die Zeit. Ist dein Wissensspeicher für die Zukunft.
+           TAGS — Jede Erinnerung bekommt passende Tags (kommagetrennt):
+           z.B. "persönlich", "beruf", "coding", "python", "projekt", "email", "vorlieben", "snippet", "api", "system"
 
-           ENTSCHEIDUNGSBAUM — Was gehört wohin?
-           - Nutzer sagt etwas über SICH ("Ich heiße...", "Ich mag...", "Ich bin...") → human
-           - Nutzer sagt etwas über DICH ("Du heißt...", "Nenn dich...", "Sei immer...") → human
-           - Nutzer gibt DAUERHAFTE Anweisung ("Antworte immer auf Deutsch") → human
-           - Nutzer arbeitet GERADE an etwas ("Öffne mal...", aktueller Task) → short_term
-           - Smalltalk, Wetter, beiläufige Erwähnung → short_term
-           - Du findest eine LÖSUNG die wiederverwendbar ist → knowledge
-           - Du lernst einen neuen FAKT oder TRICK → knowledge
-           - Nutzer fragt nach Erklärung und du recherchierst → Ergebnis in knowledge
-           - "Nein, ich meinte..." → core_memory_replace im passenden Block
+           BEISPIELE:
+           - Nutzer: "Ich heiße Tim" → memory_save(text="Nutzer heißt Tim", type="langzeit", tags="persönlich,name")
+           - Nutzer: "Ich mag Python" → memory_save(text="Bevorzugte Sprache: Python", type="langzeit", tags="coding,vorlieben")
+           - Du löst ein Problem → memory_save(text="Fix: brew services restart ollama wenn Ollama hängt", type="wissen", tags="ollama,troubleshooting")
+           - Nutzer arbeitet an etwas → memory_save(text="Arbeitet an: KoboldOS Memory-System", type="kurzzeit", tags="projekt,aktuell")
 
-           NACH JEDER ANTWORT prüfe\(isMemoryMemorizeEnabled ? "" : " (DEAKTIVIERT — speichere NUR wenn der Nutzer es ausdrücklich verlangt)"):
-           - Hat der Nutzer etwas Neues über sich verraten? → human
-           - Arbeiten wir an einem neuen Thema? → short_term aktualisieren
-           - Habe ich etwas Nützliches gelernt/gelöst? → knowledge
+           REGELN:
+           - EINE Erinnerung pro Fakt/Kontext (nicht alles in einen Block)
+           - Gute Tags wählen (wiederverwendbar, spezifisch)
+           - Bei Korrektur: alte Erinnerung mit memory_forget löschen, neue speichern
+           - Relevante Erinnerungen werden automatisch geladen — du musst nicht immer suchen\(isMemoryMemorizeEnabled ? "" : "\n           DEAKTIVIERT — speichere NUR wenn der Nutzer es ausdrücklich verlangt")
 
         7. Erfinde KEINE Ergebnisse — benutze IMMER ein Tool
         12. FEHLERBEHANDLUNG — Wenn ein Tool fehlschlägt:

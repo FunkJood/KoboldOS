@@ -67,9 +67,29 @@ public actor ToolEngine {
         let errPipe = Pipe()
         process.standardOutput = outPipe
         process.standardError  = errPipe
+
+        // Collect pipe data via readabilityHandler (non-blocking, Sendable-safe)
+        final class PipeCollector: @unchecked Sendable {
+            private let lock = NSLock()
+            private var _data = Data()
+            func append(_ chunk: Data) { lock.lock(); _data.append(chunk); lock.unlock() }
+            var data: Data { lock.lock(); defer { lock.unlock() }; return _data }
+        }
+        let outCollector = PipeCollector()
+        let errCollector = PipeCollector()
+        outPipe.fileHandleForReading.readabilityHandler = { handle in
+            let chunk = handle.availableData
+            guard !chunk.isEmpty else { return }
+            outCollector.append(chunk)
+        }
+        errPipe.fileHandleForReading.readabilityHandler = { handle in
+            let chunk = handle.availableData
+            guard !chunk.isEmpty else { return }
+            errCollector.append(chunk)
+        }
+
         do {
             try process.run()
-            // Run in background task to not block actor
             await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
                 DispatchQueue.global().async {
                     process.waitUntilExit()
@@ -77,12 +97,17 @@ public actor ToolEngine {
                 }
             }
         } catch {
+            outPipe.fileHandleForReading.readabilityHandler = nil
+            errPipe.fileHandleForReading.readabilityHandler = nil
             return "Error: \(error.localizedDescription)"
         }
-        let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
-        let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
-        var out = String(data: outData, encoding: .utf8) ?? ""
-        let err = String(data: errData, encoding: .utf8) ?? ""
+
+        outPipe.fileHandleForReading.readabilityHandler = nil
+        errPipe.fileHandleForReading.readabilityHandler = nil
+
+        var out = String(data: outCollector.data, encoding: .utf8) ?? ""
+        let err = String(data: errCollector.data, encoding: .utf8) ?? ""
+
         if !err.isEmpty { out += (out.isEmpty ? "" : "\n") + "stderr: \(err)" }
         if out.isEmpty  { out = "(exit code: \(process.terminationStatus))" }
         return truncate(out)

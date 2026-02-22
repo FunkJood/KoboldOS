@@ -160,15 +160,13 @@ public class CodingAgent: @unchecked Sendable, BaseAgent {
         return try await executeClaudeCode(prompt)
     }
 
-    /// Execute Claude Code CLI command
+    /// Execute Claude Code CLI command (non-blocking)
     private func executeClaudeCode(_ prompt: String) async throws -> String {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/bin/bash")
 
-        // Escape the prompt for shell safety
         let escapedPrompt = prompt.replacingOccurrences(of: "\"", with: "\\\"")
         let command = "\(claudeCodePath) \"\(escapedPrompt)\""
-
         task.arguments = ["-c", command]
 
         let stdoutPipe = Pipe()
@@ -176,24 +174,62 @@ public class CodingAgent: @unchecked Sendable, BaseAgent {
         task.standardOutput = stdoutPipe
         task.standardError = stderrPipe
 
+        // Collect pipe data asynchronously via readabilityHandler
+        let stdoutLock = NSLock()
+        let stderrLock = NSLock()
+        var stdoutData = Data()
+        var stderrData = Data()
+
+        stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
+            let chunk = handle.availableData
+            guard !chunk.isEmpty else { return }
+            stdoutLock.lock()
+            stdoutData.append(chunk)
+            stdoutLock.unlock()
+        }
+        stderrPipe.fileHandleForReading.readabilityHandler = { handle in
+            let chunk = handle.availableData
+            guard !chunk.isEmpty else { return }
+            stderrLock.lock()
+            stderrData.append(chunk)
+            stderrLock.unlock()
+        }
+
         do {
             try task.run()
-            task.waitUntilExit()
-
-            if task.terminationStatus == 0 {
-                let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-                if let output = String(data: stdoutData, encoding: .utf8) {
-                    let trimmedOutput = output.trimmingCharacters(in: .whitespacesAndNewlines)
-                    return trimmedOutput
-                }
-            } else {
-                let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-                if let errorOutput = String(data: stderrData, encoding: .utf8) {
-                    throw CodingAgentError.claudeCodeError(errorOutput)
-                }
-            }
         } catch {
+            stdoutPipe.fileHandleForReading.readabilityHandler = nil
+            stderrPipe.fileHandleForReading.readabilityHandler = nil
             throw CodingAgentError.executionFailed(error)
+        }
+
+        // Wait for process on background queue (non-blocking for caller)
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            DispatchQueue.global().async {
+                task.waitUntilExit()
+                cont.resume()
+            }
+        }
+
+        // Clean up handlers
+        stdoutPipe.fileHandleForReading.readabilityHandler = nil
+        stderrPipe.fileHandleForReading.readabilityHandler = nil
+
+        stdoutLock.lock()
+        let finalStdout = stdoutData
+        stdoutLock.unlock()
+        stderrLock.lock()
+        let finalStderr = stderrData
+        stderrLock.unlock()
+
+        if task.terminationStatus == 0 {
+            if let output = String(data: finalStdout, encoding: .utf8) {
+                return output.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        } else {
+            if let errorOutput = String(data: finalStderr, encoding: .utf8), !errorOutput.isEmpty {
+                throw CodingAgentError.claudeCodeError(errorOutput)
+            }
         }
 
         throw CodingAgentError.unknownError

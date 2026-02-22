@@ -616,7 +616,7 @@ struct KoboldOSSidebarLogo: View {
                         .shadow(color: Color.koboldEmerald.opacity(0.8), radius: glowPulse ? 6 : 3)
                         .animation(.easeInOut(duration: 2).repeatForever(autoreverses: true), value: glowPulse)
 
-                    Text("Alpha v0.2.2")
+                    Text("Alpha v0.2.3")
                         .font(.system(size: 8, weight: .bold))
                         .foregroundColor(.koboldGold)
                         .padding(.horizontal, 4).padding(.vertical, 2)

@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 import EventKit
 import Contacts
 @preconcurrency import UserNotifications
+import CoreImage
 import KoboldCore
 
 // MARK: - SettingsView
@@ -91,7 +92,7 @@ struct SettingsView: View {
     // Working directory
     @AppStorage("kobold.defaultWorkDir") private var defaultWorkDir: String = "~/Documents/KoboldOS"
 
-    private let sections = ["Konto", "Allgemein", "Agent", "Modelle", "Gedächtnis", "Proaktiv", "Berechtigungen", "Datenschutz & Sicherheit", "A2A", "Verbindungen", "Fernsteuerung", "Skills", "Über"]
+    private let sections = ["Konto", "Allgemein", "Agent", "Modelle", "Gedächtnis", "Proaktiv", "Berechtigungen", "Datenschutz & Sicherheit", "A2A", "Verbindungen", "Fernsteuerung", "Telegram", "Skills", "Über"]
 
     var body: some View {
         HStack(spacing: 0) {
@@ -139,6 +140,7 @@ struct SettingsView: View {
                     case "A2A":                      a2aSection()
                     case "Verbindungen":             connectionsSection()
                     case "Fernsteuerung":            remoteControlSection()
+                    case "Telegram":                 telegramSection()
                     case "Skills":                   skillsSettingsSection()
                     default:                         aboutSection()
                     }
@@ -164,6 +166,7 @@ struct SettingsView: View {
         case "A2A":                     return "arrow.left.arrow.right"
         case "Verbindungen":            return "link.circle.fill"
         case "Fernsteuerung":           return "globe"
+        case "Telegram":                return "paperplane.fill"
         case "Skills":                  return "sparkles"
         default:                        return "info.circle.fill"
         }
@@ -1972,6 +1975,10 @@ struct SettingsView: View {
     @AppStorage("kobold.webapp.username") private var webAppUsername: String = "admin"
     @AppStorage("kobold.webapp.password") private var webAppPassword: String = ""
     @State private var webAppRunning = false
+    @State private var tunnelRunning = false
+    @State private var tunnelURL: String = ""
+    @State private var cloudflaredInstalled = false
+    @State private var cloudflaredInstalling = false
 
     @ViewBuilder
     private func remoteControlSection() -> some View {
@@ -1980,7 +1987,7 @@ struct SettingsView: View {
         GroupBox {
             VStack(alignment: .leading, spacing: 14) {
                 Label("WebApp-Server", systemImage: "globe").font(.subheadline.bold())
-                Text("Starte eine Web-Oberfläche die dein KoboldOS spiegelt — als Fernbedienung von jedem Gerät im Netzwerk.")
+                Text("Starte eine Web-Oberfläche die dein KoboldOS spiegelt — als Fernbedienung von jedem Gerät.")
                     .font(.caption).foregroundColor(.secondary)
 
                 Toggle("WebApp aktivieren", isOn: $webAppEnabled)
@@ -2019,6 +2026,8 @@ struct SettingsView: View {
                             if webAppRunning {
                                 WebAppServer.shared.stop()
                                 webAppRunning = false
+                                tunnelRunning = false
+                                tunnelURL = ""
                             } else {
                                 let dPort = UserDefaults.standard.integer(forKey: "kobold.port")
                                 let dToken = UserDefaults.standard.string(forKey: "kobold.authToken") ?? ""
@@ -2039,7 +2048,7 @@ struct SettingsView: View {
                     if webAppRunning {
                         HStack(spacing: 6) {
                             Circle().fill(Color.koboldEmerald).frame(width: 8, height: 8)
-                            Text("Läuft auf http://localhost:\(webAppPort)")
+                            Text("http://localhost:\(webAppPort)")
                                 .font(.system(size: 11, design: .monospaced))
                                 .foregroundColor(.koboldEmerald)
                         }
@@ -2057,12 +2066,238 @@ struct SettingsView: View {
             .padding()
         }
 
+        // Cloudflare Tunnel Section
+        GroupBox {
+            VStack(alignment: .leading, spacing: 14) {
+                Label("Cloudflare Tunnel", systemImage: "network").font(.subheadline.bold())
+                Text("Erstelle einen sicheren Tunnel zum Internet — zugreifbar von jedem Gerät, auch unterwegs. Kein Port-Forwarding nötig.")
+                    .font(.caption).foregroundColor(.secondary)
+
+                if !cloudflaredInstalled {
+                    HStack(spacing: 12) {
+                        Label("cloudflared nicht installiert", systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption).foregroundColor(.orange)
+                        Button(cloudflaredInstalling ? "Installiere..." : "Mit Homebrew installieren") {
+                            cloudflaredInstalling = true
+                            WebAppServer.installCloudflared { success in
+                                DispatchQueue.main.async {
+                                    cloudflaredInstalling = false
+                                    cloudflaredInstalled = success
+                                }
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .disabled(cloudflaredInstalling)
+                    }
+                } else if webAppRunning {
+                    HStack(spacing: 12) {
+                        Button(tunnelRunning ? "Tunnel stoppen" : "Tunnel starten") {
+                            if tunnelRunning {
+                                WebAppServer.shared.stopTunnel()
+                                tunnelRunning = false
+                                tunnelURL = ""
+                            } else {
+                                WebAppServer.shared.startTunnel(localPort: webAppPort)
+                                tunnelRunning = true
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(tunnelRunning ? .red : .blue)
+
+                        if tunnelRunning && tunnelURL.isEmpty {
+                            HStack(spacing: 6) {
+                                ProgressView().controlSize(.small)
+                                Text("Tunnel wird erstellt...")
+                                    .font(.caption).foregroundColor(.secondary)
+                            }
+                        }
+                    }
+
+                    if !tunnelURL.isEmpty {
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack(spacing: 6) {
+                                Circle().fill(Color.blue).frame(width: 8, height: 8)
+                                Text(tunnelURL)
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundColor(.blue)
+                                    .textSelection(.enabled)
+                            }
+
+                            HStack(spacing: 8) {
+                                Button("URL kopieren") {
+                                    NSPasteboard.general.clearContents()
+                                    NSPasteboard.general.setString(tunnelURL, forType: .string)
+                                }
+                                .buttonStyle(.bordered).controlSize(.small)
+
+                                Button("Im Browser öffnen") {
+                                    if let url = URL(string: tunnelURL) {
+                                        NSWorkspace.shared.open(url)
+                                    }
+                                }
+                                .buttonStyle(.bordered).controlSize(.small)
+                            }
+
+                            // QR Code
+                            Text("QR-Code zum Scannen mit dem Handy:")
+                                .font(.caption).foregroundColor(.secondary)
+                            if let qrImage = generateQRCode(from: tunnelURL) {
+                                Image(nsImage: qrImage)
+                                    .interpolation(.none)
+                                    .resizable()
+                                    .scaledToFit()
+                                    .frame(width: 180, height: 180)
+                                    .background(Color.white)
+                                    .cornerRadius(12)
+                                    .padding(.top, 4)
+                            }
+                        }
+                    }
+                } else {
+                    Text("Starte zuerst den WebApp-Server um den Tunnel zu aktivieren.")
+                        .font(.caption).foregroundColor(.secondary)
+                }
+            }
+            .padding()
+        }
+        .onAppear {
+            cloudflaredInstalled = WebAppServer.isCloudflaredInstalled()
+            webAppRunning = WebAppServer.shared.isRunning
+            tunnelRunning = WebAppServer.shared.isTunnelRunning
+            tunnelURL = WebAppServer.shared.tunnelURL ?? ""
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("koboldTunnelURLReady"))) { notif in
+            if let url = notif.object as? String {
+                tunnelURL = url
+            }
+        }
+    }
+
+    /// Generate QR code as NSImage
+    private func generateQRCode(from string: String) -> NSImage? {
+        guard let data = string.data(using: .ascii),
+              let filter = CIFilter(name: "CIQRCodeGenerator") else { return nil }
+        filter.setValue(data, forKey: "inputMessage")
+        filter.setValue("M", forKey: "inputCorrectionLevel")
+        guard let output = filter.outputImage else { return nil }
+        let scale = CGAffineTransform(scaleX: 10, y: 10)
+        let scaled = output.transformed(by: scale)
+        let rep = NSCIImageRep(ciImage: scaled)
+        let img = NSImage(size: rep.size)
+        img.addRepresentation(rep)
+        return img
+    }
+
+    // MARK: - Telegram Bot
+
+    @AppStorage("kobold.telegram.token") private var telegramToken: String = ""
+    @AppStorage("kobold.telegram.chatId") private var telegramChatId: String = ""
+    @State private var telegramRunning = false
+    @State private var telegramBotName = ""
+    @State private var telegramStats: (received: Int, sent: Int) = (0, 0)
+
+    @ViewBuilder
+    private func telegramSection() -> some View {
+        sectionTitle("Telegram Bot")
+
+        GroupBox {
+            VStack(alignment: .leading, spacing: 14) {
+                Label("Telegram-Verbindung", systemImage: "paperplane.fill").font(.subheadline.bold())
+                Text("Verbinde deinen KoboldOS-Agent mit Telegram. Chatte von unterwegs per Handy mit deinem Agent.")
+                    .font(.caption).foregroundColor(.secondary)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Bot-Token (von @BotFather)").font(.caption.bold()).foregroundColor(.secondary)
+                    SecureField("z.B. 123456:ABC-DEF1234...", text: $telegramToken)
+                        .textFieldStyle(.roundedBorder)
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("Deine Chat-ID").font(.caption.bold()).foregroundColor(.secondary)
+                        Text("(optional — leer = alle erlauben)").font(.caption2).foregroundColor(.secondary)
+                    }
+                    TextField("z.B. 123456789", text: $telegramChatId)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 200)
+                }
+
+                HStack(spacing: 12) {
+                    Button(telegramRunning ? "Bot stoppen" : "Bot starten") {
+                        if telegramRunning {
+                            TelegramBot.shared.stop()
+                            telegramRunning = false
+                            telegramBotName = ""
+                        } else {
+                            guard !telegramToken.isEmpty else { return }
+                            let chatId = Int64(telegramChatId) ?? 0
+                            TelegramBot.shared.start(token: telegramToken, allowedChatId: chatId)
+                            telegramRunning = true
+                            // Poll for bot name
+                            Task {
+                                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                                telegramBotName = TelegramBot.shared.botUsername
+                            }
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(telegramRunning ? .red : .koboldEmerald)
+                    .disabled(telegramToken.isEmpty)
+
+                    if telegramRunning {
+                        HStack(spacing: 6) {
+                            Circle().fill(Color.koboldEmerald).frame(width: 8, height: 8)
+                            if !telegramBotName.isEmpty {
+                                Text("@\(telegramBotName)")
+                                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                                    .foregroundColor(.koboldEmerald)
+                            } else {
+                                Text("Verbinde...")
+                                    .font(.system(size: 11)).foregroundColor(.secondary)
+                            }
+                        }
+                    }
+                }
+
+                if telegramRunning {
+                    HStack(spacing: 16) {
+                        VStack(alignment: .leading) {
+                            Text("\(telegramStats.received)").font(.title3.bold()).foregroundColor(.koboldEmerald)
+                            Text("Empfangen").font(.caption2).foregroundColor(.secondary)
+                        }
+                        VStack(alignment: .leading) {
+                            Text("\(telegramStats.sent)").font(.title3.bold()).foregroundColor(.blue)
+                            Text("Gesendet").font(.caption2).foregroundColor(.secondary)
+                        }
+                    }
+                    .onReceive(Timer.publish(every: 3, on: .main, in: .common).autoconnect()) { _ in
+                        telegramStats = TelegramBot.shared.stats
+                        if telegramBotName.isEmpty {
+                            telegramBotName = TelegramBot.shared.botUsername
+                        }
+                    }
+                }
+            }
+            .padding()
+        }
+
         GroupBox {
             VStack(alignment: .leading, spacing: 8) {
-                Label("Sicherheitshinweise", systemImage: "lock.shield.fill").font(.subheadline.bold())
-                Text("• Die WebApp ist nur im lokalen Netzwerk erreichbar\n• Benutze ein starkes Passwort\n• Der Server nutzt Basic Auth (HTTP) — NICHT für öffentliche Netzwerke\n• Alle Befehle werden über den lokalen Daemon geleitet")
+                Label("So geht's", systemImage: "questionmark.circle.fill").font(.subheadline.bold())
+                Text("""
+                1. Öffne Telegram und suche @BotFather
+                2. Sende /newbot und folge den Anweisungen
+                3. Kopiere den Bot-Token hierher
+                4. Optional: Sende /start an deinen Bot, dann sende /status um deine Chat-ID zu erfahren
+                5. Klicke "Bot starten" — fertig!
+                """)
                     .font(.caption).foregroundColor(.secondary)
             }.padding()
+        }
+        .onAppear {
+            telegramRunning = TelegramBot.shared.isRunning
+            telegramBotName = TelegramBot.shared.botUsername
         }
     }
 
@@ -2532,7 +2767,7 @@ struct SettingsView: View {
                     )
                 VStack(alignment: .leading, spacing: 4) {
                     Text("KoboldOS").font(.title.bold())
-                    Text("Alpha v0.2.2").font(.title3).foregroundColor(.koboldGold)
+                    Text("Alpha v0.2.3").font(.title3).foregroundColor(.koboldGold)
                     Text("Dein lokaler KI-Assistent für macOS")
                         .font(.subheadline).foregroundColor(.secondary)
                 }
@@ -2544,7 +2779,7 @@ struct SettingsView: View {
         GroupBox {
             VStack(alignment: .leading, spacing: 8) {
                 Label("Build-Info", systemImage: "info.circle").font(.subheadline.bold())
-                infoRow("Version", "Alpha v0.2.2")
+                infoRow("Version", "Alpha v0.2.3")
                 infoRow("Build", "2026-02-22")
                 infoRow("Swift", "6.0")
                 infoRow("Plattform", "macOS 14+ (Sonoma)")
@@ -2650,7 +2885,7 @@ struct SettingsView: View {
         panel.allowedContentTypes = [.plainText]
         panel.nameFieldStringValue = "koboldos-logs.txt"
         if panel.runModal() == .OK, let url = panel.url {
-            let logs = "KoboldOS Alpha v0.2.2 — Logs\nPID: \(ProcessInfo.processInfo.processIdentifier)\nUptime: \(Date())\n"
+            let logs = "KoboldOS Alpha v0.2.3 — Logs\nPID: \(ProcessInfo.processInfo.processIdentifier)\nUptime: \(Date())\n"
             try? logs.write(to: url, atomically: true, encoding: .utf8)
         }
     }

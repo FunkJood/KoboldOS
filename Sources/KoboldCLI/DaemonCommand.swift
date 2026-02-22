@@ -13,7 +13,7 @@ struct DaemonCommand: AsyncParsableCommand {
     @Flag(name: .long, help: "Enable verbose logging") var verbose: Bool = false
 
     mutating func run() async throws {
-        print("🐲 KoboldOS Daemon v0.2.2")
+        print("🐲 KoboldOS Daemon v0.2.3")
         print("   Port: \(port)")
         print("   Token: \(token.prefix(8))...")
         print("   PID: \(ProcessInfo.processInfo.processIdentifier)")

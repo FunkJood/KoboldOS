@@ -16,19 +16,35 @@ public struct SnapshotInfo: Sendable, Codable {
     }
 }
 
-// MARK: - MemoryEntry
+// MARK: - MemoryEntry (Tag-based individual memories)
 
 public struct MemoryEntry: Sendable, Codable {
     public let id: String
-    public let text: String
+    public var text: String
+    public var memoryType: String   // "kurzzeit", "langzeit", "wissen"
     public let timestamp: Date
-    public let tags: [String]
+    public var tags: [String]
 
-    public init(id: String = UUID().uuidString, text: String, timestamp: Date = Date(), tags: [String] = []) {
+    public init(id: String = UUID().uuidString, text: String, memoryType: String = "kurzzeit", timestamp: Date = Date(), tags: [String] = []) {
         self.id = id
         self.text = text
+        self.memoryType = memoryType
         self.timestamp = timestamp
         self.tags = tags
+    }
+
+    // Backward-compatible decoding (old entries without memoryType)
+    enum CodingKeys: String, CodingKey {
+        case id, text, memoryType, timestamp, tags
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        text = try container.decode(String.self, forKey: .text)
+        memoryType = try container.decodeIfPresent(String.self, forKey: .memoryType) ?? "kurzzeit"
+        timestamp = try container.decode(Date.self, forKey: .timestamp)
+        tags = try container.decodeIfPresent([String].self, forKey: .tags) ?? []
     }
 }
 
@@ -64,10 +80,34 @@ public actor MemoryStore {
 
     // MARK: - Add
 
-    public func add(text: String, tags: [String] = []) async throws {
-        let entry = MemoryEntry(text: text, tags: tags)
+    public func add(text: String, memoryType: String = "kurzzeit", tags: [String] = []) async throws -> MemoryEntry {
+        let entry = MemoryEntry(text: text, memoryType: memoryType, tags: tags)
         localEntries.append(entry)
         try saveLocalEntries()
+        return entry
+    }
+
+    // MARK: - Update
+
+    public func update(id: String, text: String? = nil, memoryType: String? = nil, tags: [String]? = nil) async throws -> MemoryEntry? {
+        guard let index = localEntries.firstIndex(where: { $0.id == id }) else { return nil }
+        if let text = text { localEntries[index].text = text }
+        if let memoryType = memoryType { localEntries[index].memoryType = memoryType }
+        if let tags = tags { localEntries[index].tags = tags }
+        try saveLocalEntries()
+        return localEntries[index]
+    }
+
+    // MARK: - Delete
+
+    public func delete(id: String) async throws -> Bool {
+        let countBefore = localEntries.count
+        localEntries.removeAll { $0.id == id }
+        if localEntries.count < countBefore {
+            try saveLocalEntries()
+            return true
+        }
+        return false
     }
 
     // MARK: - Search (TF-IDF cosine similarity — semantic-like)
@@ -77,6 +117,74 @@ public actor MemoryStore {
         let texts = localEntries.map { $0.text + " " + $0.tags.joined(separator: " ") }
         let results = VectorSearch.search(query: query, entries: texts, limit: nResults)
         return results.map { localEntries[$0.index].text }
+    }
+
+    // MARK: - Smart Search (by query, type, and/or tags)
+
+    public func smartSearch(query: String = "", type: String? = nil, tags: [String]? = nil, limit: Int = 5) async throws -> [MemoryEntry] {
+        var candidates = localEntries
+
+        // Filter by type
+        if let type = type, !type.isEmpty {
+            candidates = candidates.filter { $0.memoryType == type }
+        }
+
+        // Filter by tags (any match)
+        if let tags = tags, !tags.isEmpty {
+            let searchTags = Set(tags.map { $0.lowercased() })
+            candidates = candidates.filter { entry in
+                let entryTags = Set(entry.tags.map { $0.lowercased() })
+                return !searchTags.isDisjoint(with: entryTags)
+            }
+        }
+
+        guard !candidates.isEmpty else { return [] }
+
+        // If no query, return most recent
+        if query.isEmpty {
+            return Array(candidates.sorted { $0.timestamp > $1.timestamp }.prefix(limit))
+        }
+
+        // TF-IDF search on candidates
+        let texts = candidates.map { $0.text + " " + $0.tags.joined(separator: " ") + " " + $0.memoryType }
+        let results = VectorSearch.search(query: query, entries: texts, limit: limit)
+        return results.map { candidates[$0.index] }
+    }
+
+    // MARK: - Get All Entries
+
+    public func allEntries() async -> [MemoryEntry] {
+        localEntries.sorted { $0.timestamp > $1.timestamp }
+    }
+
+    // MARK: - Get by Type
+
+    public func entriesByType(_ type: String) async -> [MemoryEntry] {
+        localEntries.filter { $0.memoryType == type }.sorted { $0.timestamp > $1.timestamp }
+    }
+
+    // MARK: - Get All Tags
+
+    public func allTags() async -> [String: Int] {
+        var tagCounts: [String: Int] = [:]
+        for entry in localEntries {
+            for tag in entry.tags {
+                tagCounts[tag.lowercased(), default: 0] += 1
+            }
+        }
+        return tagCounts
+    }
+
+    // MARK: - Stats
+
+    public func stats() async -> (total: Int, byType: [String: Int], tagCount: Int) {
+        var byType: [String: Int] = [:]
+        var allTags: Set<String> = []
+        for entry in localEntries {
+            byType[entry.memoryType, default: 0] += 1
+            for tag in entry.tags { allTags.insert(tag.lowercased()) }
+        }
+        return (total: localEntries.count, byType: byType, tagCount: allTags.count)
     }
 
     // MARK: - Snapshot System

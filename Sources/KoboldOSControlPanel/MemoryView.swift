@@ -27,58 +27,76 @@ enum MemoryType: String, CaseIterable, Identifiable {
         }
     }
 
+    var apiValue: String {
+        switch self {
+        case .kurzzeit: return "kurzzeit"
+        case .langzeit: return "langzeit"
+        case .wissen:   return "wissen"
+        }
+    }
+
     var description: String {
         switch self {
         case .kurzzeit:
-            return "Aktuelle Sitzung — wird nach Neustart überschrieben"
+            return "Aktuelle Sitzung — temporärer Kontext"
         case .langzeit:
-            return "Dauerhaft gespeichert — bleibt über alle Sitzungen erhalten"
+            return "Dauerhaft — bleibt über alle Sitzungen"
         case .wissen:
-            return "Fakten & Fähigkeiten — Referenzwissen für den Agenten"
+            return "Gelerntes Wissen — Lösungen & Fakten"
         }
     }
 
-    /// Label prefix used to encode type in the stored block label
-    var prefix: String {
-        switch self {
-        case .kurzzeit: return "kt."
-        case .langzeit:  return "lz."
-        case .wissen:    return "ws."
+    static func from(apiValue: String) -> MemoryType {
+        switch apiValue {
+        case "langzeit": return .langzeit
+        case "wissen": return .wissen
+        default: return .kurzzeit
         }
     }
 
+    /// Legacy: Map old block labels to types
     static func from(label: String) -> MemoryType {
         if label.hasPrefix("lz.") { return .langzeit }
         if label.hasPrefix("ws.") { return .wissen }
         if label.hasPrefix("kt.") { return .kurzzeit }
-        // Map well-known CoreMemory block labels to appropriate types
         switch label {
-        case "persona", "human", "system":
-            return .langzeit
-        case "knowledge", "capabilities":
-            return .wissen
-        case "short_term":
-            return .kurzzeit
-        default:
-            return .kurzzeit
+        case "persona", "human", "system": return .langzeit
+        case "knowledge", "capabilities": return .wissen
+        case "short_term": return .kurzzeit
+        default: return .kurzzeit
         }
     }
 }
 
-// MARK: - MemoryBlock
+// MARK: - Tagged Memory Entry (for UI)
+
+struct TaggedMemoryEntry: Identifiable {
+    let id: String
+    var text: String
+    var memoryType: MemoryType
+    var tags: [String]
+    var timestamp: Date
+}
+
+// MARK: - Legacy MemoryBlock (for core memory blocks)
 
 struct MemoryBlock: Identifiable {
     let id = UUID()
-    var label: String          // stored label (may include type prefix)
+    var label: String
     var content: String
     var limit: Int
     var memoryType: MemoryType
 
-    /// Display name without the type prefix
     var displayLabel: String {
         for type_ in MemoryType.allCases {
-            if label.hasPrefix(type_.prefix) {
-                return String(label.dropFirst(type_.prefix.count))
+            let prefix: String
+            switch type_ {
+            case .kurzzeit: prefix = "kt."
+            case .langzeit: prefix = "lz."
+            case .wissen: prefix = "ws."
+            }
+            if label.hasPrefix(prefix) {
+                return String(label.dropFirst(prefix.count))
             }
         }
         return label
@@ -90,76 +108,99 @@ struct MemoryBlock: Identifiable {
 struct MemoryView: View {
     @ObservedObject var viewModel: RuntimeViewModel
     @EnvironmentObject var l10n: LocalizationManager
+
+    // Tagged entries (new system)
+    @State private var entries: [TaggedMemoryEntry] = []
+    @State private var allTags: [String: Int] = [:]
+
+    // Legacy blocks
     @State private var blocks: [MemoryBlock] = []
+
+    // UI State
     @State private var isLoading = false
-    @State private var showAddBlock = false
+    @State private var showAddEntry = false
     @State private var saveStatus = ""
     @State private var searchText = ""
     @State private var filterType: MemoryType? = nil
+    @State private var filterTag: String? = nil
     @State private var errorMsg = ""
+    @State private var showLegacyBlocks = false
 
-    // Add block form
-    @State private var newLabel = ""
-    @State private var newContent = ""
-    @State private var newType: MemoryType = .kurzzeit
-
-    var filteredBlocks: [MemoryBlock] {
-        var result = blocks
-        if let type_ = filterType {
-            result = result.filter { $0.memoryType == type_ }
-        }
-        if !searchText.isEmpty {
-            result = result.filter {
-                $0.displayLabel.localizedCaseInsensitiveContains(searchText) ||
-                $0.content.localizedCaseInsensitiveContains(searchText)
-            }
-        }
-        return result
-    }
+    // Add entry form
+    @State private var newText = ""
+    @State private var newType: MemoryType = .langzeit
+    @State private var newTags = ""
 
     // Archival & versioning state
     @State private var archivalEntries: [(label: String, content: String, date: String)] = []
     @State private var archivalCount = 0
     @State private var archivalSize = 0
-    @State private var memoryVersions: [(id: String, date: String, message: String)] = []
+
+    var filteredEntries: [TaggedMemoryEntry] {
+        var result = entries
+        if let type_ = filterType {
+            result = result.filter { $0.memoryType == type_ }
+        }
+        if let tag = filterTag {
+            result = result.filter { $0.tags.map { $0.lowercased() }.contains(tag.lowercased()) }
+        }
+        if !searchText.isEmpty {
+            result = result.filter {
+                $0.text.localizedCaseInsensitiveContains(searchText) ||
+                $0.tags.joined(separator: " ").localizedCaseInsensitiveContains(searchText)
+            }
+        }
+        return result
+    }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 memoryHeader
-                archivalSection
-                versioningSection
-                snapshotsSection
+                HStack(alignment: .top, spacing: 12) {
+                    archivalSection
+                    snapshotsSection
+                }
 
                 Divider().padding(.horizontal, 4)
 
                 searchAndFilterBar
+                tagFilterBar
                 memoryTypeInfo
+
                 if !errorMsg.isEmpty {
                     GlassCard {
                         HStack(spacing: 8) {
                             Image(systemName: "exclamationmark.triangle.fill").foregroundColor(.orange)
                             Text(errorMsg).font(.caption).foregroundColor(.secondary)
                             Spacer()
-                            Button("Erneut versuchen") { Task { await loadMemory() } }
+                            Button("Erneut versuchen") { Task { await loadAll() } }
                                 .font(.caption).buttonStyle(.bordered)
                         }
                     }
                 }
-                memoryList
+
+                taggedMemoryList
+
+                // Legacy blocks toggle
+                if !blocks.isEmpty {
+                    legacyBlocksSection
+                }
             }
             .padding(24)
         }
         .background(Color.koboldBackground)
-        .task {
-            await loadMemory()
-            await loadArchival()
-            await loadVersions()
+        .task { await loadAll() }
+        .onReceive(Timer.publish(every: 8, on: .main, in: .common).autoconnect()) { _ in
+            Task { await loadEntries() }
         }
-        .onReceive(Timer.publish(every: 5, on: .main, in: .common).autoconnect()) { _ in
-            Task { await loadMemory() }
-        }
-        .sheet(isPresented: $showAddBlock) { addBlockSheet }
+        .sheet(isPresented: $showAddEntry) { addEntrySheet }
+    }
+
+    private func loadAll() async {
+        await loadEntries()
+        await loadMemory()
+        await loadArchival()
     }
 
     // MARK: - Header
@@ -179,15 +220,14 @@ struct MemoryView: View {
                     .animation(.easeInOut, value: saveStatus)
             }
             GlassButton(title: "Neu", icon: "plus", isPrimary: true) {
-                showAddBlock = true
+                showAddEntry = true
             }
-            .help("Neuen Gedächtnisblock hinzufügen")
+            .help("Neue Erinnerung hinzufügen")
             GlassButton(title: "Exportieren", icon: "square.and.arrow.up", isPrimary: false) {
                 exportMemory()
             }
-            .help("Alle Erinnerungen als JSON-Datei speichern")
             GlassButton(title: "Aktualisieren", icon: "arrow.clockwise", isPrimary: false) {
-                Task { await loadMemory() }
+                Task { await loadAll() }
             }
         }
     }
@@ -200,7 +240,7 @@ struct MemoryView: View {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 12))
                     .foregroundColor(.secondary)
-                TextField("Gedächtnis durchsuchen...", text: $searchText)
+                TextField("Erinnerungen durchsuchen...", text: $searchText)
                     .textFieldStyle(.plain)
                     .font(.system(size: 13))
                 if !searchText.isEmpty {
@@ -218,15 +258,73 @@ struct MemoryView: View {
 
             // Type filter chips
             HStack(spacing: 6) {
-                filterChip(nil, label: "Alle")
+                typeFilterChip(nil, label: "Alle")
                 ForEach(MemoryType.allCases) { type_ in
-                    filterChip(type_, label: type_.rawValue)
+                    typeFilterChip(type_, label: type_.rawValue)
                 }
             }
         }
     }
 
-    func filterChip(_ type_: MemoryType?, label: String) -> some View {
+    // MARK: - Tag Filter Bar
+
+    var tagFilterBar: some View {
+        Group {
+            if !allTags.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        Text("Tags:").font(.system(size: 10, weight: .semibold)).foregroundColor(.secondary)
+
+                        if filterTag != nil {
+                            Button(action: { withAnimation { filterTag = nil } }) {
+                                HStack(spacing: 3) {
+                                    Image(systemName: "xmark").font(.system(size: 8))
+                                    Text("Alle").font(.system(size: 10))
+                                }
+                                .foregroundColor(.secondary)
+                                .padding(.horizontal, 6).padding(.vertical, 3)
+                                .background(Capsule().fill(Color.white.opacity(0.1)))
+                            }
+                            .buttonStyle(.plain)
+                        }
+
+                        ForEach(sortedTags, id: \.key) { tag, count in
+                            tagChip(tag: tag, count: count)
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+        }
+    }
+
+    var sortedTags: [(key: String, value: Int)] {
+        allTags.sorted { $0.value > $1.value }
+    }
+
+    func tagChip(tag: String, count: Int) -> some View {
+        let isSelected = filterTag?.lowercased() == tag.lowercased()
+        return Button(action: {
+            withAnimation(.easeInOut(duration: 0.15)) {
+                filterTag = isSelected ? nil : tag
+            }
+        }) {
+            HStack(spacing: 3) {
+                Text("#\(tag)")
+                    .font(.system(size: 10, weight: isSelected ? .semibold : .regular))
+                Text("\(count)")
+                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    .foregroundColor(.secondary)
+            }
+            .foregroundColor(isSelected ? .koboldEmerald : .secondary)
+            .padding(.horizontal, 7).padding(.vertical, 3)
+            .background(Capsule().fill(isSelected ? Color.koboldEmerald.opacity(0.2) : Color.white.opacity(0.06))
+                .overlay(Capsule().stroke(isSelected ? Color.koboldEmerald.opacity(0.5) : Color.white.opacity(0.1), lineWidth: 0.5)))
+        }
+        .buttonStyle(.plain)
+    }
+
+    func typeFilterChip(_ type_: MemoryType?, label: String) -> some View {
         let isSelected = filterType == type_
         let color: Color = type_.map { $0.color } ?? .secondary
         return Button(action: {
@@ -249,7 +347,7 @@ struct MemoryView: View {
     var memoryTypeInfo: some View {
         LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
             ForEach(MemoryType.allCases) { type_ in
-                let count = blocks.filter { $0.memoryType == type_ }.count
+                let count = entries.filter { $0.memoryType == type_ }.count
                 GlassCard(padding: 10, cornerRadius: 10) {
                     HStack(spacing: 8) {
                         Image(systemName: type_.icon)
@@ -272,25 +370,21 @@ struct MemoryView: View {
         }
     }
 
-    // MARK: - Memory List
+    // MARK: - Tagged Memory List
 
-    var memoryList: some View {
+    var taggedMemoryList: some View {
         Group {
-            if isLoading {
-                GlassProgressBar(value: 0.5, label: "Lade Gedächtnis...")
+            if isLoading && entries.isEmpty {
+                GlassProgressBar(value: 0.5, label: "Lade Erinnerungen...")
                     .padding(.horizontal, 4)
-            } else if filteredBlocks.isEmpty {
+            } else if filteredEntries.isEmpty {
                 emptyState
             } else {
-                LazyVStack(spacing: 10) {
-                    ForEach(filteredBlocks) { block in
-                        if let idx = blocks.firstIndex(where: { $0.id == block.id }) {
-                            MemoryBlockCard(block: $blocks[idx], onSave: {
-                                Task { await saveBlock(blocks[idx]) }
-                            }, onDelete: {
-                                Task { await deleteBlock(label: blocks[idx].label) }
-                            })
-                        }
+                LazyVStack(spacing: 8) {
+                    ForEach(filteredEntries) { entry in
+                        TaggedMemoryCard(entry: entry, onDelete: {
+                            Task { await deleteEntry(id: entry.id) }
+                        })
                     }
                 }
             }
@@ -304,19 +398,51 @@ struct MemoryView: View {
             VStack(spacing: 12) {
                 Image(systemName: "brain.filled.head.profile")
                     .font(.system(size: 36)).foregroundColor(.secondary)
-                Text(searchText.isEmpty && filterType == nil ? "Keine Erinnerungen" : "Keine Treffer")
+                Text(searchText.isEmpty && filterType == nil && filterTag == nil ? "Keine Erinnerungen" : "Keine Treffer")
                     .font(.headline)
-                Text(searchText.isEmpty && filterType == nil
-                     ? "Der Agent hat noch keine Erinnerungen. Füge welche hinzu oder lass den Agenten selbst lernen."
-                     : "Keine Erinnerungen passen zur Suche oder zum Filter.")
+                Text(searchText.isEmpty && filterType == nil && filterTag == nil
+                     ? "Der Agent hat noch keine Erinnerungen gespeichert. Sprich mit ihm — er lernt automatisch."
+                     : "Keine Erinnerungen passen zu deiner Suche.")
                     .font(.caption).foregroundColor(.secondary).multilineTextAlignment(.center)
-                if searchText.isEmpty && filterType == nil {
+                if searchText.isEmpty && filterType == nil && filterTag == nil {
                     GlassButton(title: "Erste Erinnerung hinzufügen", icon: "plus", isPrimary: true) {
-                        showAddBlock = true
+                        showAddEntry = true
                     }
                 }
             }
             .frame(maxWidth: .infinity).padding()
+        }
+    }
+
+    // MARK: - Legacy Blocks Section
+
+    var legacyBlocksSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Button(action: { withAnimation { showLegacyBlocks.toggle() } }) {
+                HStack(spacing: 6) {
+                    Image(systemName: showLegacyBlocks ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 10))
+                    Text("Core Memory Blöcke").font(.system(size: 12, weight: .semibold))
+                    Text("(\(blocks.count))").font(.system(size: 11)).foregroundColor(.secondary)
+                    Spacer()
+                }
+                .foregroundColor(.secondary)
+            }
+            .buttonStyle(.plain)
+
+            if showLegacyBlocks {
+                LazyVStack(spacing: 10) {
+                    ForEach(blocks) { block in
+                        if let idx = blocks.firstIndex(where: { $0.id == block.id }) {
+                            LegacyMemoryBlockCard(block: $blocks[idx], onSave: {
+                                Task { await saveBlock(blocks[idx]) }
+                            }, onDelete: {
+                                Task { await deleteBlock(label: blocks[idx].label) }
+                            })
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -328,7 +454,6 @@ struct MemoryView: View {
                 GlassSectionHeader(title: "Archiv", icon: "tray.full.fill")
                 Text("Automatisch archivierte Erinnerungen wenn Core Memory >80% voll ist.")
                     .font(.caption).foregroundColor(.secondary)
-
                 HStack(spacing: 16) {
                     VStack(alignment: .leading) {
                         Text("\(archivalCount)").font(.title3.bold()).foregroundColor(.koboldEmerald)
@@ -343,7 +468,6 @@ struct MemoryView: View {
                         Task { await loadArchival() }
                     }
                 }
-
                 if !archivalEntries.isEmpty {
                     VStack(alignment: .leading, spacing: 6) {
                         ForEach(archivalEntries.prefix(5), id: \.content) { entry in
@@ -371,94 +495,38 @@ struct MemoryView: View {
         }
     }
 
-    // MARK: - Memory Versioning Section
-
-    var versioningSection: some View {
-        GlassCard {
-            VStack(alignment: .leading, spacing: 12) {
-                GlassSectionHeader(title: "Versionen", icon: "clock.arrow.circlepath")
-                Text("Git-ähnliche Versionierung — jede Session erstellt einen Commit.")
-                    .font(.caption).foregroundColor(.secondary)
-
-                if memoryVersions.isEmpty {
-                    Text("Keine Versionen vorhanden")
-                        .font(.caption).foregroundColor(.secondary)
-                } else {
-                    VStack(alignment: .leading, spacing: 6) {
-                        ForEach(memoryVersions.prefix(10), id: \.id) { v in
-                            HStack(spacing: 8) {
-                                Text(String(v.id.prefix(8)))
-                                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                                    .foregroundColor(.koboldEmerald)
-                                Text(v.message.prefix(40) + (v.message.count > 40 ? "..." : ""))
-                                    .font(.system(size: 10))
-                                    .foregroundColor(.primary)
-                                    .lineLimit(1)
-                                Spacer()
-                                Text(v.date)
-                                    .font(.system(size: 9))
-                                    .foregroundColor(.secondary)
-                                Button(action: { Task { await rollbackTo(v.id) } }) {
-                                    Image(systemName: "arrow.uturn.backward")
-                                        .font(.system(size: 9))
-                                        .foregroundColor(.orange)
-                                }
-                                .buttonStyle(.plain)
-                                .help("Auf diese Version zurücksetzen")
-                            }
-                        }
-                    }
-                }
-
-                HStack {
-                    Spacer()
-                    GlassButton(title: "Aktualisieren", icon: "arrow.clockwise", isPrimary: false) {
-                        Task { await loadVersions() }
-                    }
-                }
-            }
-        }
-    }
-
     // MARK: - Snapshots Section
 
     var snapshotsSection: some View {
         GlassCard {
             VStack(alignment: .leading, spacing: 12) {
                 GlassSectionHeader(title: "Gedächtnis-Backup", icon: "externaldrive.fill")
-                Text("Erstelle einen Snapshot aller Erinnerungen oder exportiere sie zur Sicherung.")
+                Text("Erstelle einen Snapshot aller Erinnerungen.")
                     .font(.caption).foregroundColor(.secondary)
                 HStack(spacing: 8) {
                     GlassButton(title: "Snapshot erstellen", icon: "camera", isPrimary: false) {
                         Task { await createSnapshot() }
                     }
-                    .help("Speichert einen Zeitstempel-Snapshot auf dem Daemon-Server")
                     GlassButton(title: "Als JSON exportieren", icon: "square.and.arrow.up", isPrimary: false) {
                         exportMemory()
                     }
-                    .help("Exportiert alle Erinnerungen als JSON-Datei auf deinem Mac")
                     Spacer()
-                    Text("\(blocks.count) Block(s) gesamt")
+                    Text("\(entries.count) Erinnerungen · \(blocks.count) Blöcke")
                         .font(.caption2).foregroundColor(.secondary)
                 }
             }
         }
     }
 
-    // MARK: - Add Block Sheet
+    // MARK: - Add Entry Sheet
 
-    var addBlockSheet: some View {
+    var addEntrySheet: some View {
         VStack(spacing: 20) {
             Text("Neue Erinnerung").font(.title3.bold()).padding(.top, 20)
 
             // Memory Type Picker
             VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 4) {
-                    Text("Gedächtnistyp").font(.caption.bold()).foregroundColor(.secondary)
-                    Text("·").foregroundColor(.secondary)
-                    Text("Wähle den passenden Typ für diese Erinnerung")
-                        .font(.caption).foregroundColor(.secondary)
-                }
+                Text("Typ").font(.caption.bold()).foregroundColor(.secondary)
                 HStack(spacing: 8) {
                     ForEach(MemoryType.allCases) { type_ in
                         Button(action: { newType = type_ }) {
@@ -476,46 +544,111 @@ struct MemoryView: View {
                         .buttonStyle(.plain)
                     }
                 }
-                Text(newType.description).font(.caption2).foregroundColor(.secondary).padding(.top, 2)
-            }
-
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Text("Label").font(.caption.bold()).foregroundColor(.secondary)
-                    Text("·").foregroundColor(.secondary)
-                    Text("Eindeutiger Name für diesen Block (z.B. user_name, project_goal)")
-                        .font(.caption).foregroundColor(.secondary)
-                }
-                GlassTextField(text: $newLabel, placeholder: "z.B. user_name, aktuelle_aufgabe...")
+                Text(newType.description).font(.caption2).foregroundColor(.secondary)
             }
 
             VStack(alignment: .leading, spacing: 6) {
                 Text("Inhalt").font(.caption.bold()).foregroundColor(.secondary)
-                TextEditor(text: $newContent)
+                TextEditor(text: $newText)
                     .font(.system(size: 13))
-                    .frame(minHeight: 100, maxHeight: 200)
+                    .frame(minHeight: 80, maxHeight: 160)
                     .padding(8)
                     .background(Color.black.opacity(0.2)).cornerRadius(8)
                     .scrollContentBackground(.hidden)
             }
 
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("Tags").font(.caption.bold()).foregroundColor(.secondary)
+                    Text("(kommagetrennt)").font(.caption2).foregroundColor(.secondary)
+                }
+                GlassTextField(text: $newTags, placeholder: "z.B. coding, python, projekt...")
+            }
+
             HStack(spacing: 12) {
                 GlassButton(title: "Abbrechen", isPrimary: false) {
-                    showAddBlock = false; newLabel = ""; newContent = ""
+                    showAddEntry = false; newText = ""; newTags = ""
                 }
-                GlassButton(title: "Hinzufügen", icon: "plus", isPrimary: true,
-                            isDisabled: newLabel.trimmingCharacters(in: .whitespaces).isEmpty) {
-                    Task { await addBlock() }
+                GlassButton(title: "Speichern", icon: "checkmark", isPrimary: true,
+                            isDisabled: newText.trimmingCharacters(in: .whitespaces).isEmpty) {
+                    Task { await addEntry() }
                 }
             }
             Spacer()
         }
         .padding(24)
-        .frame(minWidth: 460, minHeight: 420)
+        .frame(minWidth: 460, minHeight: 380)
         .background(Color.koboldBackground)
     }
 
-    // MARK: - Networking
+    // MARK: - Networking: Tagged Entries
+
+    func loadEntries() async {
+        guard viewModel.isConnected else { return }
+        guard let url = URL(string: viewModel.baseURL + "/memory/entries") else { return }
+
+        do {
+            let (data, resp) = try await viewModel.authorizedData(from: url)
+            if let http = resp as? HTTPURLResponse, http.statusCode != 200 { return }
+            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let entryList = json["entries"] as? [[String: Any]] else { return }
+
+            let fmt = ISO8601DateFormatter()
+            entries = entryList.compactMap { item in
+                guard let id = item["id"] as? String,
+                      let text = item["text"] as? String else { return nil }
+                let type = item["type"] as? String ?? "kurzzeit"
+                let tags = item["tags"] as? [String] ?? []
+                let ts = (item["timestamp"] as? String).flatMap { fmt.date(from: $0) } ?? Date()
+                return TaggedMemoryEntry(id: id, text: text, memoryType: MemoryType.from(apiValue: type), tags: tags, timestamp: ts)
+            }
+
+            // Load tags
+            if let tagsJson = json["tags"] as? [String: Int] {
+                allTags = tagsJson
+            } else {
+                // Compute locally
+                var tc: [String: Int] = [:]
+                for e in entries {
+                    for t in e.tags { tc[t.lowercased(), default: 0] += 1 }
+                }
+                allTags = tc
+            }
+        } catch {}
+    }
+
+    func addEntry() async {
+        let text = newText.trimmingCharacters(in: .whitespaces)
+        guard !text.isEmpty else { return }
+        let tags = newTags.components(separatedBy: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+
+        guard let url = URL(string: viewModel.baseURL + "/memory/entries") else { return }
+        var req = viewModel.authorizedRequest(url: url, method: "POST")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: [
+            "text": text,
+            "type": newType.apiValue,
+            "tags": tags
+        ] as [String : Any])
+        _ = try? await URLSession.shared.data(for: req)
+
+        showAddEntry = false; newText = ""; newTags = ""
+        withAnimation { saveStatus = "Gespeichert" }
+        await loadEntries()
+        try? await Task.sleep(nanoseconds: 2_000_000_000)
+        withAnimation { saveStatus = "" }
+    }
+
+    func deleteEntry(id: String) async {
+        guard let url = URL(string: viewModel.baseURL + "/memory/entries") else { return }
+        var req = viewModel.authorizedRequest(url: url, method: "DELETE")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: ["id": id])
+        _ = try? await URLSession.shared.data(for: req)
+        entries.removeAll { $0.id == id }
+    }
+
+    // MARK: - Networking: Legacy Blocks
 
     func loadMemory() async {
         isLoading = true
@@ -526,11 +659,7 @@ struct MemoryView: View {
             errorMsg = "Daemon nicht verbunden"
             return
         }
-
-        guard let url = URL(string: viewModel.baseURL + "/memory") else {
-            errorMsg = "Ungültige URL"
-            return
-        }
+        guard let url = URL(string: viewModel.baseURL + "/memory") else { return }
 
         do {
             let (data, resp) = try await viewModel.authorizedData(from: url)
@@ -539,10 +668,7 @@ struct MemoryView: View {
                 return
             }
             guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let blockList = json["blocks"] as? [[String: Any]] else {
-                errorMsg = "Ungültige Antwort vom Daemon"
-                return
-            }
+                  let blockList = json["blocks"] as? [[String: Any]] else { return }
 
             blocks = blockList.compactMap { item in
                 guard let label = item["label"] as? String,
@@ -565,7 +691,7 @@ struct MemoryView: View {
             "content": block.content
         ])
         _ = try? await URLSession.shared.data(for: req)
-        withAnimation { saveStatus = "Gespeichert ✓" }
+        withAnimation { saveStatus = "Gespeichert" }
         try? await Task.sleep(nanoseconds: 2_000_000_000)
         withAnimation { saveStatus = "" }
     }
@@ -579,53 +705,9 @@ struct MemoryView: View {
         blocks.removeAll { $0.label == label }
     }
 
-    func addBlock() async {
-        let rawLabel = newLabel.trimmingCharacters(in: .whitespaces)
-        let content  = newContent.trimmingCharacters(in: .whitespaces)
-        guard !rawLabel.isEmpty else { return }
-        // Encode memory type as prefix
-        let fullLabel = newType.prefix + rawLabel
-        let block = MemoryBlock(label: fullLabel, content: content, limit: 500, memoryType: newType)
-        blocks.append(block)
-        await saveBlock(block)
-        showAddBlock = false; newLabel = ""; newContent = ""
-    }
-
-    func createSnapshot() async {
-        guard let url = URL(string: viewModel.baseURL + "/memory/snapshot") else { return }
-        let req = viewModel.authorizedRequest(url: url, method: "POST")
-        _ = try? await URLSession.shared.data(for: req)
-        withAnimation { saveStatus = "Snapshot erstellt ✓" }
-        try? await Task.sleep(nanoseconds: 2_000_000_000)
-        withAnimation { saveStatus = "" }
-    }
-
-    func exportMemory() {
-        let exportData: [[String: Any]] = blocks.map {
-            ["label": $0.label, "display_label": $0.displayLabel,
-             "content": $0.content, "type": $0.memoryType.rawValue, "limit": $0.limit]
-        }
-        guard let data = try? JSONSerialization.data(withJSONObject: exportData, options: .prettyPrinted),
-              let json = String(data: data, encoding: .utf8) else { return }
-
-        let panel = NSSavePanel()
-        panel.nameFieldStringValue = "KoboldOS_Gedaechtnis_\(formattedDate()).json"
-        panel.allowedContentTypes = [.json]
-        panel.message = "Exportiere alle Gedächtnisblöcke als JSON"
-        if panel.runModal() == .OK, let url = panel.url {
-            try? json.write(to: url, atomically: true, encoding: .utf8)
-            withAnimation { saveStatus = "Exportiert ✓" }
-            Task {
-                try? await Task.sleep(nanoseconds: 2_000_000_000)
-                withAnimation { self.saveStatus = "" }
-            }
-        }
-    }
-
-    // MARK: - Archival & Versioning Data
+    // MARK: - Archival & Versioning
 
     func loadArchival() async {
-        // Load from KoboldCore directly since ArchivalMemoryStore is in-process
         let store = KoboldCore.ArchivalMemoryStore.shared
         let entries = await store.allEntries()
         archivalCount = entries.count
@@ -637,25 +719,39 @@ struct MemoryView: View {
         }
     }
 
-    func loadVersions() async {
-        let versions = await KoboldCore.MemoryVersionStore.shared.log(limit: 10)
-        let fmt = DateFormatter()
-        fmt.dateFormat = "dd.MM HH:mm"
-        memoryVersions = versions.map { v in
-            (id: v.id, date: fmt.string(from: v.timestamp), message: v.message)
-        }
-    }
-
-    func rollbackTo(_ versionId: String) async {
-        guard let url = URL(string: viewModel.baseURL + "/memory/rollback") else { return }
-        var req = viewModel.authorizedRequest(url: url, method: "POST")
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try? JSONSerialization.data(withJSONObject: ["id": versionId])
+    func createSnapshot() async {
+        guard let url = URL(string: viewModel.baseURL + "/memory/snapshot") else { return }
+        let req = viewModel.authorizedRequest(url: url, method: "POST")
         _ = try? await URLSession.shared.data(for: req)
-        withAnimation { saveStatus = "Rollback ✓" }
-        await loadMemory()
+        withAnimation { saveStatus = "Snapshot erstellt" }
         try? await Task.sleep(nanoseconds: 2_000_000_000)
         withAnimation { saveStatus = "" }
+    }
+
+    func exportMemory() {
+        var exportData: [[String: Any]] = entries.map {
+            ["id": $0.id, "text": $0.text, "type": $0.memoryType.apiValue, "tags": $0.tags,
+             "timestamp": ISO8601DateFormatter().string(from: $0.timestamp)]
+        }
+        // Also include legacy blocks
+        exportData += blocks.map {
+            ["label": $0.label, "content": $0.content, "type": $0.memoryType.apiValue, "limit": $0.limit, "legacy": true] as [String : Any]
+        }
+
+        guard let data = try? JSONSerialization.data(withJSONObject: exportData, options: .prettyPrinted),
+              let json = String(data: data, encoding: .utf8) else { return }
+
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "KoboldOS_Gedaechtnis_\(formattedDate()).json"
+        panel.allowedContentTypes = [.json]
+        if panel.runModal() == .OK, let url = panel.url {
+            try? json.write(to: url, atomically: true, encoding: .utf8)
+            withAnimation { saveStatus = "Exportiert" }
+            Task {
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                withAnimation { self.saveStatus = "" }
+            }
+        }
     }
 
     func formatBytes(_ bytes: Int) -> String {
@@ -671,9 +767,78 @@ struct MemoryView: View {
     }
 }
 
-// MARK: - MemoryBlockCard
+// MARK: - TaggedMemoryCard
 
-struct MemoryBlockCard: View {
+struct TaggedMemoryCard: View {
+    let entry: TaggedMemoryEntry
+    let onDelete: () -> Void
+    @State private var showDeleteConfirm = false
+
+    var body: some View {
+        GlassCard(padding: 12, cornerRadius: 10) {
+            VStack(alignment: .leading, spacing: 8) {
+                // Header: type badge + tags + date + delete
+                HStack(spacing: 6) {
+                    // Type badge
+                    HStack(spacing: 3) {
+                        Image(systemName: entry.memoryType.icon)
+                            .font(.system(size: 10))
+                        Text(entry.memoryType.rawValue)
+                            .font(.system(size: 10, weight: .semibold))
+                    }
+                    .foregroundColor(entry.memoryType.color)
+                    .padding(.horizontal, 6).padding(.vertical, 3)
+                    .background(Capsule().fill(entry.memoryType.color.opacity(0.15)))
+
+                    // Tags
+                    ForEach(entry.tags, id: \.self) { tag in
+                        Text("#\(tag)")
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundColor(.koboldEmerald.opacity(0.8))
+                            .padding(.horizontal, 5).padding(.vertical, 2)
+                            .background(Capsule().fill(Color.koboldEmerald.opacity(0.1)))
+                    }
+
+                    Spacer()
+
+                    // Date
+                    Text(formatDate(entry.timestamp))
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary)
+
+                    // Delete
+                    Button(action: { showDeleteConfirm = true }) {
+                        Image(systemName: "trash")
+                            .font(.system(size: 10))
+                            .foregroundColor(.red.opacity(0.6))
+                    }
+                    .buttonStyle(.plain)
+                    .confirmationDialog("Erinnerung löschen?", isPresented: $showDeleteConfirm, titleVisibility: .visible) {
+                        Button("Löschen", role: .destructive) { onDelete() }
+                        Button("Abbrechen", role: .cancel) {}
+                    }
+                }
+
+                // Content
+                Text(entry.text)
+                    .font(.system(size: 12))
+                    .foregroundColor(.primary)
+                    .lineLimit(3)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    func formatDate(_ date: Date) -> String {
+        let fmt = DateFormatter()
+        fmt.dateFormat = "dd.MM.yy HH:mm"
+        return fmt.string(from: date)
+    }
+}
+
+// MARK: - LegacyMemoryBlockCard
+
+struct LegacyMemoryBlockCard: View {
     @Binding var block: MemoryBlock
     let onSave: () -> Void
     let onDelete: () -> Void
@@ -683,29 +848,20 @@ struct MemoryBlockCard: View {
     var body: some View {
         GlassCard {
             VStack(alignment: .leading, spacing: 10) {
-                // Header row
                 HStack(spacing: 8) {
-                    // Memory type icon + color
                     Image(systemName: block.memoryType.icon)
                         .font(.system(size: 12))
                         .foregroundColor(block.memoryType.color)
-
                     GlassStatusBadge(label: block.displayLabel, color: block.memoryType.color, icon: "tag.fill")
-
                     Text(block.memoryType.rawValue)
                         .font(.system(size: 10))
                         .foregroundColor(block.memoryType.color.opacity(0.8))
                         .padding(.horizontal, 5).padding(.vertical, 2)
                         .background(Capsule().fill(block.memoryType.color.opacity(0.1)))
-
                     Spacer()
-
-                    // Character counter
                     Text("\(block.content.count)/\(block.limit)")
                         .font(.caption2)
                         .foregroundColor(block.content.count > block.limit ? .red : .secondary)
-
-                    // Edit button
                     Button(action: {
                         if isEditing { onSave() }
                         withAnimation { isEditing.toggle() }
@@ -714,26 +870,15 @@ struct MemoryBlockCard: View {
                             .foregroundColor(isEditing ? .koboldEmerald : .secondary)
                     }
                     .buttonStyle(.plain)
-                    .help(isEditing ? "Speichern" : "Bearbeiten")
-
-                    // Delete button
                     Button(action: { showDeleteConfirm = true }) {
-                        Image(systemName: "trash")
-                            .foregroundColor(.red.opacity(0.7))
+                        Image(systemName: "trash").foregroundColor(.red.opacity(0.7))
                     }
                     .buttonStyle(.plain)
-                    .help("Erinnerung löschen")
-                    .confirmationDialog(
-                        "Erinnerung '\(block.displayLabel)' löschen?",
-                        isPresented: $showDeleteConfirm,
-                        titleVisibility: .visible
-                    ) {
+                    .confirmationDialog("Block '\(block.displayLabel)' löschen?", isPresented: $showDeleteConfirm, titleVisibility: .visible) {
                         Button("Löschen", role: .destructive) { onDelete() }
                         Button("Abbrechen", role: .cancel) {}
                     }
                 }
-
-                // Content editor / viewer
                 if isEditing {
                     TextEditor(text: $block.content)
                         .font(.system(size: 12, design: .monospaced))
@@ -741,10 +886,7 @@ struct MemoryBlockCard: View {
                         .padding(6)
                         .background(Color.black.opacity(0.2)).cornerRadius(6)
                         .scrollContentBackground(.hidden)
-
                     HStack {
-                        Text(block.memoryType.description)
-                            .font(.caption2).foregroundColor(.secondary)
                         Spacer()
                         GlassButton(title: "Speichern", icon: "checkmark", isPrimary: true) {
                             onSave()

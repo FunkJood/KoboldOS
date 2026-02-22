@@ -226,22 +226,23 @@ class RuntimeViewModel: ObservableObject {
         if ours {
             isConnected = true
             daemonStatus = "Connected"
-            await loadMetrics()
-            await loadModels()
-            await checkOllamaStatus()
+            // Load in parallel instead of sequentially
+            async let m: () = loadMetrics()
+            async let o: () = loadModels()
+            async let s: () = checkOllamaStatus()
+            _ = await (m, o, s)
         } else {
-            // Either no daemon running, or a stale daemon from another instance.
-            // RuntimeManager's health monitor will handle stale-daemon restarts.
             daemonStatus = "Starting..."
             await startDaemon()
-            for _ in 0..<10 {
-                try? await Task.sleep(nanoseconds: 800_000_000)
+            for _ in 0..<15 {
+                try? await Task.sleep(nanoseconds: 400_000_000)  // 400ms (was 800ms)
                 if await checkHealthIsOurProcess() {
                     isConnected = true
                     daemonStatus = "Connected"
-                    await loadMetrics()
-                    await loadModels()
-                    await checkOllamaStatus()
+                    async let m: () = loadMetrics()
+                    async let o: () = loadModels()
+                    async let s: () = checkOllamaStatus()
+                    _ = await (m, o, s)
                     break
                 }
             }
@@ -685,7 +686,7 @@ class RuntimeViewModel: ObservableObject {
             }
             trimMessages()
             saveChatHistory()
-            await loadMetrics()
+            Task { await loadMetrics() }  // fire-and-forget, don't block UI
         } catch {
             if !Task.isCancelled {
                 messages.append(ChatMessage(
@@ -734,7 +735,7 @@ class RuntimeViewModel: ObservableObject {
                 messages.append(ChatMessage(kind: .assistant(text: output), timestamp: Date()))
             }
             saveChatHistory()
-            await loadMetrics()
+            Task { await loadMetrics() }  // fire-and-forget, don't block UI
         } catch {
             messages.append(ChatMessage(
                 kind: .assistant(text: "Fehler: \(error.localizedDescription)"),
@@ -934,27 +935,34 @@ class RuntimeViewModel: ObservableObject {
     }
 
     func loadChatHistory() {
-        guard let data = try? Data(contentsOf: historyURL),
-              let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return }
-        messages = arr.compactMap { item in
-            guard let kind = item["kind"] as? String else { return nil }
-            let text = item["text"] as? String ?? ""
-            let ts = Date(timeIntervalSince1970: item["ts"] as? Double ?? Date().timeIntervalSince1970)
-            switch kind {
-            case "user":      return ChatMessage(kind: .user(text: text), timestamp: ts)
-            case "assistant": return ChatMessage(kind: .assistant(text: text), timestamp: ts)
-            case "thinking":
-                let entriesRaw = item["entries"] as? [[String: Any]] ?? []
-                let entries: [ThinkingEntry] = entriesRaw.map { e in
-                    ThinkingEntry(
-                        type: ThinkingEntry.ThinkingEntryType(rawValue: e["type"] as? String ?? "thought") ?? .thought,
-                        content: e["content"] as? String ?? "",
-                        toolName: e["toolName"] as? String ?? "",
-                        success: e["success"] as? Bool ?? true
-                    )
+        // Parse JSON off main thread to avoid blocking app startup
+        let url = historyURL
+        Task.detached(priority: .userInitiated) { [weak self] in
+            guard let data = try? Data(contentsOf: url),
+                  let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return }
+            let parsed: [ChatMessage] = arr.compactMap { item in
+                guard let kind = item["kind"] as? String else { return nil }
+                let text = item["text"] as? String ?? ""
+                let ts = Date(timeIntervalSince1970: item["ts"] as? Double ?? Date().timeIntervalSince1970)
+                switch kind {
+                case "user":      return ChatMessage(kind: .user(text: text), timestamp: ts)
+                case "assistant": return ChatMessage(kind: .assistant(text: text), timestamp: ts)
+                case "thinking":
+                    let entriesRaw = item["entries"] as? [[String: Any]] ?? []
+                    let entries: [ThinkingEntry] = entriesRaw.map { e in
+                        ThinkingEntry(
+                            type: ThinkingEntry.ThinkingEntryType(rawValue: e["type"] as? String ?? "thought") ?? .thought,
+                            content: e["content"] as? String ?? "",
+                            toolName: e["toolName"] as? String ?? "",
+                            success: e["success"] as? Bool ?? true
+                        )
+                    }
+                    return entries.isEmpty ? nil : ChatMessage(kind: .thinking(entries: entries), timestamp: ts)
+                default:          return nil
                 }
-                return entries.isEmpty ? nil : ChatMessage(kind: .thinking(entries: entries), timestamp: ts)
-            default:          return nil
+            }
+            await MainActor.run { [weak self] in
+                self?.messages = parsed
             }
         }
     }
