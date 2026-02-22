@@ -77,6 +77,15 @@ struct ScheduledTask: Identifiable {
     }
 }
 
+// MARK: - AutomationSuggestion
+
+struct AutomationSuggestion {
+    let icon: String
+    let name: String
+    let prompt: String
+    let schedule: String
+}
+
 // MARK: - TasksView
 
 struct TasksView: View {
@@ -94,9 +103,32 @@ struct TasksView: View {
     @State private var newCustomCron = ""
     @State private var errorMsg = ""
 
+    // New schedule mode
+    @State private var scheduleMode: ScheduleMode = .once
+    @State private var onceDate: Date = Date()
+    @State private var repeatWeeks: Int = 0
+    @State private var repeatDays: Int = 0
+    @State private var repeatHours: Int = 0
+    @State private var repeatMinutes: Int = 30
+    @State private var useWeekdays: Bool = false
+    @State private var weekdayMon = false
+    @State private var weekdayTue = false
+    @State private var weekdayWed = false
+    @State private var weekdayThu = false
+    @State private var weekdayFri = false
+    @State private var weekdaySat = false
+    @State private var weekdaySun = false
+    @State private var repeatAtHour: Int = 9
+    @State private var repeatAtMinute: Int = 0
+
     // Edit mode
     @State private var showEditTask = false
     @State private var editingTask: ScheduledTask? = nil
+
+    enum ScheduleMode: String {
+        case once = "Einmalig"
+        case recurring = "Wiederkehrend"
+    }
 
     var body: some View {
         ScrollView {
@@ -193,17 +225,102 @@ struct TasksView: View {
 
     // MARK: - Empty State
 
+    // Rotating automation suggestions (change every 4 hours)
+    private static let automationSuggestions: [[AutomationSuggestion]] = [
+        [
+            AutomationSuggestion(icon: "newspaper.fill", name: "Morgen-Briefing", prompt: "Fasse die wichtigsten Nachrichten des Tages zusammen", schedule: "Täglich 08:00"),
+            AutomationSuggestion(icon: "externaldrive.fill", name: "Backup-Check", prompt: "Prüfe ob alle wichtigen Ordner ein aktuelles Backup haben", schedule: "Wöchentlich"),
+            AutomationSuggestion(icon: "chart.bar.fill", name: "System-Report", prompt: "Erstelle einen Bericht über CPU, RAM und Speichernutzung", schedule: "Stündlich"),
+        ],
+        [
+            AutomationSuggestion(icon: "envelope.fill", name: "Email-Zusammenfassung", prompt: "Fasse ungelesene Emails zusammen und priorisiere sie", schedule: "Alle 4 Stunden"),
+            AutomationSuggestion(icon: "trash.fill", name: "Desktop aufräumen", prompt: "Sortiere Dateien auf dem Desktop nach Typ in Unterordner", schedule: "Täglich 18:00"),
+            AutomationSuggestion(icon: "globe", name: "Preis-Tracker", prompt: "Prüfe ob sich der Preis auf der hinterlegten URL geändert hat", schedule: "Alle 6 Stunden"),
+        ],
+        [
+            AutomationSuggestion(icon: "doc.text.fill", name: "Log-Bereinigung", prompt: "Lösche alte Logdateien und temporäre Dateien", schedule: "Wöchentlich"),
+            AutomationSuggestion(icon: "antenna.radiowaves.left.and.right", name: "Netzwerk-Check", prompt: "Prüfe Internetgeschwindigkeit und offene Ports", schedule: "Alle 2 Stunden"),
+            AutomationSuggestion(icon: "calendar", name: "Tages-Planung", prompt: "Zeige meine Termine für heute und schlage eine Tagesplanung vor", schedule: "Täglich 07:00"),
+        ],
+        [
+            AutomationSuggestion(icon: "photo.stack.fill", name: "Screenshot-Sortierung", prompt: "Sortiere neue Screenshots vom Desktop in einen Ordner nach Datum", schedule: "Alle 4 Stunden"),
+            AutomationSuggestion(icon: "arrow.triangle.2.circlepath", name: "Git Status Check", prompt: "Prüfe alle Git-Repos im Documents-Ordner auf uncommitted changes", schedule: "Täglich 12:00"),
+            AutomationSuggestion(icon: "waveform", name: "Podcast-Zusammenfassung", prompt: "Lade den neuesten Podcast herunter und fasse ihn zusammen", schedule: "Täglich 22:00"),
+        ],
+        [
+            AutomationSuggestion(icon: "cpu.fill", name: "Dependency-Check", prompt: "Prüfe ob es Updates für installierte Homebrew-Pakete gibt", schedule: "Wöchentlich"),
+            AutomationSuggestion(icon: "lock.shield.fill", name: "Sicherheits-Scan", prompt: "Scanne nach ungesicherten Dateien und prüfe Firewall-Status", schedule: "Täglich 18:00"),
+            AutomationSuggestion(icon: "cloud.fill", name: "Wetter-Briefing", prompt: "Erstelle einen kurzen Wetterbericht für heute und morgen", schedule: "Täglich 07:00"),
+        ],
+        [
+            AutomationSuggestion(icon: "rectangle.stack.fill", name: "Projekt-Status", prompt: "Zeige den Status aller aktiven Projekte und offenen TODOs", schedule: "Täglich 09:00"),
+            AutomationSuggestion(icon: "arrow.down.doc.fill", name: "Download-Bereinigung", prompt: "Lösche Downloads die älter als 7 Tage sind", schedule: "Wöchentlich"),
+            AutomationSuggestion(icon: "text.bubble.fill", name: "Telegram-Digest", prompt: "Fasse die letzten Telegram-Nachrichten zusammen", schedule: "Alle 6 Stunden"),
+        ],
+    ]
+
+    private var currentSuggestions: [AutomationSuggestion] {
+        let hour = Calendar.current.component(.hour, from: Date())
+        let dayOfYear = Calendar.current.ordinality(of: .day, in: .year, for: Date()) ?? 0
+        let index = (dayOfYear * 6 + hour / 4) % Self.automationSuggestions.count
+        return Self.automationSuggestions[index]
+    }
+
     var emptyState: some View {
-        GlassCard {
-            VStack(spacing: 16) {
-                Image(systemName: "checklist").font(.system(size: 40)).foregroundColor(.secondary)
-                Text("Keine Aufgaben").font(.headline)
-                Text("Erstelle automatische Aufgaben, die dein Agent nach Zeitplan ausführt — täglich, stündlich oder auf Knopfdruck.")
-                    .font(.caption).foregroundColor(.secondary).multilineTextAlignment(.center)
-                    .frame(maxWidth: 320)
-                GlassButton(title: "Erste Aufgabe erstellen", icon: "plus", isPrimary: true) { showAddTask = true }
+        VStack(spacing: 16) {
+            GlassCard {
+                VStack(spacing: 16) {
+                    Image(systemName: "checklist").font(.system(size: 40)).foregroundColor(.secondary)
+                    Text("Keine Aufgaben").font(.headline)
+                    Text("Erstelle automatische Aufgaben, die dein Agent nach Zeitplan ausführt — täglich, stündlich oder auf Knopfdruck.")
+                        .font(.caption).foregroundColor(.secondary).multilineTextAlignment(.center)
+                        .frame(maxWidth: 320)
+                    GlassButton(title: "Erste Aufgabe erstellen", icon: "plus", isPrimary: true) { showAddTask = true }
+                }
+                .frame(maxWidth: .infinity).padding()
             }
-            .frame(maxWidth: .infinity).padding()
+
+            // Automation suggestions
+            GlassCard(padding: 12, cornerRadius: 12) {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Automatisierungsideen").font(.system(size: 13, weight: .semibold)).foregroundColor(.koboldGold)
+                    ForEach(currentSuggestions, id: \.name) { suggestion in
+                        Button(action: {
+                            newName = suggestion.name
+                            newPrompt = suggestion.prompt
+                            showAddTask = true
+                        }) {
+                            HStack(spacing: 10) {
+                                Image(systemName: suggestion.icon)
+                                    .font(.system(size: 12))
+                                    .foregroundColor(.koboldEmerald)
+                                    .frame(width: 20)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(suggestion.name)
+                                        .font(.system(size: 12, weight: .medium))
+                                        .foregroundColor(.primary)
+                                    Text(suggestion.prompt)
+                                        .font(.system(size: 10))
+                                        .foregroundColor(.secondary)
+                                        .lineLimit(1)
+                                }
+                                Spacer()
+                                Text(suggestion.schedule)
+                                    .font(.system(size: 9))
+                                    .foregroundColor(.secondary)
+                                    .padding(.horizontal, 6).padding(.vertical, 2)
+                                    .background(Color.koboldSurface)
+                                    .cornerRadius(4)
+                            }
+                            .padding(.vertical, 4).padding(.horizontal, 6)
+                            .background(Color.koboldEmerald.opacity(0.04))
+                            .cornerRadius(6)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .frame(maxWidth: 500)
         }
     }
 
@@ -242,39 +359,12 @@ struct TasksView: View {
                         .scrollContentBackground(.hidden)
                 }
 
-                // Schedule Picker
+                // Schedule Picker — Einmalig / Wiederkehrend
                 formField(
                     title: "Ausführungszeitpunkt",
-                    hint: "Wähle wann die Aufgabe ausgeführt wird — Manuell bedeutet nur auf Knopfdruck."
+                    hint: "Einmalig für eine bestimmte Zeit, oder wiederkehrend nach Intervall."
                 ) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        // Grid of preset options
-                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
-                            ForEach(TaskSchedulePreset.allCases.filter { $0 != .custom }) { preset in
-                                schedulePresetButton(preset)
-                            }
-                        }
-
-                        // Custom cron input
-                        if newSchedulePreset == .custom {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Cron-Ausdruck (Minute Stunde Tag Monat Wochentag)")
-                                    .font(.caption2).foregroundColor(.secondary)
-                                GlassTextField(text: $newCustomCron, placeholder: "z.B. */30 * * * *")
-                                    .font(.system(.caption, design: .monospaced))
-                            }
-                        }
-
-                        // Preview
-                        if newSchedulePreset != .manual && newSchedulePreset != .custom || !newCustomCron.isEmpty {
-                            HStack(spacing: 6) {
-                                Image(systemName: "info.circle").font(.caption2)
-                                Text("Cron: \(effectiveCron)")
-                                    .font(.system(size: 10, design: .monospaced))
-                            }
-                            .foregroundColor(.secondary)
-                        }
-                    }
+                    schedulePickerContent
                 }
 
                 HStack(spacing: 12) {
@@ -325,8 +415,181 @@ struct TasksView: View {
     }
 
     var effectiveCron: String {
-        if newSchedulePreset == .custom { return newCustomCron }
-        return newSchedulePreset.cronExpression
+        if scheduleMode == .once {
+            // Einmalig: Speichere als ISO-Datum mit Prefix "once:"
+            let formatter = ISO8601DateFormatter()
+            return "once:\(formatter.string(from: onceDate))"
+        }
+        // Wiederkehrend
+        if useWeekdays {
+            // Bestimmte Wochentage
+            var days: [String] = []
+            if weekdayMon { days.append("1") }
+            if weekdayTue { days.append("2") }
+            if weekdayWed { days.append("3") }
+            if weekdayThu { days.append("4") }
+            if weekdayFri { days.append("5") }
+            if weekdaySat { days.append("6") }
+            if weekdaySun { days.append("0") }
+            let dayStr = days.isEmpty ? "*" : days.joined(separator: ",")
+            return "\(repeatAtMinute) \(repeatAtHour) * * \(dayStr)"
+        }
+        // Intervall-basiert (WW/TT/SS/MM)
+        if repeatWeeks > 0 {
+            // Wöchentliches Intervall: Cron unterstützt kein Multi-Wochen, nutze "once per Woche am Mo"
+            return "\(repeatAtMinute) \(repeatAtHour) */\(repeatWeeks * 7) * *"
+        }
+        if repeatDays > 0 {
+            return "\(repeatAtMinute) \(repeatAtHour) */\(repeatDays) * *"
+        }
+        if repeatHours > 0 {
+            return "\(repeatAtMinute) */\(repeatHours) * * *"
+        }
+        if repeatMinutes > 0 {
+            return "*/\(repeatMinutes) * * * *"
+        }
+        return ""
+    }
+
+    // MARK: - Schedule Picker UI
+
+    @ViewBuilder
+    var schedulePickerContent: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // Toggle: Einmalig / Wiederkehrend
+            HStack(spacing: 0) {
+                scheduleModeButton("Einmalig", icon: "clock.fill", mode: .once)
+                scheduleModeButton("Wiederkehrend", icon: "repeat", mode: .recurring)
+            }
+            .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.06)))
+
+            if scheduleMode == .once {
+                // Datum + Uhrzeit
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Datum und Uhrzeit").font(.system(size: 11, weight: .medium)).foregroundColor(.secondary)
+                    DatePicker("", selection: $onceDate, in: Date()..., displayedComponents: [.date, .hourAndMinute])
+                        .datePickerStyle(.graphical)
+                        .labelsHidden()
+                        .frame(maxHeight: 280)
+                }
+            } else {
+                // Wiederkehrend: Intervall ODER Wochentage
+                VStack(alignment: .leading, spacing: 10) {
+                    Toggle("An bestimmten Wochentagen", isOn: $useWeekdays)
+                        .toggleStyle(.switch).tint(.koboldEmerald)
+                        .font(.system(size: 12))
+
+                    if useWeekdays {
+                        // Wochentag-Checkboxen
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Wochentage").font(.system(size: 11, weight: .medium)).foregroundColor(.secondary)
+                            HStack(spacing: 6) {
+                                weekdayCheckbox("Mo", isOn: $weekdayMon)
+                                weekdayCheckbox("Di", isOn: $weekdayTue)
+                                weekdayCheckbox("Mi", isOn: $weekdayWed)
+                                weekdayCheckbox("Do", isOn: $weekdayThu)
+                                weekdayCheckbox("Fr", isOn: $weekdayFri)
+                                weekdayCheckbox("Sa", isOn: $weekdaySat)
+                                weekdayCheckbox("So", isOn: $weekdaySun)
+                            }
+                            // Uhrzeit
+                            HStack(spacing: 8) {
+                                Text("Uhrzeit:").font(.system(size: 11)).foregroundColor(.secondary)
+                                Picker("", selection: $repeatAtHour) {
+                                    ForEach(0..<24, id: \.self) { h in
+                                        Text(String(format: "%02d", h)).tag(h)
+                                    }
+                                }.pickerStyle(.menu).frame(width: 60)
+                                Text(":").font(.system(size: 13, weight: .bold))
+                                Picker("", selection: $repeatAtMinute) {
+                                    ForEach([0, 15, 30, 45], id: \.self) { m in
+                                        Text(String(format: "%02d", m)).tag(m)
+                                    }
+                                }.pickerStyle(.menu).frame(width: 60)
+                            }
+                        }
+                    } else {
+                        // Intervall-Eingabe: WW / TT / SS / MM
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Wiederholung alle:").font(.system(size: 11, weight: .medium)).foregroundColor(.secondary)
+                            HStack(spacing: 10) {
+                                intervalField("WW", value: $repeatWeeks, hint: "Wochen")
+                                intervalField("TT", value: $repeatDays, hint: "Tage")
+                                intervalField("SS", value: $repeatHours, hint: "Stunden")
+                                intervalField("MM", value: $repeatMinutes, hint: "Minuten")
+                            }
+                            if repeatHours > 0 || repeatDays > 0 || repeatWeeks > 0 {
+                                HStack(spacing: 8) {
+                                    Text("Startzeit:").font(.system(size: 11)).foregroundColor(.secondary)
+                                    Picker("", selection: $repeatAtHour) {
+                                        ForEach(0..<24, id: \.self) { h in
+                                            Text(String(format: "%02d", h)).tag(h)
+                                        }
+                                    }.pickerStyle(.menu).frame(width: 60)
+                                    Text(":").font(.system(size: 13, weight: .bold))
+                                    Picker("", selection: $repeatAtMinute) {
+                                        ForEach([0, 15, 30, 45], id: \.self) { m in
+                                            Text(String(format: "%02d", m)).tag(m)
+                                        }
+                                    }.pickerStyle(.menu).frame(width: 60)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Preview
+                if !effectiveCron.isEmpty {
+                    HStack(spacing: 6) {
+                        Image(systemName: "info.circle").font(.caption2)
+                        Text("Cron: \(effectiveCron)")
+                            .font(.system(size: 10, design: .monospaced))
+                    }
+                    .foregroundColor(.secondary)
+                }
+            }
+        }
+    }
+
+    private func scheduleModeButton(_ label: String, icon: String, mode: ScheduleMode) -> some View {
+        Button(action: { scheduleMode = mode }) {
+            HStack(spacing: 6) {
+                Image(systemName: icon).font(.system(size: 11))
+                Text(label).font(.system(size: 12, weight: scheduleMode == mode ? .semibold : .regular))
+            }
+            .foregroundColor(scheduleMode == mode ? .white : .secondary)
+            .padding(.horizontal, 14).padding(.vertical, 8)
+            .frame(maxWidth: .infinity)
+            .background(scheduleMode == mode ? Color.koboldEmerald : Color.clear)
+            .cornerRadius(8)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func weekdayCheckbox(_ label: String, isOn: Binding<Bool>) -> some View {
+        Button(action: { isOn.wrappedValue.toggle() }) {
+            Text(label)
+                .font(.system(size: 11, weight: isOn.wrappedValue ? .bold : .regular))
+                .foregroundColor(isOn.wrappedValue ? .white : .secondary)
+                .frame(width: 36, height: 32)
+                .background(RoundedRectangle(cornerRadius: 6)
+                    .fill(isOn.wrappedValue ? Color.koboldEmerald : Color.white.opacity(0.06)))
+                .overlay(RoundedRectangle(cornerRadius: 6)
+                    .stroke(isOn.wrappedValue ? Color.koboldEmerald : Color.white.opacity(0.1), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func intervalField(_ label: String, value: Binding<Int>, hint: String) -> some View {
+        VStack(spacing: 3) {
+            Text(label).font(.system(size: 10, weight: .bold)).foregroundColor(.koboldEmerald)
+            TextField("0", value: value, format: .number)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 13, weight: .medium, design: .monospaced))
+                .frame(width: 50)
+                .multilineTextAlignment(.center)
+            Text(hint).font(.system(size: 8)).foregroundColor(.secondary)
+        }
     }
 
     // MARK: - Edit Task Sheet
@@ -357,20 +620,7 @@ struct TasksView: View {
                 }
 
                 formField(title: "Ausführungszeitpunkt", hint: "Zeitplan ändern") {
-                    VStack(alignment: .leading, spacing: 10) {
-                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
-                            ForEach(TaskSchedulePreset.allCases.filter { $0 != .custom }) { preset in
-                                schedulePresetButton(preset)
-                            }
-                        }
-                        if newSchedulePreset == .custom {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Cron-Ausdruck").font(.caption2).foregroundColor(.secondary)
-                                GlassTextField(text: $newCustomCron, placeholder: "z.B. */30 * * * *")
-                                    .font(.system(.caption, design: .monospaced))
-                            }
-                        }
-                    }
+                    schedulePickerContent
                 }
 
                 HStack(spacing: 12) {

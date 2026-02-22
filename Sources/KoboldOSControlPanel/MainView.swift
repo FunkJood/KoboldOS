@@ -226,7 +226,7 @@ struct SidebarView: View {
                 }.buttonStyle(.plain).foregroundColor(.secondary)
                 Button(action: {
                     viewModel.openWorkflowChat(nodeName: "Neuer Workflow")
-                    selectedTab = .chat
+                    selectedTab = .workflows
                 }) {
                     Image(systemName: "plus")
                         .font(.system(size: 11, weight: .medium))
@@ -254,7 +254,7 @@ struct SidebarView: View {
             ForEach(viewModel.workflowDefinitions, id: \.id) { def in
                 Button(action: {
                     viewModel.openWorkflowChat(nodeName: def.name)
-                    selectedTab = .chat
+                    selectedTab = .workflows
                 }) {
                     HStack(spacing: 8) {
                         Image(systemName: "gearshape.2.fill")
@@ -300,7 +300,7 @@ struct SidebarView: View {
                         accentColor: .koboldGold
                     ) {
                         viewModel.switchToSession(session)
-                        selectedTab = .chat
+                        selectedTab = .workflows
                     } onDelete: {
                         viewModel.deleteSession(session)
                     }
@@ -412,7 +412,6 @@ struct SidebarView: View {
         case .dashboard:  return l10n.language.dashboard
         case .memory:     return "Gedächtnis"
         case .tasks:      return l10n.language.tasks
-        case .store:      return "Store"
         case .agents:     return l10n.language.agents
         case .workflows:  return l10n.language.team
         case .settings:   return l10n.language.settings
@@ -425,7 +424,6 @@ struct SidebarView: View {
         case .dashboard:  return "chart.bar.fill"
         case .memory:     return "brain.filled.head.profile"
         case .tasks:      return "checklist"
-        case .store:      return "bag.fill"
         case .agents:     return "person.3.fill"
         case .workflows:  return "point.3.connected.trianglepath.dotted"
         case .settings:   return "gearshape.fill"
@@ -457,13 +455,21 @@ struct SidebarSessionRow: View {
         HStack(spacing: 0) {
             Button(action: onTap) {
                 HStack(spacing: 6) {
-                    Image(systemName: icon)
-                        .font(.system(size: 9))
-                        .foregroundColor(isCurrent ? accentColor : .secondary)
+                    ZStack {
+                        Image(systemName: icon)
+                            .font(.system(size: 9))
+                            .foregroundColor(isCurrent ? accentColor : .secondary)
+                        if session.hasUnread && !isCurrent {
+                            Circle()
+                                .fill(Color.blue)
+                                .frame(width: 6, height: 6)
+                                .offset(x: 6, y: -5)
+                        }
+                    }
                     VStack(alignment: .leading, spacing: 1) {
                         Text(session.title)
-                            .font(.system(size: 11, weight: isCurrent ? .semibold : .regular))
-                            .foregroundColor(isCurrent ? accentColor : .primary)
+                            .font(.system(size: 11, weight: isCurrent || session.hasUnread ? .semibold : .regular))
+                            .foregroundColor(isCurrent ? accentColor : session.hasUnread ? .primary : .primary)
                             .lineLimit(1)
                         Text(session.formattedDate)
                             .font(.system(size: 9))
@@ -556,9 +562,35 @@ struct ContentAreaView: View {
             case .dashboard:  DashboardView(viewModel: viewModel)
             case .memory:     MemoryView(viewModel: viewModel)
             case .tasks:      TasksView(viewModel: viewModel)
-            case .store:      StoreView()
             case .agents:     AgentsView(viewModel: viewModel)
-            case .workflows:  TeamView(viewModel: viewModel)
+            case .workflows:
+                if viewModel.chatMode == .workflow {
+                    // Workflow-Chat embedded in TeamView layout
+                    VStack(spacing: 0) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "point.3.connected.trianglepath.dotted")
+                                .font(.caption)
+                                .foregroundColor(.koboldEmerald)
+                            Text("Workflow-Chat aktiv: \(viewModel.workflowChatLabel)")
+                                .font(.caption.weight(.medium))
+                                .foregroundColor(.koboldEmerald)
+                            Spacer()
+                            Button(action: { viewModel.newSession() }) {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "arrow.left").font(.caption2)
+                                    Text("Zurück zum Canvas").font(.caption2)
+                                }
+                                .foregroundColor(.koboldEmerald)
+                            }.buttonStyle(.plain)
+                        }
+                        .padding(.horizontal, 14).padding(.vertical, 8)
+                        .background(Color.koboldEmerald.opacity(0.1))
+                        GlassDivider()
+                        ChatView(viewModel: viewModel)
+                    }
+                } else {
+                    TeamView(viewModel: viewModel)
+                }
             case .settings:   SettingsView(viewModel: viewModel)
             }
         }
@@ -600,7 +632,6 @@ enum SidebarTab: String, CaseIterable {
     case workflows
     case memory
     case agents
-    case store
     case settings
 }
 
@@ -676,7 +707,7 @@ struct KoboldOSSidebarLogo: View {
                         .shadow(color: Color.koboldEmerald.opacity(0.8), radius: glowPulse ? 6 : 3)
                         .animation(.easeInOut(duration: 2).repeatForever(autoreverses: true), value: glowPulse)
 
-                    Text("Alpha v0.2.3")
+                    Text("Alpha v0.2.5")
                         .font(.system(size: 8, weight: .bold))
                         .foregroundColor(.koboldGold)
                         .padding(.horizontal, 4).padding(.vertical, 2)

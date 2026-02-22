@@ -6,6 +6,9 @@ import AppKit
 extension Notification.Name {
     static let koboldNavigate = Notification.Name("koboldNavigateTo")
     static let koboldShutdownSave = Notification.Name("koboldShutdownSave")
+    static let koboldWorkflowChanged = Notification.Name("koboldWorkflowChanged")
+    static let koboldProjectsChanged = Notification.Name("koboldProjectsChanged")
+    static let koboldWorkflowRun = Notification.Name("koboldWorkflowRun")
 }
 
 // MARK: - App Entry Point
@@ -109,6 +112,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // CRITICAL: Start daemon IMMEDIATELY on launch — don't wait for onAppear
+        RuntimeManager.shared.startDaemon()
+        print("[AppDelegate] Daemon start triggered")
+
         // Auto-start Telegram bot if configured
         let telegramToken = UserDefaults.standard.string(forKey: "kobold.telegram.token") ?? ""
         if !telegramToken.isEmpty {
@@ -116,6 +123,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             TelegramBot.shared.start(token: telegramToken, allowedChatId: chatId)
             print("[AppDelegate] Telegram bot auto-started")
         }
+
+        // Initialize TTS Manager (listens for speak notifications from agent)
+        _ = TTSManager.shared
+        // Initialize ImageGen Manager (listens for generate notifications from agent)
+        _ = ImageGenManager.shared
 
         // Retarget the red close button on the main window: HIDE instead of CLOSE.
         // SwiftUI's WindowGroup closes + terminates on the default close action,

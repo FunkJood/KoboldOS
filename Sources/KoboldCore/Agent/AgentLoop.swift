@@ -143,12 +143,17 @@ public actor AgentLoop {
         // Sub-agent delegation (AgentZero-style call_subordinate) — pass provider config + parent memory
         await registry.register(DelegateTaskTool(providerConfig: providerConfig, parentMemory: coreMemory))
         await registry.register(DelegateParallelTool(providerConfig: providerConfig, parentMemory: coreMemory))
-        // Google API tool (OAuth2-authenticated requests) - macOS only
+        // OAuth API tools - macOS only
         #if os(macOS)
         await registry.register(GoogleApiTool())
+        await registry.register(SoundCloudApiTool())
         #endif
         // Telegram send tool
         await registry.register(TelegramTool())
+        // Text-to-Speech
+        await registry.register(TTSTool())
+        // Image Generation (Stable Diffusion)
+        await registry.register(GenerateImageTool())
     }
 
     // MARK: - Configuration
@@ -285,7 +290,18 @@ public actor AgentLoop {
                     llmResponse = try await LLMRunner.shared.generate(messages: messages)
                 }
             } catch {
-                return AgentResult(finalOutput: "Fehler: \(error.localizedDescription)", steps: steps, success: false)
+                // LLM generation failed — retry up to 2 times with brief delay
+                let llmRetryCount = steps.filter { $0.type == .error }.count
+                if llmRetryCount < 2 {
+                    steps.append(AgentStep(
+                        stepNumber: stepCount, type: .error,
+                        content: "LLM-Fehler (Versuch \(llmRetryCount + 1)/3): \(error.localizedDescription)",
+                        toolCallName: nil, toolResultSuccess: false, timestamp: Date()
+                    ))
+                    try? await Task.sleep(nanoseconds: 1_000_000_000) // 1s delay before retry
+                    continue
+                }
+                return AgentResult(finalOutput: "Fehler nach 3 Versuchen: \(error.localizedDescription)", steps: steps, success: false)
             }
 
             // Parse the response — always expect JSON with tool_name/tool_args
@@ -377,9 +393,16 @@ public actor AgentLoop {
             }
 
             // Feed tool result back — instruct to continue
-            let feedbackSuffix = result.isSuccess
-                ? "Antworte jetzt als JSON. Nutze ein weiteres Tool oder antworte mit dem response-Tool."
-                : "Das Tool hat einen Fehler gemeldet. Erkläre dem Nutzer auf Deutsch was schiefgegangen ist und schlage Alternativen vor. Gib KEINEN rohen JSON aus."
+            // Track consecutive errors to allow retries before giving up
+            let consecutiveErrors = steps.suffix(6).filter { $0.type == .toolResult && $0.toolResultSuccess == false }.count
+            let feedbackSuffix: String
+            if result.isSuccess {
+                feedbackSuffix = "Antworte jetzt als JSON. Nutze ein weiteres Tool oder antworte mit dem response-Tool."
+            } else if consecutiveErrors < 3 {
+                feedbackSuffix = #"Das Tool hat einen Fehler gemeldet. Analysiere den Fehler und versuche einen ANDEREN Ansatz. Du hast noch \#(3 - consecutiveErrors) Versuche. Probiere alternative Tools, andere Parameter oder einen komplett anderen Lösungsweg. Antworte als JSON."#
+            } else {
+                feedbackSuffix = #"Das Tool hat wiederholt Fehler gemeldet (\#(consecutiveErrors) Fehlversuche). Erkläre dem Nutzer was schiefgegangen ist und welche Ansätze du versucht hast. Antworte als JSON mit dem response-Tool. Beispiel: {"thoughts":["error analysis"],"tool_name":"response","tool_args":{"text":"Erklärung"}}"#
+            }
             messages.append([
                 "role": "user",
                 "content": """
@@ -738,7 +761,7 @@ public actor AgentLoop {
 
                     let streamFeedbackSuffix = result.isSuccess
                         ? "Antworte jetzt als JSON. Nutze ein weiteres Tool oder antworte mit dem response-Tool."
-                        : "Das Tool hat einen Fehler gemeldet. Erkläre dem Nutzer auf Deutsch was schiefgegangen ist und schlage Alternativen vor. Gib KEINEN rohen JSON aus."
+                        : #"Das Tool hat einen Fehler gemeldet. Antworte als JSON mit dem response-Tool. Erkläre dem Nutzer was schiefgegangen ist. Beispiel: {"thoughts":["error analysis"],"tool_name":"response","tool_args":{"text":"Erklärung"}}"#
                     messages.append([
                         "role": "user",
                         "content": """
@@ -791,7 +814,22 @@ public actor AgentLoop {
         // Google
         let googleConnected = UserDefaults.standard.bool(forKey: "kobold.google.connected")
         if googleConnected {
-            lines.append("- Google: VERBUNDEN. Nutze google_api für YouTube, Drive, Gmail, Calendar etc.")
+            let email = UserDefaults.standard.string(forKey: "kobold.google.email") ?? "unbekannt"
+            // Read enabled scopes from UserDefaults
+            var scopeNames: [String] = ["youtube_readonly", "youtube_upload", "drive", "docs", "sheets", "gmail", "calendar", "contacts", "tasks"]
+            if let scopeData = UserDefaults.standard.data(forKey: "kobold.google.scopes"),
+               let scopeStrings = try? JSONDecoder().decode([String].self, from: scopeData) {
+                scopeNames = scopeStrings
+            }
+            let scopeList = scopeNames.joined(separator: ", ")
+            lines.append("- Google: VERBUNDEN als \(email). Aktive Scopes: \(scopeList). Nutze google_api Tool für authentifizierte API-Anfragen.")
+        }
+
+        // SoundCloud
+        let scConnected = UserDefaults.standard.bool(forKey: "kobold.soundcloud.connected")
+        if scConnected {
+            let scUser = UserDefaults.standard.string(forKey: "kobold.soundcloud.username") ?? "unbekannt"
+            lines.append("- SoundCloud: VERBUNDEN als \(scUser). Nutze soundcloud_api Tool für Tracks, Playlists, Likes, Suche.")
         }
 
         if lines.isEmpty {
@@ -876,11 +914,39 @@ public actor AgentLoop {
         ```
 
         ### workflow_manage
-        Workflow-Definitionen erstellen, auflisten oder löschen.
+        Visuelle Workflows mit Nodes, Connections und Triggern erstellen. Erstelle zuerst ein Projekt, dann füge Nodes hinzu und verbinde sie.
+
+        Projekt erstellen:
         ```json
-        {"tool_name": "workflow_manage", "tool_args": {"action": "create", "name": "Code Review", "description": "Code prüfen und verbessern", "steps": "[{\\"agent\\":\\"coder\\",\\"prompt\\":\\"Prüfe den Code\\"}]"}}
-        {"tool_name": "workflow_manage", "tool_args": {"action": "list"}}
-        {"tool_name": "workflow_manage", "tool_args": {"action": "delete", "id": "abc123"}}
+        {"tool_name": "workflow_manage", "tool_args": {"action": "create_project", "name": "Email Workflow", "description": "Automatisierte Email-Verarbeitung"}}
+        ```
+
+        Nodes hinzufügen (werden automatisch verbunden und positioniert):
+        ```json
+        {"tool_name": "workflow_manage", "tool_args": {"action": "add_node", "project_id": "abc123", "node_type": "Trigger", "title": "Start"}}
+        {"tool_name": "workflow_manage", "tool_args": {"action": "add_node", "project_id": "abc123", "node_type": "Agent", "title": "Analysiere", "prompt": "Analysiere die eingehende Email", "agent_type": "researcher"}}
+        {"tool_name": "workflow_manage", "tool_args": {"action": "add_node", "project_id": "abc123", "node_type": "Agent", "title": "Antworte", "prompt": "Schreibe eine Antwort", "agent_type": "coder", "model_override": "gpt-4o"}}
+        {"tool_name": "workflow_manage", "tool_args": {"action": "add_node", "project_id": "abc123", "node_type": "Output", "title": "Ergebnis"}}
+        ```
+
+        Node-Typen: Trigger, Input, Agent, Tool, Output, Condition, Merger, Delay, Webhook, Formula
+        Agent-Typen: instructor, coder, researcher, planner, utility, web
+
+        Nodes manuell verbinden:
+        ```json
+        {"tool_name": "workflow_manage", "tool_args": {"action": "connect", "project_id": "abc123", "source_node_id": "node1", "target_node_id": "node2"}}
+        ```
+
+        Trigger konfigurieren (Manual, Zeitplan, Webhook, Datei-Watcher, App-Event):
+        ```json
+        {"tool_name": "workflow_manage", "tool_args": {"action": "set_trigger", "project_id": "abc123", "node_id": "trigger1", "trigger_type": "Zeitplan", "cron_expression": "0 8 * * *"}}
+        ```
+
+        Nodes auflisten, löschen, Workflow ausführen:
+        ```json
+        {"tool_name": "workflow_manage", "tool_args": {"action": "list_nodes", "project_id": "abc123"}}
+        {"tool_name": "workflow_manage", "tool_args": {"action": "delete_node", "project_id": "abc123", "node_id": "xyz"}}
+        {"tool_name": "workflow_manage", "tool_args": {"action": "run", "project_id": "abc123"}}
         ```
 
         ### call_subordinate
@@ -986,8 +1052,8 @@ public actor AgentLoop {
         ```
 
         ### google_api
-        Authentifizierte Google-API-Anfragen (YouTube, Drive, Gmail, Calendar, Sheets, Docs, Contacts, Photos, Tasks, Maps).
-        Token wird automatisch aus dem Keychain geladen und bei Bedarf erneuert. Der Nutzer muss sich vorher in den Einstellungen unter Verbindungen → Google angemeldet haben.
+        Authentifizierte Google-API-Anfragen (YouTube, Drive, Gmail, Calendar, Sheets, Docs, Contacts, Tasks).
+        Token wird automatisch aus dem Keychain geladen und bei Bedarf erneuert.
         Base-URL: https://www.googleapis.com/ — gib nur den Pfad danach an.
         ```json
         {"tool_name": "google_api", "tool_args": {"endpoint": "youtube/v3/search", "method": "GET", "params": "{\\"part\\": \\"snippet\\", \\"q\\": \\"Swift Tutorial\\", \\"maxResults\\": \\"5\\"}"}}
@@ -997,12 +1063,43 @@ public actor AgentLoop {
         {"tool_name": "google_api", "tool_args": {"endpoint": "tasks/v1/users/@me/lists", "method": "GET"}}
         ```
 
+        ### soundcloud_api
+        Authentifizierte SoundCloud-API-Anfragen (Tracks, Playlists, User, Likes, Suche).
+        Base-URL: https://api.soundcloud.com/ — gib nur den Pfad danach an.
+        ```json
+        {"tool_name": "soundcloud_api", "tool_args": {"endpoint": "me", "method": "GET"}}
+        {"tool_name": "soundcloud_api", "tool_args": {"endpoint": "me/tracks", "method": "GET"}}
+        {"tool_name": "soundcloud_api", "tool_args": {"endpoint": "me/likes/tracks", "method": "GET", "params": "{\\"limit\\": \\"10\\"}"}}
+        {"tool_name": "soundcloud_api", "tool_args": {"endpoint": "tracks", "method": "GET", "params": "{\\"q\\": \\"psytrance\\", \\"limit\\": \\"10\\"}"}}
+        {"tool_name": "soundcloud_api", "tool_args": {"endpoint": "me/playlists", "method": "GET"}}
+        ```
+
         ### telegram_send
         Sende eine Nachricht über den konfigurierten Telegram-Bot an den Nutzer.
         Nutze dieses Tool wenn der Nutzer sagt "schreib mir auf Telegram", "sag mir per Telegram Bescheid", "Telegram-Nachricht senden" oder ähnliches.
         ```json
         {"tool_name": "telegram_send", "tool_args": {"message": "Hallo! Deine Aufgabe ist erledigt."}}
         {"tool_name": "telegram_send", "tool_args": {"message": "Die Datei wurde erfolgreich erstellt und auf dem Desktop gespeichert."}}
+        ```
+
+        ### speak
+        Lies Text laut vor (Text-to-Speech). Nutze dieses Tool wenn der Nutzer sagt "lies vor", "sag mir", "vorlesen", "sprich" oder ähnliches.
+        Args: text (erforderlich), voice (optional, z.B. "de-DE", "en-US"), rate (optional, 0.1-1.0)
+        ```json
+        {"tool_name": "speak", "tool_args": {"text": "Hallo! Ich bin dein KoboldOS Assistent."}}
+        {"tool_name": "speak", "tool_args": {"text": "The weather is nice today.", "voice": "en-US"}}
+        {"tool_name": "speak", "tool_args": {"text": "Wichtige Nachricht!", "rate": "0.4"}}
+        ```
+
+        ### generate_image
+        Generiere ein Bild mit Stable Diffusion lokal auf dem Mac.
+        Nutze dieses Tool wenn der Nutzer ein Bild/Illustration/Artwork/Grafik erstellen lassen möchte.
+        Der Prompt sollte auf ENGLISCH sein für beste Ergebnisse. Der Master-Prompt wird automatisch vorangestellt.
+        Args: prompt (erforderlich, englisch), negative_prompt (optional), steps (optional, 10-100), guidance_scale (optional, 1.0-20.0), seed (optional)
+        ```json
+        {"tool_name": "generate_image", "tool_args": {"prompt": "a beautiful sunset over mountains, oil painting style"}}
+        {"tool_name": "generate_image", "tool_args": {"prompt": "cute robot playing guitar in a garden", "steps": "40", "guidance_scale": "8.0"}}
+        {"tool_name": "generate_image", "tool_args": {"prompt": "futuristic city at night, neon lights, cyberpunk", "negative_prompt": "ugly, blurry, text, watermark"}}
         ```
         """
     }
@@ -1084,6 +1181,12 @@ public actor AgentLoop {
         """
 
         return """
+        CRITICAL INSTRUCTION — READ FIRST:
+        You MUST respond with ONLY a JSON object. No text before or after the JSON. No markdown formatting around it.
+        Format: {"thoughts":["..."],"tool_name":"tool_name","tool_args":{"key":"value"}}
+        To talk to the user, use tool_name "response" with tool_args {"text": "your message"}.
+        NEVER output raw text. ALWAYS output a single JSON object.
+
         Du bist KoboldOS, ein KI-Agent auf macOS mit echten Tools.
         Du antwortest auf \(agentLang == "auto" ? "der Sprache des Nutzers" : agentLang.isEmpty ? "Deutsch" : agentLang.capitalized).
         Dein Kommunikationsstil ist \(tone).

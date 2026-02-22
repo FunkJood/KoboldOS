@@ -116,6 +116,12 @@ class RuntimeViewModel: ObservableObject {
     @Published var messages: [ChatMessage] = []
     @Published var agentLoading: Bool = false
     @Published var activeThinkingSteps: [ThinkingEntry] = []
+    /// Which chat session the agent is currently working for (nil = idle)
+    @Published var activeAgentOriginSession: UUID?
+    /// True only when the agent is loading AND the user is viewing the origin chat
+    var isAgentLoadingInCurrentChat: Bool {
+        agentLoading && activeAgentOriginSession == currentSessionId
+    }
     private var activeStreamTask: Task<Void, Never>?
     private var saveDebounceTask: Task<Void, Never>?
     private var metricsPollingTask: Task<Void, Never>?
@@ -227,38 +233,55 @@ class RuntimeViewModel: ObservableObject {
                 self?.performShutdownSave()
             }
         }
+
+        // Listen for agent-created projects/workflows (reload from disk)
+        NotificationCenter.default.addObserver(
+            forName: .koboldProjectsChanged,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.loadProjects()
+            }
+        }
     }
 
     // MARK: - Connection
 
     func connect() async {
         isConnecting = true
-        let ours = await checkHealthIsOurProcess()
-        if ours {
-            isConnected = true
-            daemonStatus = "Connected"
-            // Load in parallel instead of sequentially
-            async let m: () = loadMetrics()
-            async let o: () = loadModels()
-            async let s: () = checkOllamaStatus()
-            _ = await (m, o, s)
-        } else {
-            daemonStatus = "Starting..."
-            await startDaemon()
-            for _ in 0..<15 {
-                try? await Task.sleep(nanoseconds: 400_000_000)  // 400ms (was 800ms)
-                if await checkHealthIsOurProcess() {
-                    isConnected = true
-                    daemonStatus = "Connected"
-                    async let m: () = loadMetrics()
-                    async let o: () = loadModels()
-                    async let s: () = checkOllamaStatus()
-                    _ = await (m, o, s)
-                    break
-                }
+        // Daemon is started by AppDelegate.applicationDidFinishLaunching.
+        // Wait for it to become healthy (up to 25 attempts = ~8s).
+        daemonStatus = "Connecting..."
+        for attempt in 0..<25 {
+            if await checkHealthIsOurProcess() {
+                isConnected = true
+                daemonStatus = "Connected"
+                async let m: () = loadMetrics()
+                async let o: () = loadModels()
+                async let s: () = checkOllamaStatus()
+                _ = await (m, o, s)
+                isConnecting = false
+                return
             }
-            if !isConnected { daemonStatus = "Failed to connect" }
+            // First few attempts: short delay (daemon might be ready quickly)
+            let delay: UInt64 = attempt < 5 ? 200_000_000 : 400_000_000
+            try? await Task.sleep(nanoseconds: delay)
         }
+        // Last resort: try starting daemon again (might have failed silently)
+        await startDaemon()
+        for _ in 0..<10 {
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            if await checkHealthIsOurProcess() {
+                isConnected = true
+                daemonStatus = "Connected"
+                async let m: () = loadMetrics()
+                async let o: () = loadModels()
+                async let s: () = checkOllamaStatus()
+                _ = await (m, o, s)
+                break
+            }
+        }
+        if !isConnected { daemonStatus = "Failed to connect" }
         isConnecting = false
     }
 
@@ -417,15 +440,45 @@ class RuntimeViewModel: ObservableObject {
         activeStreamTask = Task { await sendWithAgent(message: textForAgent.isEmpty ? "Describe the attached media." : textForAgent, attachments: attachments) }
     }
 
+    /// Send a message with optional per-node model/agent overrides (used by workflow execution)
+    func sendWorkflowMessage(_ text: String, modelOverride: String? = nil, agentOverride: String? = nil) {
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return }
+        messages.append(ChatMessage(kind: .user(text: trimmed), timestamp: Date()))
+        upsertCurrentSession()
+        saveSessions()
+        saveChatHistory()
+        activeStreamTask?.cancel()
+        activeStreamTask = nil
+        activeStreamTask = Task {
+            // Temporarily override agent type and model
+            let origAgent = agentTypeStr
+            let origModel = activeOllamaModel
+            if let ao = agentOverride, !ao.isEmpty { agentTypeStr = ao }
+            if let mo = modelOverride, !mo.isEmpty { activeOllamaModel = mo }
+            await sendWithAgent(message: trimmed)
+            // Restore
+            agentTypeStr = origAgent
+            activeOllamaModel = origModel
+        }
+    }
+
     @AppStorage("kobold.showAgentSteps") var showAgentSteps: Bool = true
 
     func cancelAgent() {
+        let originSession = activeAgentOriginSession ?? currentSessionId
         activeStreamTask?.cancel()
         activeStreamTask = nil
         agentLoading = false
+        activeAgentOriginSession = nil
         activeThinkingSteps = []
-        messages.append(ChatMessage(kind: .assistant(text: "⏸ Agent gestoppt."), timestamp: Date()))
-        saveChatHistory()
+        appendToSession(ChatMessage(kind: .assistant(text: "⏸ Agent gestoppt."), timestamp: Date()), originSession: originSession)
+        if currentSessionId == originSession {
+            saveChatHistory()
+        }
+        saveSessions()
+        saveTaskSessions()
+        saveWorkflowSessions()
     }
 
     /// Cancel all background tasks (call on view disappear / deinit)
@@ -569,20 +622,48 @@ class RuntimeViewModel: ObservableObject {
             guard let codable = ChatMessageCodable(from: msg) else { return }
             if let idx = sessions.firstIndex(where: { $0.id == originSession }) {
                 sessions[idx].messages.append(codable)
+                sessions[idx].hasUnread = true
                 saveSessions()
             } else if let idx = taskSessions.firstIndex(where: { $0.id == originSession }) {
                 taskSessions[idx].messages.append(codable)
+                taskSessions[idx].hasUnread = true
                 saveTaskSessions()
             } else if let idx = workflowSessions.firstIndex(where: { $0.id == originSession }) {
                 workflowSessions[idx].messages.append(codable)
+                workflowSessions[idx].hasUnread = true
                 saveWorkflowSessions()
             }
         }
     }
 
+    /// Extract file paths from text and create MediaAttachments for detected media files
+    static func extractMediaAttachments(from text: String) -> [MediaAttachment] {
+        var attachments: [MediaAttachment] = []
+        // Match absolute paths and ~/paths with common media extensions
+        let pattern = #"(?:~|/)[^\s\"\'\)\]<>]+\.(?:png|jpg|jpeg|gif|webp|heic|bmp|tiff|svg|mp3|wav|m4a|aac|flac|ogg|opus|mp4|mov|avi|mkv|webm|pdf)"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else { return [] }
+        let range = NSRange(text.startIndex..., in: text)
+        let matches = regex.matches(in: text, range: range)
+
+        for match in matches {
+            guard let matchRange = Range(match.range, in: text) else { continue }
+            var path = String(text[matchRange])
+            // Expand ~
+            if path.hasPrefix("~") {
+                path = path.replacingOccurrences(of: "~", with: FileManager.default.homeDirectoryForCurrentUser.path)
+            }
+            let url = URL(fileURLWithPath: path)
+            guard FileManager.default.fileExists(atPath: url.path) else { continue }
+
+            attachments.append(MediaAttachment(url: url))
+        }
+        return attachments
+    }
+
     func sendWithAgent(message: String, attachments: [MediaAttachment] = []) async {
         agentLoading = true
         let originChatSession = currentSessionId  // Capture which session initiated this request
+        activeAgentOriginSession = originChatSession
         let sessionId = UUID()
         let session = ActiveAgentSession(
             id: sessionId, agentType: agentTypeStr,
@@ -597,6 +678,7 @@ class RuntimeViewModel: ObservableObject {
 
         defer {
             agentLoading = false
+            activeAgentOriginSession = nil
             if let idx = activeSessions.firstIndex(where: { $0.id == sessionId }) {
                 if activeSessions[idx].status == .running {
                     activeSessions[idx].status = .completed
@@ -636,7 +718,7 @@ class RuntimeViewModel: ObservableObject {
 
         // If images, use non-streaming /agent endpoint
         if !imageBase64s.isEmpty {
-            await sendWithAgentNonStreaming(payload: payload)
+            await sendWithAgentNonStreaming(payload: payload, originSession: originChatSession)
             return
         }
 
@@ -741,9 +823,15 @@ class RuntimeViewModel: ObservableObject {
             }
             activeThinkingSteps = []
 
-            // Append final answer with confidence
+            // Append final answer with confidence + auto-detect media
             if !lastFinalAnswer.isEmpty {
-                appendToSession(ChatMessage(kind: .assistant(text: lastFinalAnswer), timestamp: Date(), confidence: lastConfidence), originSession: originChatSession)
+                var msg = ChatMessage(kind: .assistant(text: lastFinalAnswer), timestamp: Date(), confidence: lastConfidence)
+                // Auto-embed: detect file paths in response and attach as media
+                let autoEmbed = UserDefaults.standard.bool(forKey: "kobold.chat.autoEmbed")
+                if autoEmbed {
+                    msg.attachments = Self.extractMediaAttachments(from: lastFinalAnswer)
+                }
+                appendToSession(msg, originSession: originChatSession)
                 // Only notify for multi-step tasks (>=3 tool calls), not simple responses
                 if toolStepCount >= 3 {
                     let preview = lastFinalAnswer.count > 80 ? String(lastFinalAnswer.prefix(77)) + "..." : lastFinalAnswer
@@ -772,9 +860,9 @@ class RuntimeViewModel: ObservableObject {
     }
 
     /// Fallback non-streaming agent call (used for vision/image requests)
-    private func sendWithAgentNonStreaming(payload: [String: Any]) async {
+    private func sendWithAgentNonStreaming(payload: [String: Any], originSession: UUID) async {
         guard let url = URL(string: baseURL + "/agent") else {
-            messages.append(ChatMessage(kind: .assistant(text: "Invalid URL"), timestamp: Date()))
+            appendToSession(ChatMessage(kind: .assistant(text: "Invalid URL"), timestamp: Date()), originSession: originSession)
             return
         }
 
@@ -787,7 +875,8 @@ class RuntimeViewModel: ObservableObject {
             let (data, resp) = try await URLSession.shared.data(for: req)
             guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else {
                 let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
-                messages.append(ChatMessage(kind: .assistant(text: "HTTP Error \(code)"), timestamp: Date()))
+                appendToSession(ChatMessage(kind: .assistant(text: "HTTP Error \(code)"), timestamp: Date()), originSession: originSession)
+                SoundManager.shared.play(.error)
                 return
             }
             if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
@@ -799,22 +888,28 @@ class RuntimeViewModel: ObservableObject {
                         let name = tool["name"] as? String ?? "tool"
                         let toolOutput = tool["output"] as? String ?? ""
                         let success = tool["success"] as? Bool ?? true
-                        messages.append(ChatMessage(
+                        appendToSession(ChatMessage(
                             kind: .toolResult(name: name, success: success, output: toolOutput),
                             timestamp: Date()
-                        ))
+                        ), originSession: originSession)
                     }
                 }
 
-                messages.append(ChatMessage(kind: .assistant(text: output), timestamp: Date()))
+                appendToSession(ChatMessage(kind: .assistant(text: output), timestamp: Date()), originSession: originSession)
             }
-            saveChatHistory()
+            // Persist session arrays (appendToSession already wrote to correct array)
+            if currentSessionId == originSession {
+                saveChatHistory()
+            }
+            saveSessions()
+            saveTaskSessions()
+            saveWorkflowSessions()
             Task { await loadMetrics() }  // fire-and-forget, don't block UI
         } catch {
-            messages.append(ChatMessage(
+            appendToSession(ChatMessage(
                 kind: .assistant(text: "Fehler: \(error.localizedDescription)"),
                 timestamp: Date()
-            ))
+            ), originSession: originSession)
         }
     }
 
@@ -1090,26 +1185,22 @@ class RuntimeViewModel: ObservableObject {
     }
 
     func loadWorkflowDefinitions() {
-        let url = workflowDefsURL
-        Task {
-            let loaded = await Task.detached(priority: .userInitiated) {
-                guard let data = try? Data(contentsOf: url),
-                      let defs = try? JSONDecoder().decode([WorkflowDefinition].self, from: data) else { return [WorkflowDefinition]() }
-                return defs
-            }.value
-            workflowDefinitions = loaded
+        guard let data = try? Data(contentsOf: workflowDefsURL),
+              let defs = try? JSONDecoder().decode([WorkflowDefinition].self, from: data) else {
+            return
+        }
+        workflowDefinitions = defs
+    }
+
+    private func saveWorkflowDefinitionsSync() {
+        if let data = try? JSONEncoder().encode(workflowDefinitions) {
+            try? data.write(to: workflowDefsURL, options: .atomic)
         }
     }
 
     func deleteWorkflowDefinition(_ def: WorkflowDefinition) {
         workflowDefinitions.removeAll { $0.id == def.id }
-        let snapshot = workflowDefinitions
-        let url = workflowDefsURL
-        Task.detached(priority: .utility) {
-            if let data = try? JSONEncoder().encode(snapshot) {
-                try? data.write(to: url)
-            }
-        }
+        saveWorkflowDefinitionsSync()
     }
 
     func newSession() {
@@ -1181,8 +1272,15 @@ class RuntimeViewModel: ObservableObject {
             taskChatLabel = ""
         }
 
-        // Switch to new session
+        // Switch to new session — clear unread marker
         currentSessionId = session.id
+        if let idx = sessions.firstIndex(where: { $0.id == session.id }) {
+            sessions[idx].hasUnread = false
+        } else if let idx = taskSessions.firstIndex(where: { $0.id == session.id }) {
+            taskSessions[idx].hasUnread = false
+        } else if let idx = workflowSessions.firstIndex(where: { $0.id == session.id }) {
+            workflowSessions[idx].hasUnread = false
+        }
         messages = restoreMessages(from: session.messages)
         // Sync chat_history.json to match current view
         saveChatHistory()
@@ -1228,26 +1326,28 @@ class RuntimeViewModel: ObservableObject {
     }
 
     func loadProjects() {
-        guard let data = try? Data(contentsOf: projectsURL),
+        let url = projectsURL
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            // First launch — use defaults
+            projects = Project.defaultProjects()
+            saveProjects()
+            return
+        }
+        guard let data = try? Data(contentsOf: url),
+              !data.isEmpty,
               let loaded = try? JSONDecoder().decode([Project].self, from: data) else {
-            // File doesn't exist yet — first launch, use defaults
-            if !FileManager.default.fileExists(atPath: projectsURL.path) {
-                projects = Project.defaultProjects()
-            }
+            // File exists but empty or corrupt — keep current state (don't overwrite with defaults)
             return
         }
         projects = loaded
     }
 
     func saveProjects() {
-        let snapshot = projects
         let url = projectsURL
-        Task.detached(priority: .utility) {
-            let dir = url.deletingLastPathComponent()
-            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            if let data = try? JSONEncoder().encode(snapshot) {
-                try? data.write(to: url)
-            }
+        let dir = url.deletingLastPathComponent()
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        if let data = try? JSONEncoder().encode(projects) {
+            try? data.write(to: url, options: .atomic)
         }
     }
 
@@ -1411,34 +1511,34 @@ class RuntimeViewModel: ObservableObject {
         if let data = try? JSONSerialization.data(withJSONObject: simplified) {
             let dir = url.deletingLastPathComponent()
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            try? data.write(to: url)
+            try? data.write(to: url, options: .atomic)
         }
 
-        // 2. Save all 3 session arrays
+        // 2. Archive current chat into session before saving
+        upsertCurrentSession()
+
+        // 3. Save all 3 session arrays (deduped + atomic)
         var seen = Set<UUID>()
         let deduped = sessions.filter { seen.insert($0.id).inserted }
         if let data = try? JSONEncoder().encode(deduped) {
             let dir = sessionsURL.deletingLastPathComponent()
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            try? data.write(to: sessionsURL)
+            try? data.write(to: sessionsURL, options: .atomic)
         }
         var seenTask = Set<UUID>()
         let dedupedTask = taskSessions.filter { seenTask.insert($0.id).inserted }
         if let data = try? JSONEncoder().encode(dedupedTask) {
-            try? data.write(to: taskSessionsURL)
+            try? data.write(to: taskSessionsURL, options: .atomic)
         }
         var seenWf = Set<UUID>()
         let dedupedWf = workflowSessions.filter { seenWf.insert($0.id).inserted }
         if let data = try? JSONEncoder().encode(dedupedWf) {
-            try? data.write(to: workflowSessionsURL)
+            try? data.write(to: workflowSessionsURL, options: .atomic)
         }
 
-        // 3. Save projects
-        if let data = try? JSONEncoder().encode(projects) {
-            let dir = projectsURL.deletingLastPathComponent()
-            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            try? data.write(to: projectsURL)
-        }
+        // 4. Save projects + workflow definitions
+        saveProjects()
+        saveWorkflowDefinitionsSync()
 
         // 4. Flush CoreMemory via daemon (fire-and-forget, no blocking)
         let port = storedPort
@@ -1508,6 +1608,7 @@ struct ChatSession: Identifiable, Codable {
     var messages: [ChatMessageCodable]
     var createdAt: Date
     var linkedId: String?  // Links to task ID or workflow node name
+    var hasUnread: Bool = false
 
     init(id: UUID = UUID(), title: String, messages: [ChatMessage] = [], linkedId: String? = nil) {
         self.id = id
@@ -1515,6 +1616,7 @@ struct ChatSession: Identifiable, Codable {
         self.messages = messages.compactMap { ChatMessageCodable(from: $0) }
         self.createdAt = Date()
         self.linkedId = linkedId
+        self.hasUnread = false
     }
 
     var formattedDate: String {

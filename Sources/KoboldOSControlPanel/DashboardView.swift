@@ -75,12 +75,15 @@ struct DashboardView: View {
     @State private var selectedPeriod: MetricsPeriod = .session
     @AppStorage("kobold.koboldName") private var koboldName: String = "KoboldOS"
     @AppStorage("kobold.showAdvancedStats") private var showAdvancedStats: Bool = false
+    @StateObject private var weatherManager = WeatherManager.shared
     @State private var showErrorPopover: Bool = false
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                dashboardHeader
+            VStack(spacing: 20) {
+                dateWeatherBar
+                welcomeSection
+                dashboardToolbar
                 ProactiveSuggestionsBar(engine: proactiveEngine) { action in
                     viewModel.sendMessage(action)
                     NotificationCenter.default.post(name: .koboldNavigate, object: SidebarTab.chat)
@@ -90,9 +93,9 @@ struct DashboardView: View {
                 statusSection
                 metricsGrid
                 recentActivitySection
-                quickActionsSection
             }
             .padding(24)
+            .frame(maxWidth: .infinity)
         }
         .background(Color.koboldBackground)
         .onAppear {
@@ -111,6 +114,70 @@ struct DashboardView: View {
             refreshTimer = nil
             proactiveEngine.stopPeriodicCheck()
         }
+    }
+
+    // MARK: - Welcome Section
+
+    private var dailyGreeting: String {
+        let dayOfYear = Calendar.current.ordinality(of: .day, in: .year, for: Date()) ?? 1
+        let greetings = [
+            "Schön, dass du da bist!",
+            "Bereit für einen produktiven Tag?",
+            "Was darf es heute sein?",
+            "Lass uns gemeinsam etwas Großartiges bauen.",
+            "Dein digitaler Assistent wartet auf dich.",
+            "Heute ist ein guter Tag für Fortschritt.",
+            "Auf geht's — die Welt wartet nicht!",
+            "Kreativität kennt keine Grenzen.",
+            "Jede große Reise beginnt mit einem Schritt.",
+            "Lass uns die Dinge ins Rollen bringen!",
+            "Innovation beginnt mit einer Idee.",
+            "Zusammen sind wir unschlagbar.",
+            "Heute wird ein guter Tag.",
+            "Was wäre, wenn alles möglich ist?",
+            "Die besten Ideen entstehen jetzt.",
+            "Volle Kraft voraus!",
+            "Bereit, Neues zu entdecken?",
+            "Machen wir das Beste draus!",
+            "Deine Vision, meine Tools.",
+            "Let's build something amazing.",
+            "Der Weg ist das Ziel — und wir sind unterwegs.",
+            "Heute schreiben wir Geschichte.",
+            "Ein neuer Tag, neue Möglichkeiten.",
+            "Think different. Build better.",
+            "Perfektion ist nicht das Ziel — Fortschritt schon.",
+            "Keep calm and code on.",
+            "Vom Gedanken zur Realität — lass uns loslegen.",
+            "Die Zukunft wird heute gebaut.",
+            "Neugier ist der Motor des Fortschritts.",
+            "Jede Zeile Code zählt.",
+            "Heute passiert etwas Besonderes.",
+        ]
+        return greetings[dayOfYear % greetings.count]
+    }
+
+    private var dailyGreetingPrefix: String {
+        let hour = Calendar.current.component(.hour, from: Date())
+        if hour < 6 { return "Gute Nacht" }
+        if hour < 12 { return "Guten Morgen" }
+        if hour < 17 { return "Guten Tag" }
+        if hour < 21 { return "Guten Abend" }
+        return "Gute Nacht"
+    }
+
+    var welcomeSection: some View {
+        VStack(spacing: 6) {
+            let userName = UserDefaults.standard.string(forKey: "kobold.profile.name") ?? ""
+            Text("\(dailyGreetingPrefix)\(userName.isEmpty ? "!" : ", \(userName)!")")
+                .font(.system(size: 28, weight: .bold))
+                .foregroundColor(.primary)
+            Text(dailyGreeting)
+                .font(.system(size: 15, weight: .medium))
+                .foregroundColor(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 8)
+        .padding(.bottom, 4)
     }
 
     // MARK: - System Resources (CPU / RAM / GPU)
@@ -181,23 +248,72 @@ struct DashboardView: View {
         }
     }
 
-    // MARK: - Header
+    // MARK: - Date & Weather Bar
 
-    var dashboardHeader: some View {
+    private var formattedDate: String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "de_DE")
+        f.dateFormat = "EEEE, d. MMMM yyyy"
+        return f.string(from: Date())
+    }
+
+    var dateWeatherBar: some View {
         HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Dashboard").font(.title2.bold())
-                Text(koboldName).font(.caption).foregroundColor(.secondary)
+            // Datum links
+            HStack(spacing: 8) {
+                Image(systemName: "calendar")
+                    .font(.system(size: 13))
+                    .foregroundColor(.koboldEmerald)
+                Text(formattedDate)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(.primary)
             }
+
             Spacer()
-            // Period picker
+
+            // Wetter rechts (nur wenn API-Key vorhanden)
+            if !weatherManager.apiKey.isEmpty {
+                HStack(spacing: 8) {
+                    if weatherManager.isLoading {
+                        ProgressView().controlSize(.mini).scaleEffect(0.7)
+                    } else if let temp = weatherManager.temperature {
+                        Image(systemName: weatherManager.iconName)
+                            .font(.system(size: 13))
+                            .foregroundColor(.koboldGold)
+                        Text(String(format: "%.0f°C", temp))
+                            .font(.system(size: 13, weight: .semibold))
+                        if !weatherManager.cityName.isEmpty {
+                            Text(weatherManager.cityName)
+                                .font(.system(size: 11))
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
+            }
+
+            // Online badge
+            GlassStatusBadge(
+                label: viewModel.isConnected ? "Online" : "Offline",
+                color: viewModel.isConnected ? .koboldEmerald : .red
+            )
+        }
+        .padding(.horizontal, 4)
+        .onAppear { weatherManager.fetchWeatherIfNeeded() }
+    }
+
+    // MARK: - Dashboard Toolbar (Period picker + actions, compact)
+
+    var dashboardToolbar: some View {
+        HStack(spacing: 8) {
             Picker("", selection: $selectedPeriod) {
                 ForEach(MetricsPeriod.allCases, id: \.self) { period in
                     Text(period.rawValue).tag(period)
                 }
             }
-            .pickerStyle(.menu)
-            .frame(width: 130)
+            .pickerStyle(.segmented)
+            .frame(maxWidth: 360)
+
+            Spacer()
 
             Button(action: {
                 if let url = URL(string: "https://github.com/FunkJood/KoboldOS") {
@@ -213,16 +329,18 @@ struct DashboardView: View {
             }
             .buttonStyle(.plain)
 
+            GlassButton(title: "Aktualisieren", icon: "arrow.clockwise.circle", isPrimary: false) {
+                Task {
+                    await viewModel.loadMetrics()
+                    sysMonitor.update()
+                }
+            }
+
             GlassButton(title: "Zurücksetzen", icon: "arrow.clockwise", isPrimary: false) {
                 Task {
                     await resetMetrics()
                 }
             }
-
-            GlassStatusBadge(
-                label: viewModel.isConnected ? "Online" : "Offline",
-                color: viewModel.isConnected ? .koboldEmerald : .red
-            )
         }
     }
 
@@ -382,31 +500,6 @@ struct DashboardView: View {
                                 .lineLimit(1)
                         }
                         .padding(.vertical, 1)
-                    }
-                }
-            }
-        }
-    }
-
-    // MARK: - Quick Actions
-
-    var quickActionsSection: some View {
-        GlassCard {
-            VStack(alignment: .leading, spacing: 12) {
-                GlassSectionHeader(title: "Schnellaktionen", icon: "bolt.fill")
-
-                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
-                    GlassButton(title: "Daemon neu starten", icon: "arrow.clockwise", isPrimary: false) {
-                        viewModel.restartDaemon()
-                    }
-                    GlassButton(title: "Metriken aktualisieren", icon: "arrow.clockwise.circle", isPrimary: false) {
-                        Task { await viewModel.loadMetrics() }
-                    }
-                    GlassButton(title: "Ollama prüfen", icon: "server.rack", isPrimary: false) {
-                        Task { await viewModel.checkOllamaStatus() }
-                    }
-                    GlassButton(title: "Verlauf leeren", icon: "trash", isDestructive: true) {
-                        viewModel.clearChatHistory()
                     }
                 }
             }

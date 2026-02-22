@@ -9,7 +9,7 @@ import AppKit
 final class UpdateManager: ObservableObject {
     static let shared = UpdateManager()
 
-    static let currentVersion = "0.2.3"
+    static let currentVersion = "0.2.5"
 
     @Published var state: UpdateState = .idle
     @Published var latestVersion: String?
@@ -168,35 +168,32 @@ final class UpdateManager: ObservableObject {
 
     private func installFromDMG(dmgPath: URL) async throws {
         let appPath = Bundle.main.bundlePath
-        // Mount DMG
         let mountPoint = FileManager.default.temporaryDirectory.appendingPathComponent("KoboldOS-mount-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: mountPoint, withIntermediateDirectories: true)
 
-        let mountProcess = Process()
-        mountProcess.executableURL = URL(fileURLWithPath: "/usr/bin/hdiutil")
-        mountProcess.arguments = ["attach", dmgPath.path, "-mountpoint", mountPoint.path, "-nobrowse", "-quiet"]
-        try mountProcess.run()
-        mountProcess.waitUntilExit()
+        // Run blocking Process calls off the main thread to prevent UI freeze
+        let mountStatus = await Task.detached(priority: .userInitiated) { () -> Int32 in
+            let mountProcess = Process()
+            mountProcess.executableURL = URL(fileURLWithPath: "/usr/bin/hdiutil")
+            mountProcess.arguments = ["attach", dmgPath.path, "-mountpoint", mountPoint.path, "-nobrowse", "-quiet"]
+            try? mountProcess.run()
+            mountProcess.waitUntilExit()
+            return mountProcess.terminationStatus
+        }.value
 
-        guard mountProcess.terminationStatus == 0 else {
+        guard mountStatus == 0 else {
             state = .error("DMG konnte nicht gemountet werden")
             return
-        }
-
-        defer {
-            // Unmount DMG
-            let unmount = Process()
-            unmount.executableURL = URL(fileURLWithPath: "/usr/bin/hdiutil")
-            unmount.arguments = ["detach", mountPoint.path, "-quiet"]
-            try? unmount.run()
-            unmount.waitUntilExit()
-            // Clean up DMG
-            try? FileManager.default.removeItem(at: dmgPath)
         }
 
         // Find .app in DMG
         let contents = try FileManager.default.contentsOfDirectory(at: mountPoint, includingPropertiesForKeys: nil)
         guard let appInDMG = contents.first(where: { $0.pathExtension == "app" }) else {
+            // Unmount on error
+            await Task.detached {
+                let u = Process(); u.executableURL = URL(fileURLWithPath: "/usr/bin/hdiutil")
+                u.arguments = ["detach", mountPoint.path, "-quiet"]; try? u.run(); u.waitUntilExit()
+            }.value
             state = .error("Keine App im DMG gefunden")
             return
         }
@@ -205,37 +202,24 @@ final class UpdateManager: ObservableObject {
         let scriptPath = FileManager.default.temporaryDirectory.appendingPathComponent("kobold-update.sh")
         let script = """
         #!/bin/bash
-        # Wait for the app to quit
         sleep 2
-        while kill -0 \(ProcessInfo.processInfo.processIdentifier) 2>/dev/null; do
-            sleep 1
-        done
+        while kill -0 \(ProcessInfo.processInfo.processIdentifier) 2>/dev/null; do sleep 1; done
         sleep 1
-
-        # Replace app
         rm -rf "\(appPath)"
         cp -R "\(appInDMG.path)" "\(appPath)"
-
-        # Unmount DMG
         hdiutil detach "\(mountPoint.path)" -quiet 2>/dev/null
-
-        # Restart app
         open "\(appPath)"
-
-        # Clean up this script
         rm -f "\(scriptPath.path)"
         """
 
         try script.write(to: scriptPath, atomically: true, encoding: .utf8)
 
-        // Make executable
-        let chmod = Process()
-        chmod.executableURL = URL(fileURLWithPath: "/bin/chmod")
-        chmod.arguments = ["+x", scriptPath.path]
-        try chmod.run()
-        chmod.waitUntilExit()
+        // chmod + launch off main thread
+        await Task.detached {
+            let chmod = Process(); chmod.executableURL = URL(fileURLWithPath: "/bin/chmod")
+            chmod.arguments = ["+x", scriptPath.path]; try? chmod.run(); chmod.waitUntilExit()
+        }.value
 
-        // Launch update script in background
         let launcher = Process()
         launcher.executableURL = URL(fileURLWithPath: "/bin/bash")
         launcher.arguments = [scriptPath.path]
@@ -243,7 +227,6 @@ final class UpdateManager: ObservableObject {
         launcher.standardError = FileHandle.nullDevice
         try launcher.run()
 
-        // Quit app — script will handle the rest
         try await Task.sleep(nanoseconds: 500_000_000)
         NSApp.terminate(nil)
     }

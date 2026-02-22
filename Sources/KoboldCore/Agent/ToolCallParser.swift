@@ -41,24 +41,34 @@ public struct ToolCallParser: Sendable {
         // Strip <think>...</think> tags (Qwen3 thinking mode) before parsing
         let cleaned = stripThinkTags(response)
 
-        // Step 1: Try to extract a JSON object from the response
+        // Strategy 1: Try markdown code blocks FIRST (most explicit format)
+        let codeCalls = parseJSONCodeBlocks(cleaned)
+        if !codeCalls.isEmpty { return codeCalls }
+
+        // Strategy 2: Try to extract a JSON object from the response (first { to last })
         if let json = extractAndParseJSON(from: cleaned) {
             if let call = parseAgentJSON(json) {
                 return [call]
             }
         }
 
-        // Step 2: Try XML-style <tool_call> (backwards compat)
+        // Strategy 3: Try finding individual balanced JSON objects containing tool_name
+        if let call = findToolCallJSON(in: cleaned) {
+            return [call]
+        }
+
+        // Strategy 4: Try XML-style <tool_call> (backwards compat)
         let xmlCalls = parseXMLStyle(cleaned)
         if !xmlCalls.isEmpty { return xmlCalls }
 
-        // Step 3: Try code blocks
-        let codeCalls = parseJSONCodeBlocks(cleaned)
-        if !codeCalls.isEmpty { return codeCalls }
+        // Strategy 5: Line-by-line scan for JSON objects
+        if let call = lineScanForJSON(in: cleaned) {
+            return [call]
+        }
 
-        // Step 4: If no tool call was extracted, treat as implicit "response"
-        // Extract readable text — strip any JSON artifacts for user display
+        // Fallback: treat as implicit "response"
         let text = extractReadableText(from: cleaned)
+        print("[ToolCallParser] FALLBACK: No tool call found. Response starts with: \(String(cleaned.prefix(200)))")
         return [ParsedToolCall(
             name: "response",
             arguments: ["text": text],
@@ -85,11 +95,19 @@ public struct ToolCallParser: Sendable {
             if let t = json["text"] as? String { return t }
             if let t = json["content"] as? String { return t }
             if let args = json["tool_args"] as? [String: Any], let t = args["text"] as? String { return t }
+            if let args = json["arguments"] as? [String: Any], let t = args["text"] as? String { return t }
+            if let args = json["args"] as? [String: Any], let t = args["text"] as? String { return t }
             // Last resort: return thoughts if available
             if let thoughts = json["thoughts"] as? [String], !thoughts.isEmpty {
                 return thoughts.joined(separator: " ")
             }
         }
+
+        // Strip markdown code blocks to get just the text around them
+        let stripped = trimmed
+            .replacingOccurrences(of: "```(?:\\w+)?\\s*\\n?[\\s\\S]*?```", with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !stripped.isEmpty { return stripped }
 
         // Not JSON — return as-is
         return trimmed
@@ -119,6 +137,8 @@ public struct ToolCallParser: Sendable {
             name = n
         } else if let n = json["function"] as? String, !n.isEmpty {
             name = n
+        } else if let n = json["action"] as? String, !n.isEmpty {
+            name = n
         } else {
             return nil
         }
@@ -129,7 +149,8 @@ public struct ToolCallParser: Sendable {
             json["tool_args"] as? [String: Any] ??
             json["parameters"] as? [String: Any] ??
             json["arguments"] as? [String: Any] ??
-            json["args"] as? [String: Any]
+            json["args"] as? [String: Any] ??
+            json["input"] as? [String: Any]
 
         if let argsObj {
             for (key, value) in argsObj {
@@ -146,6 +167,8 @@ public struct ToolCallParser: Sendable {
         } else if let t = json["thought"] as? String {
             thoughts = [t]
         } else if let t = json["headline"] as? String {
+            thoughts = [t]
+        } else if let t = json["reasoning"] as? String {
             thoughts = [t]
         }
 
@@ -182,6 +205,97 @@ public struct ToolCallParser: Sendable {
             return json
         }
 
+        return nil
+    }
+
+    // MARK: - Find balanced JSON objects containing tool_name
+
+    private func findToolCallJSON(in text: String) -> ParsedToolCall? {
+        // Find all top-level balanced {...} blocks
+        let blocks = extractBalancedJSONBlocks(from: text)
+        for block in blocks {
+            // Try to parse this block
+            if let data = block.data(using: .utf8),
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let call = parseAgentJSON(json) {
+                return call
+            }
+            // Try with dirty cleaning
+            let cleaned = dirtyJSONClean(block)
+            if let data = cleaned.data(using: .utf8),
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let call = parseAgentJSON(json) {
+                return call
+            }
+        }
+        return nil
+    }
+
+    /// Extract all balanced top-level {...} JSON blocks from text
+    private func extractBalancedJSONBlocks(from text: String) -> [String] {
+        var blocks: [String] = []
+        var depth = 0
+        var startIndex: String.Index?
+
+        for (idx, char) in text.enumerated() {
+            let strIdx = text.index(text.startIndex, offsetBy: idx)
+            if char == "{" {
+                if depth == 0 { startIndex = strIdx }
+                depth += 1
+            } else if char == "}" {
+                depth -= 1
+                if depth == 0, let start = startIndex {
+                    let block = String(text[start...strIdx])
+                    // Only collect blocks that look like they might have tool_name
+                    if block.contains("tool_name") || block.contains("\"name\"") ||
+                       block.contains("\"tool\"") || block.contains("\"function\"") ||
+                       block.contains("\"action\"") {
+                        blocks.append(block)
+                    }
+                }
+            }
+        }
+        return blocks
+    }
+
+    // MARK: - Line-by-line scan for JSON
+
+    private func lineScanForJSON(in text: String) -> ParsedToolCall? {
+        let lines = text.components(separatedBy: .newlines)
+        var jsonBuffer = ""
+        var depth = 0
+
+        for line in lines {
+            let trimmedLine = line.trimmingCharacters(in: .whitespaces)
+
+            if depth == 0 && trimmedLine.hasPrefix("{") {
+                jsonBuffer = ""
+                depth = 0
+            }
+
+            if depth > 0 || trimmedLine.hasPrefix("{") {
+                jsonBuffer += line + "\n"
+                depth += line.filter({ $0 == "{" }).count
+                depth -= line.filter({ $0 == "}" }).count
+
+                if depth <= 0 {
+                    // Try to parse accumulated JSON
+                    if let data = jsonBuffer.data(using: .utf8),
+                       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                       let call = parseAgentJSON(json) {
+                        return call
+                    }
+                    let cleaned = dirtyJSONClean(jsonBuffer)
+                    if let data = cleaned.data(using: .utf8),
+                       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                       let call = parseAgentJSON(json) {
+                        return call
+                    }
+                    jsonBuffer = ""
+                    depth = 0
+                }
+            }
+        }
         return nil
     }
 

@@ -39,16 +39,20 @@ struct ChatView: View {
                                 .id(msg.id)
                         }
 
-                        // Live thinking panel (while agent is working)
-                        if viewModel.agentLoading && !viewModel.activeThinkingSteps.isEmpty {
-                            ThinkingPanelBubble(entries: viewModel.activeThinkingSteps, isLive: true)
-                                .id("thinking-live")
-                            // Sub-Agent banner (always visible outside collapsed panel)
-                            SubAgentActivityBanner(entries: viewModel.activeThinkingSteps)
-                                .id("subagent-banner")
+                        // Live thinking panel (only in the chat that initiated the request)
+                        if viewModel.isAgentLoadingInCurrentChat {
+                            if viewModel.activeThinkingSteps.isEmpty {
+                                ThinkingPlaceholderBubble()
+                                    .id("thinking-placeholder")
+                            } else {
+                                ThinkingPanelBubble(entries: viewModel.activeThinkingSteps, isLive: true)
+                                    .id("thinking-live")
+                                SubAgentActivityBanner(entries: viewModel.activeThinkingSteps)
+                                    .id("subagent-banner")
+                            }
                         }
 
-                        if viewModel.agentLoading {
+                        if viewModel.isAgentLoadingInCurrentChat {
                             GlassChatBubble(message: "", isUser: false, timestamp: Date(), isLoading: true)
                                 .id("loading")
                         }
@@ -184,17 +188,20 @@ struct ChatView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "point.3.connected.trianglepath.dotted")
                         .font(.caption)
-                        .foregroundColor(.koboldGold)
+                        .foregroundColor(.koboldEmerald)
                     Text("Workflow-Chat — gespeichert unter Workflows")
                         .font(.caption)
-                        .foregroundColor(.koboldGold)
+                        .foregroundColor(.koboldEmerald)
                     Spacer()
-                    Button(action: { viewModel.newSession() }) {
-                        Text("Zurück zum Chat").font(.caption2).foregroundColor(.koboldEmerald)
+                    Button(action: {
+                        NotificationCenter.default.post(name: .koboldNavigate, object: SidebarTab.workflows)
+                        viewModel.newSession()
+                    }) {
+                        Text("Zurück zum Workflow").font(.caption2).foregroundColor(.koboldEmerald)
                     }.buttonStyle(.plain)
                 }
                 .padding(.horizontal, 14).padding(.vertical, 6)
-                .background(Color.koboldGold.opacity(0.1))
+                .background(Color.koboldEmerald.opacity(0.1))
             } else if viewModel.chatMode == .task {
                 HStack(spacing: 6) {
                     Image(systemName: "checklist")
@@ -216,23 +223,89 @@ struct ChatView: View {
 
     // MARK: - Empty State
 
+    private static let exampleSets: [[String]] = [
+        [
+            "Räum meinen Desktop auf und sortiere nach Dateityp",
+            "Sende eine Telegram-Nachricht an mich: Bin gleich da",
+            "Welche Prozesse fressen gerade am meisten CPU?",
+            "Generiere ein Bild von einem Drachen auf einer Burg",
+        ],
+        [
+            "Finde alle Dateien über 1 GB auf meinem Mac",
+            "Erstelle ein Python-Skript das PDFs zusammenführt",
+            "Öffne die letzten 5 Screenshots vom Desktop",
+            "Lies mir die letzte Telegram-Nachricht vor",
+        ],
+        [
+            "Erstelle ein Backup von ~/Documents nach ~/Backups",
+            "Installiere ffmpeg über Homebrew",
+            "Komprimiere alle PNGs auf dem Desktop zu einem ZIP",
+            "Starte den Webserver und erstelle einen Tunnel",
+        ],
+        [
+            "Lösche alle .DS_Store Dateien rekursiv",
+            "Zeig mir die Git-History von diesem Projekt",
+            "Konvertiere alle HEIC-Fotos auf dem Desktop zu JPG",
+            "Schreibe ein Shell-Skript das mein System aufräumt",
+        ],
+        [
+            "Wie viel Speicherplatz ist noch frei?",
+            "Sende per Telegram meine IP-Adresse",
+            "Erstelle einen Cronjob der täglich Logs aufräumt",
+            "Finde alle offenen Ports auf meinem Mac",
+        ],
+        [
+            "Lade dieses YouTube-Video herunter",
+            "Erstelle ein Bild im Anime-Stil von einer Katze",
+            "Scanne mein WLAN und zeig alle verbundenen Geräte",
+            "Schreibe eine Google-Mail an tim@example.com",
+        ],
+        [
+            "Führe dieses Python-Skript aus und zeig mir die Ausgabe",
+            "Ändere mein Wallpaper auf ein zufälliges von Unsplash",
+            "Prüfe ob meine Webseite erreichbar ist",
+            "Fasse die letzte Datei zusammen die ich bearbeitet hab",
+        ],
+    ]
+
+    private var currentExamples: [String] {
+        let dayOfYear = Calendar.current.ordinality(of: .day, in: .year, for: Date()) ?? 0
+        let setIndex = dayOfYear % Self.exampleSets.count
+        return Self.exampleSets[setIndex]
+    }
+
     var emptyState: some View {
-        VStack(spacing: 16) {
-            Spacer(minLength: 60)
-            Text("🐲").font(.system(size: 48))
-            Text(l10n.language.startConversation).font(.title3)
+        VStack(spacing: 20) {
+            Spacer(minLength: 80)
+            Text(l10n.language.startConversation)
+                .font(.system(size: 22, weight: .semibold))
             Text("\(koboldName.isEmpty ? "KoboldOS" : koboldName) ist bereit.")
-                .font(.body).foregroundColor(.secondary)
-            GlassCard(padding: 12, cornerRadius: 10) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Beispiele").font(.caption.weight(.semibold)).foregroundColor(.koboldGold)
-                    Text("• \"Dateien in ~/Desktop auflisten\"").font(.caption).foregroundColor(.secondary)
-                    Text("• \"Wetter in Berlin abrufen\"").font(.caption).foregroundColor(.secondary)
-                    Text("• \"Was ist 17 Fakultät?\"").font(.caption).foregroundColor(.secondary)
-                    Text("• \"Schreibe mir ein Python-Skript...\"").font(.caption).foregroundColor(.secondary)
+                .font(.system(size: 15)).foregroundColor(.secondary)
+            GlassCard(padding: 16, cornerRadius: 12) {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Probier mal...").font(.system(size: 13, weight: .semibold)).foregroundColor(.koboldGold)
+                    ForEach(currentExamples, id: \.self) { example in
+                        Button(action: {
+                            inputText = ""
+                            viewModel.sendMessage(example)
+                        }) {
+                            HStack(spacing: 8) {
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundColor(.koboldEmerald.opacity(0.7))
+                                Text("\"\(example)\"")
+                                    .font(.system(size: 13))
+                                    .foregroundColor(.secondary)
+                            }
+                            .padding(.vertical, 4).padding(.horizontal, 8)
+                            .background(Color.koboldEmerald.opacity(0.05))
+                            .cornerRadius(8)
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
             }
-            .frame(maxWidth: 320)
+            .frame(maxWidth: 400)
             Spacer()
         }
         .frame(maxWidth: .infinity)
@@ -292,7 +365,7 @@ struct ChatView: View {
                     onSubmit: send
                 )
 
-                if viewModel.agentLoading {
+                if viewModel.isAgentLoadingInCurrentChat {
                     Button(action: { viewModel.cancelAgent() }) {
                         Image(systemName: "stop.circle.fill")
                             .font(.system(size: 16, weight: .semibold))
@@ -383,7 +456,7 @@ struct ChatView: View {
         scrollDebounceTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 150_000_000) // 150ms debounce
             guard !Task.isCancelled else { return }
-            if viewModel.agentLoading {
+            if viewModel.isAgentLoadingInCurrentChat {
                 proxy.scrollTo("loading", anchor: .bottom)
             } else if let last = viewModel.messages.last {
                 proxy.scrollTo(last.id, anchor: .bottom)

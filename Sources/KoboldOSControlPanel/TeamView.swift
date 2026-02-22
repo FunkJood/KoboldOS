@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 // MARK: - TeamView
 // Visuelle n8n-artige Workflow-Builder für Agenten-Teams.
@@ -16,6 +17,15 @@ struct TeamView: View {
     @State private var isDraggingPort: Bool = false
     @State private var dragSourceIsOutput: Bool = true
     @State private var portDragLocation: CGPoint = .zero
+    // Agent-Builder
+    @State private var agentBuilderText: String = ""
+    @State private var isAgentBuilding: Bool = false
+    @State private var agentBuildStatus: String = ""
+    @State private var showImportPicker: Bool = false
+    // Canvas zoom & pan
+    @State private var canvasScale: CGFloat = 1.0
+    @State private var canvasOffset: CGSize = .zero
+    @State private var lastDragOffset: CGSize = .zero
 
     // Active project name shown in header
     private var projectName: String {
@@ -37,7 +47,7 @@ struct TeamView: View {
             teamHeader
             GlassDivider()
             if viewModel.selectedProjectId == nil {
-                // No project selected — hint
+                // No project selected — hint + workflow suggestions
                 VStack(spacing: 16) {
                     Spacer()
                     Image(systemName: "folder.badge.questionmark")
@@ -47,6 +57,42 @@ struct TeamView: View {
                         .font(.title3)
                     Text("Wähle ein Projekt in der Seitenleiste oder erstelle ein neues.")
                         .font(.body).foregroundColor(.secondary)
+
+                    // Workflow ideas
+                    GlassCard(padding: 12, cornerRadius: 12) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Workflow-Ideen").font(.system(size: 13, weight: .semibold)).foregroundColor(.koboldGold)
+                            ForEach(currentWorkflowSuggestions, id: \.name) { suggestion in
+                                Button(action: {
+                                    viewModel.newProject()
+                                    agentBuilderText = suggestion.description
+                                }) {
+                                    HStack(spacing: 10) {
+                                        Image(systemName: suggestion.icon)
+                                            .font(.system(size: 12))
+                                            .foregroundColor(.koboldGold)
+                                            .frame(width: 20)
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(suggestion.name)
+                                                .font(.system(size: 12, weight: .medium))
+                                                .foregroundColor(.primary)
+                                            Text(suggestion.description)
+                                                .font(.system(size: 10))
+                                                .foregroundColor(.secondary)
+                                                .lineLimit(1)
+                                        }
+                                        Spacer()
+                                    }
+                                    .padding(.vertical, 4).padding(.horizontal, 6)
+                                    .background(Color.koboldGold.opacity(0.04))
+                                    .cornerRadius(6)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                    .frame(maxWidth: 460)
+
                     Spacer()
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -70,37 +116,118 @@ struct TeamView: View {
             saveWorkflowState()
             loadWorkflowState()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .koboldWorkflowChanged)) { notification in
+            if let projectId = notification.object as? String,
+               let selected = viewModel.selectedProjectId,
+               selected.uuidString.hasPrefix(projectId) || selected.uuidString == projectId {
+                loadWorkflowState()
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .koboldWorkflowRun)) { notification in
+            if let projectId = notification.object as? String,
+               let selected = viewModel.selectedProjectId,
+               selected.uuidString.hasPrefix(projectId) || selected.uuidString == projectId {
+                Task { await runWorkflow() }
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .koboldProjectsChanged)) { _ in
+            viewModel.loadProjects()
+        }
     }
 
     // MARK: - Header
 
     var teamHeader: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 8) {
-                    Text(projectName)
-                        .font(.headline)
-                    GlassStatusBadge(label: "Beta", color: .koboldGold)
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 8) {
+                        Text(projectName)
+                            .font(.headline)
+                        GlassStatusBadge(label: "Beta", color: .koboldGold)
+                    }
+                    Text("Verbinde Agenten zu Workflows")
+                        .font(.caption).foregroundColor(.secondary)
                 }
-                Text("Verbinde Agenten zu Workflows")
-                    .font(.caption).foregroundColor(.secondary)
+                Spacer()
+                if viewModel.selectedProject != nil {
+                    // Import JSON button
+                    GlassButton(title: "Import", icon: "square.and.arrow.down", isPrimary: false) {
+                        showImportPicker = true
+                    }
+                    GlassButton(title: "Node +", icon: "plus", isPrimary: false) {
+                        addNode()
+                    }
+                    GlassButton(
+                        title: isRunning ? "Läuft..." : "Ausführen",
+                        icon: isRunning ? "stop.fill" : "play.fill",
+                        isPrimary: true
+                    ) {
+                        Task { await runWorkflow() }
+                    }
+                }
             }
-            Spacer()
+            .padding(.horizontal, 16).padding(.vertical, 12)
+
+            // Agent-Builder text field (only when project selected)
             if viewModel.selectedProject != nil {
-                GlassButton(title: "Node +", icon: "plus", isPrimary: false) {
-                    addNode()
+                HStack(spacing: 8) {
+                    Image(systemName: "brain")
+                        .font(.system(size: 12))
+                        .foregroundColor(.koboldGold)
+                    GlassTextField(
+                        text: $agentBuilderText,
+                        placeholder: "Workflow-Idee hier dem Agent zum Bauen geben...",
+                        onSubmit: { buildWorkflowWithAgent() }
+                    )
+                    Button(action: { buildWorkflowWithAgent() }) {
+                        Image(systemName: "paperplane.fill")
+                            .font(.system(size: 13))
+                            .foregroundColor(.white)
+                            .frame(width: 28, height: 28)
+                            .background(agentBuilderText.isEmpty ? Color.secondary : Color.koboldEmerald)
+                            .cornerRadius(7)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(agentBuilderText.trimmingCharacters(in: .whitespaces).isEmpty || isAgentBuilding)
                 }
-                GlassButton(
-                    title: isRunning ? "Läuft..." : "Ausführen",
-                    icon: isRunning ? "stop.fill" : "play.fill",
-                    isPrimary: true
-                ) {
-                    Task { await runWorkflow() }
+                .padding(.horizontal, 16).padding(.bottom, 8)
+
+                // Agent-Builder status
+                if isAgentBuilding || !agentBuildStatus.isEmpty {
+                    HStack(spacing: 6) {
+                        if isAgentBuilding {
+                            ProgressView().controlSize(.mini).scaleEffect(0.7)
+                            Image(systemName: "brain")
+                                .font(.system(size: 10))
+                                .foregroundColor(.koboldGold)
+                            Text("Erstelle Workflow...")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(.koboldGold)
+                        } else if !agentBuildStatus.isEmpty {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 10))
+                                .foregroundColor(.koboldEmerald)
+                            Text(agentBuildStatus)
+                                .font(.system(size: 11))
+                                .foregroundColor(.koboldEmerald)
+                        }
+                        Spacer()
+                    }
+                    .padding(.horizontal, 16).padding(.bottom, 6)
                 }
             }
         }
-        .padding(.horizontal, 16).padding(.vertical, 12)
         .background(Color.koboldPanel)
+        .fileImporter(
+            isPresented: $showImportPicker,
+            allowedContentTypes: [.json],
+            allowsMultipleSelection: false
+        ) { result in
+            if case .success(let urls) = result, let url = urls.first {
+                importWorkflowJSON(from: url)
+            }
+        }
     }
 
     // MARK: - Canvas
@@ -190,9 +317,62 @@ struct TeamView: View {
                     }
                 }
             }
+            .scaleEffect(canvasScale)
+            .offset(canvasOffset)
             .frame(width: geo.size.width, height: geo.size.height)
             .coordinateSpace(name: "canvas")
             .clipped()
+            .contentShape(Rectangle())
+            // Pan gesture on background
+            .gesture(
+                DragGesture()
+                    .onChanged { value in
+                        canvasOffset = CGSize(
+                            width: lastDragOffset.width + value.translation.width,
+                            height: lastDragOffset.height + value.translation.height
+                        )
+                    }
+                    .onEnded { _ in
+                        lastDragOffset = canvasOffset
+                    }
+            )
+            // Zoom via scroll wheel / pinch
+            .onAppear {
+                NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { event in
+                    if event.modifierFlags.contains(.command) {
+                        let delta = event.scrollingDeltaY * 0.01
+                        canvasScale = max(0.3, min(3.0, canvasScale + delta))
+                        return nil
+                    }
+                    return event
+                }
+            }
+            // Zoom controls overlay
+            .overlay(alignment: .bottomTrailing) {
+                HStack(spacing: 4) {
+                    Button(action: { withAnimation(.easeOut(duration: 0.2)) { canvasScale = max(0.3, canvasScale - 0.1) } }) {
+                        Image(systemName: "minus.magnifyingglass").font(.system(size: 12))
+                    }.buttonStyle(.plain)
+                    Text(String(format: "%.0f%%", canvasScale * 100))
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(.secondary)
+                        .frame(width: 36)
+                    Button(action: { withAnimation(.easeOut(duration: 0.2)) { canvasScale = min(3.0, canvasScale + 0.1) } }) {
+                        Image(systemName: "plus.magnifyingglass").font(.system(size: 12))
+                    }.buttonStyle(.plain)
+                    Button(action: {
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            canvasScale = 1.0; canvasOffset = .zero; lastDragOffset = .zero
+                        }
+                    }) {
+                        Image(systemName: "arrow.counterclockwise").font(.system(size: 11))
+                    }.buttonStyle(.plain)
+                }
+                .padding(6)
+                .background(Color.koboldPanel.opacity(0.9))
+                .cornerRadius(8)
+                .padding(12)
+            }
         }
         .background(Color.koboldBackground)
     }
@@ -220,7 +400,8 @@ struct TeamView: View {
                     onDeleteConnection: { connId in
                         connections.removeAll { $0.id == connId }
                         saveWorkflowState()
-                    }
+                    },
+                    viewModel: viewModel
                 )
             }
         }
@@ -280,6 +461,86 @@ struct TeamView: View {
         }
         nodes.append(newNode)
         saveWorkflowState()
+    }
+
+    // MARK: - Workflow Suggestions (rotate every 4 hours)
+
+    private struct WorkflowSuggestion {
+        let icon: String
+        let name: String
+        let description: String
+    }
+
+    private static let workflowSuggestionSets: [[WorkflowSuggestion]] = [
+        [
+            WorkflowSuggestion(icon: "envelope.fill", name: "Email-Pipeline", description: "Emails lesen → zusammenfassen → dringende beantworten → Report erstellen"),
+            WorkflowSuggestion(icon: "doc.text.magnifyingglass", name: "Code-Review Pipeline", description: "Git Diff lesen → Code analysieren → Verbesserungen vorschlagen → Tests schreiben"),
+            WorkflowSuggestion(icon: "newspaper.fill", name: "News-Aggregator", description: "Nachrichten sammeln → filtern → zusammenfassen → als Briefing formatieren"),
+        ],
+        [
+            WorkflowSuggestion(icon: "photo.stack.fill", name: "Bild-Pipeline", description: "Screenshots sammeln → beschreiben → in Ordner sortieren → Thumbnails erstellen"),
+            WorkflowSuggestion(icon: "globe", name: "Web-Monitoring", description: "Webseiten prüfen → Änderungen erkennen → Benachrichtigung senden"),
+            WorkflowSuggestion(icon: "chart.bar.fill", name: "System-Report", description: "System-Daten sammeln → analysieren → Report erstellen → als PDF speichern"),
+        ],
+        [
+            WorkflowSuggestion(icon: "person.2.fill", name: "Meeting-Assistent", description: "Kalender prüfen → Agenda erstellen → Notizen vorbereiten → Erinnerung senden"),
+            WorkflowSuggestion(icon: "folder.fill", name: "Datei-Organizer", description: "Downloads scannen → nach Typ sortieren → alte Dateien archivieren → Report erstellen"),
+            WorkflowSuggestion(icon: "text.bubble.fill", name: "Social Media Planner", description: "Content-Ideen generieren → Texte schreiben → Bilder erstellen → Zeitplan erstellen"),
+        ],
+    ]
+
+    private var currentWorkflowSuggestions: [WorkflowSuggestion] {
+        let hour = Calendar.current.component(.hour, from: Date())
+        let dayOfYear = Calendar.current.ordinality(of: .day, in: .year, for: Date()) ?? 0
+        let index = (dayOfYear * 6 + hour / 4) % Self.workflowSuggestionSets.count
+        return Self.workflowSuggestionSets[index]
+    }
+
+    // MARK: - JSON Import
+
+    private func importWorkflowJSON(from url: URL) {
+        guard url.startAccessingSecurityScopedResource() else { return }
+        defer { url.stopAccessingSecurityScopedResource() }
+
+        guard let data = try? Data(contentsOf: url),
+              let state = try? JSONDecoder().decode(WorkflowState.self, from: data) else {
+            agentBuildStatus = "Import fehlgeschlagen — ungültiges JSON"
+            DispatchQueue.main.asyncAfter(deadline: .now() + 5) { agentBuildStatus = "" }
+            return
+        }
+        nodes = state.nodes
+        connections = state.connections
+        saveWorkflowState()
+        agentBuildStatus = "Workflow importiert: \(state.nodes.count) Nodes, \(state.connections.count) Verbindungen"
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { agentBuildStatus = "" }
+    }
+
+    // MARK: - Agent-Builder
+
+    private func buildWorkflowWithAgent() {
+        let text = agentBuilderText.trimmingCharacters(in: .whitespaces)
+        guard !text.isEmpty, !isAgentBuilding else { return }
+        guard let projectId = viewModel.selectedProjectId else { return }
+
+        agentBuilderText = ""
+        isAgentBuilding = true
+
+        let prompt = """
+        Erstelle einen Workflow mit dem workflow_manage Tool basierend auf dieser Beschreibung: \(text)
+
+        Verwende project_id: \(projectId.uuidString)
+
+        Erstelle passende Nodes (Trigger, Agent-Nodes mit passendem Profil, Output) und verbinde sie.
+        """
+
+        viewModel.sendMessage(prompt)
+
+        // Auto-finish status after a delay (agent works asynchronously)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+            isAgentBuilding = false
+            agentBuildStatus = "Workflow-Anfrage gesendet"
+            DispatchQueue.main.asyncAfter(deadline: .now() + 5) { agentBuildStatus = "" }
+        }
     }
 
     // MARK: - Workflow Persistence
@@ -350,7 +611,7 @@ struct TeamView: View {
                     ? "Step \(node.title): \(context.isEmpty ? "Start the workflow." : "Based on previous step:\n\(String(context.prefix(500)))")"
                     : "\(node.prompt)\n\nKontext:\n\(context.prefix(500))"
 
-                viewModel.sendMessage(prompt)
+                viewModel.sendWorkflowMessage(prompt, modelOverride: node.modelOverride, agentOverride: node.agentType)
                 try? await Task.sleep(nanoseconds: 500_000_000)
                 nodes[nodeIdx].lastOutput = "Verarbeitet von \(node.title)"
             }
@@ -392,9 +653,15 @@ struct WorkflowNode: Identifiable, Codable {
     var x: CGFloat
     var y: CGFloat
     var lastOutput: String = ""
+    var triggerConfig: TriggerConfig?
+    var conditionExpression: String = ""  // For condition nodes: e.g. "output.contains('error')"
+    var delaySeconds: Int = 0             // For delay nodes
+    var modelOverride: String?            // Per-node model (e.g. "llama3.2", "gpt-4o")
+    var agentType: String?                // Per-node agent type (e.g. "coder", "researcher")
 
     enum CodingKeys: String, CodingKey {
-        case id, type, title, prompt, x, y
+        case id, type, title, prompt, x, y, triggerConfig, conditionExpression, delaySeconds
+        case modelOverride, agentType
     }
 
     init(id: UUID = UUID(), type: NodeType, title: String, prompt: String = "", x: CGFloat, y: CGFloat) {
@@ -403,19 +670,59 @@ struct WorkflowNode: Identifiable, Codable {
     }
 
     static func defaultWorkflow() -> ([WorkflowNode], [WorkflowConnection]) {
-        let input  = WorkflowNode(type: .input,  title: "Nutzer-Input", x: 60,  y: 160)
-        let instr  = WorkflowNode(type: .agent,  title: "Instructor",   x: 260, y: 160)
-        let coder  = WorkflowNode(type: .agent,  title: "Coder",        x: 460, y: 100)
-        let output = WorkflowNode(type: .output, title: "Antwort",      x: 660, y: 160)
+        var trigger = WorkflowNode(type: .trigger, title: "Start", x: 60, y: 160)
+        trigger.triggerConfig = TriggerConfig(type: .manual)
+        let instr  = WorkflowNode(type: .agent,   title: "Instructor",  x: 260, y: 160)
+        let coder  = WorkflowNode(type: .agent,   title: "Coder",       x: 460, y: 100)
+        let output = WorkflowNode(type: .output,   title: "Antwort",    x: 660, y: 160)
         let connections = [
-            WorkflowConnection(sourceNodeId: input.id, targetNodeId: instr.id),
+            WorkflowConnection(sourceNodeId: trigger.id, targetNodeId: instr.id),
             WorkflowConnection(sourceNodeId: instr.id, targetNodeId: coder.id),
             WorkflowConnection(sourceNodeId: coder.id, targetNodeId: output.id),
         ]
-        return ([input, instr, coder, output], connections)
+        return ([trigger, instr, coder, output], connections)
+    }
+
+    // MARK: - Trigger Configuration
+
+    struct TriggerConfig: Codable {
+        var type: TriggerType
+        var cronExpression: String = ""     // For .cron: "0 8 * * *"
+        var webhookPath: String = ""        // For .webhook: "/hook/my-workflow"
+        var watchPath: String = ""          // For .fileWatcher: "/path/to/watch"
+        var eventName: String = ""          // For .appEvent: "app_start", "memory_update", etc.
+        var httpMethod: String = "POST"     // For .webhook
+
+        enum TriggerType: String, Codable, CaseIterable {
+            case manual      = "Manual"
+            case cron        = "Zeitplan"
+            case webhook     = "Webhook"
+            case fileWatcher = "Datei-Watcher"
+            case appEvent    = "App-Event"
+
+            var icon: String {
+                switch self {
+                case .manual:      return "play.circle.fill"
+                case .cron:        return "clock.badge.checkmark"
+                case .webhook:     return "antenna.radiowaves.left.and.right"
+                case .fileWatcher: return "folder.badge.gearshape"
+                case .appEvent:    return "app.badge.fill"
+                }
+            }
+            var description: String {
+                switch self {
+                case .manual:      return "Manuell per Klick starten"
+                case .cron:        return "Zeitgesteuert (Cron-Ausdruck)"
+                case .webhook:     return "HTTP-Endpoint empfängt Daten"
+                case .fileWatcher: return "Reagiert auf Dateiänderungen"
+                case .appEvent:    return "Reagiert auf App-Events"
+                }
+            }
+        }
     }
 
     enum NodeType: String, CaseIterable, Codable {
+        case trigger   = "Trigger"
         case input     = "Input"
         case agent     = "Agent"
         case tool      = "Tool"
@@ -424,9 +731,11 @@ struct WorkflowNode: Identifiable, Codable {
         case merger    = "Merger"
         case delay     = "Delay"
         case webhook   = "Webhook"
+        case formula   = "Formula"
 
         var color: Color {
             switch self {
+            case .trigger:   return .red
             case .input:     return .koboldEmerald
             case .agent:     return .koboldGold
             case .tool:      return .blue
@@ -435,10 +744,12 @@ struct WorkflowNode: Identifiable, Codable {
             case .merger:    return .cyan
             case .delay:     return .gray
             case .webhook:   return .pink
+            case .formula:   return .mint
             }
         }
         var icon: String {
             switch self {
+            case .trigger:   return "bolt.circle.fill"
             case .input:     return "arrow.right.circle"
             case .agent:     return "brain"
             case .tool:      return "wrench.fill"
@@ -447,6 +758,7 @@ struct WorkflowNode: Identifiable, Codable {
             case .merger:    return "arrow.triangle.merge"
             case .delay:     return "clock.fill"
             case .webhook:   return "antenna.radiowaves.left.and.right"
+            case .formula:   return "function"
             }
         }
     }
@@ -582,6 +894,7 @@ struct NodeInspector: View {
     var incomingConnections: [WorkflowConnection] = []
     var outgoingConnections: [WorkflowConnection] = []
     var onDeleteConnection: ((UUID) -> Void)? = nil
+    @ObservedObject var viewModel: RuntimeViewModel
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -651,13 +964,81 @@ struct NodeInspector: View {
                 }
             }
 
-            // Open a live chat for this agent node (not saved to history)
+            // Trigger-specific configuration
+            if node.type == .trigger {
+                triggerConfigSection
+            }
+
+            // Condition expression
+            if node.type == .condition {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Bedingung").font(.caption).foregroundColor(.secondary)
+                    GlassTextField(text: $node.conditionExpression, placeholder: "z.B. output.contains('error')")
+                    Text("Wenn wahr: oberer Ausgang. Wenn falsch: unterer Ausgang.")
+                        .font(.system(size: 9)).foregroundColor(.secondary)
+                }
+            }
+
+            // Delay
+            if node.type == .delay {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Verzögerung (Sekunden)").font(.caption).foregroundColor(.secondary)
+                    TextField("", value: $node.delaySeconds, format: .number)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 80)
+                }
+            }
+
+            // Formula
+            if node.type == .formula {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Formel").font(.caption).foregroundColor(.secondary)
+                    TextEditor(text: $node.prompt)
+                        .font(.system(size: 11, design: .monospaced))
+                        .frame(minHeight: 60)
+                        .padding(6)
+                        .background(Color.black.opacity(0.2))
+                        .cornerRadius(6)
+                    Text("Variablen: {{input}}, {{date}}, {{env.KEY}}")
+                        .font(.system(size: 9)).foregroundColor(.secondary)
+                }
+            }
+
+            // Agent-specific: type, model, chat
             if node.type == .agent {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Agent-Typ").font(.caption).foregroundColor(.secondary)
+                    Picker("", selection: Binding(
+                        get: { node.agentType ?? "instructor" },
+                        set: { node.agentType = $0 == "instructor" ? nil : $0 }
+                    )) {
+                        Text("Instructor").tag("instructor")
+                        Text("Coder").tag("coder")
+                        Text("Researcher").tag("researcher")
+                        Text("Planner").tag("planner")
+                        Text("Utility").tag("utility")
+                        Text("Web").tag("web")
+                    }
+                    .pickerStyle(.menu)
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Modell").font(.caption).foregroundColor(.secondary)
+                    Picker("", selection: Binding(
+                        get: { node.modelOverride ?? "" },
+                        set: { node.modelOverride = $0.isEmpty ? nil : $0 }
+                    )) {
+                        Text("Standard").tag("")
+                        ForEach(viewModel.loadedModels, id: \.name) { model in
+                            Text(model.name).tag(model.name)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                }
+
                 GlassButton(title: "Chat öffnen", icon: "message.fill", isPrimary: true) {
                     onOpenChat()
                 }
-                Text("Chat wird nicht in der Verlaufsliste gespeichert.")
-                    .font(.caption2).foregroundColor(.secondary)
             }
 
             Spacer()
@@ -667,5 +1048,120 @@ struct NodeInspector: View {
             }
         }
         .padding(16)
+    }
+
+    // MARK: - Trigger Config
+
+    @ViewBuilder
+    private var triggerConfigSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Trigger-Typ").font(.caption).foregroundColor(.secondary)
+
+            let triggerType = Binding<WorkflowNode.TriggerConfig.TriggerType>(
+                get: { node.triggerConfig?.type ?? .manual },
+                set: { newType in
+                    if node.triggerConfig == nil {
+                        node.triggerConfig = WorkflowNode.TriggerConfig(type: newType)
+                    } else {
+                        node.triggerConfig?.type = newType
+                    }
+                }
+            )
+
+            ForEach(WorkflowNode.TriggerConfig.TriggerType.allCases, id: \.self) { type in
+                Button(action: { triggerType.wrappedValue = type }) {
+                    HStack(spacing: 8) {
+                        Image(systemName: type.icon)
+                            .font(.system(size: 12))
+                            .foregroundColor(triggerType.wrappedValue == type ? .white : .secondary)
+                            .frame(width: 24, height: 24)
+                            .background(triggerType.wrappedValue == type ? Color.red : Color.clear)
+                            .cornerRadius(6)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(type.rawValue)
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundColor(triggerType.wrappedValue == type ? .primary : .secondary)
+                            Text(type.description)
+                                .font(.system(size: 9))
+                                .foregroundColor(.secondary)
+                        }
+                        Spacer()
+                        if triggerType.wrappedValue == type {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.caption).foregroundColor(.red)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                .padding(6)
+                .background(triggerType.wrappedValue == type ? Color.red.opacity(0.1) : Color.clear)
+                .cornerRadius(8)
+            }
+
+            // Type-specific fields
+            switch triggerType.wrappedValue {
+            case .cron:
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Cron-Ausdruck").font(.system(size: 10, weight: .semibold))
+                    let cronBinding = Binding<String>(
+                        get: { node.triggerConfig?.cronExpression ?? "" },
+                        set: { node.triggerConfig?.cronExpression = $0 }
+                    )
+                    GlassTextField(text: cronBinding, placeholder: "0 8 * * * (täglich 8 Uhr)")
+                    Text("Min Std Tag Mon WTag").font(.system(size: 9, design: .monospaced)).foregroundColor(.secondary)
+                }
+
+            case .webhook:
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Webhook-Pfad").font(.system(size: 10, weight: .semibold))
+                    let pathBinding = Binding<String>(
+                        get: { node.triggerConfig?.webhookPath ?? "" },
+                        set: { node.triggerConfig?.webhookPath = $0 }
+                    )
+                    GlassTextField(text: pathBinding, placeholder: "/hook/mein-workflow")
+                    if let path = node.triggerConfig?.webhookPath, !path.isEmpty {
+                        Text("URL: http://localhost:8080\(path)")
+                            .font(.system(size: 9, design: .monospaced))
+                            .foregroundColor(.koboldEmerald)
+                            .textSelection(.enabled)
+                    }
+                }
+
+            case .fileWatcher:
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Überwachter Pfad").font(.system(size: 10, weight: .semibold))
+                    let watchBinding = Binding<String>(
+                        get: { node.triggerConfig?.watchPath ?? "" },
+                        set: { node.triggerConfig?.watchPath = $0 }
+                    )
+                    GlassTextField(text: watchBinding, placeholder: "~/Documents/watch")
+                }
+
+            case .appEvent:
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Event").font(.system(size: 10, weight: .semibold))
+                    let eventBinding = Binding<String>(
+                        get: { node.triggerConfig?.eventName ?? "" },
+                        set: { node.triggerConfig?.eventName = $0 }
+                    )
+                    Picker("", selection: eventBinding) {
+                        Text("App-Start").tag("app_start")
+                        Text("Neue Nachricht").tag("new_message")
+                        Text("Task fertig").tag("task_complete")
+                        Text("Fehler").tag("error")
+                        Text("Memory-Update").tag("memory_update")
+                    }
+                    .pickerStyle(.menu)
+                }
+
+            case .manual:
+                Text("Workflow wird manuell über den Play-Button gestartet.")
+                    .font(.system(size: 10)).foregroundColor(.secondary)
+            }
+        }
+        .padding(10)
+        .background(Color.red.opacity(0.06))
+        .cornerRadius(8)
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.red.opacity(0.15), lineWidth: 0.5))
     }
 }

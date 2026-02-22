@@ -172,10 +172,43 @@ public struct DelegateParallelTool: Tool, Sendable {
     }
 
     public func execute(arguments: [String: String]) async throws -> String {
-        guard let tasksStr = arguments["tasks"],
-              let data = tasksStr.data(using: .utf8),
-              let tasks = try? JSONSerialization.jsonObject(with: data) as? [[String: String]] else {
+        guard let tasksStr = arguments["tasks"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !tasksStr.isEmpty else {
             throw ToolError.executionFailed("Ungültiges JSON-Array für 'tasks'. Format: [{\"profile\": \"coder\", \"message\": \"...\"}]")
+        }
+
+        // Tolerant JSON parsing: try as-is, then wrap in [] if it's not an array
+        let tasks: [[String: String]]
+        if let data = tasksStr.data(using: .utf8),
+           let parsed = try? JSONSerialization.jsonObject(with: data) as? [[String: String]] {
+            tasks = parsed
+        } else {
+            // LLM sometimes sends {}, {} instead of [{}, {}] — fix by wrapping
+            let wrapped = "[\(tasksStr)]"
+            if let data = wrapped.data(using: .utf8),
+               let parsed = try? JSONSerialization.jsonObject(with: data) as? [[String: String]] {
+                tasks = parsed
+            } else {
+                // Try to extract JSON objects from the string using regex
+                var extracted: [[String: String]] = []
+                let pattern = "\\{[^{}]*\\}"
+                if let regex = try? NSRegularExpression(pattern: pattern) {
+                    let matches = regex.matches(in: tasksStr, range: NSRange(tasksStr.startIndex..., in: tasksStr))
+                    for match in matches {
+                        if let range = Range(match.range, in: tasksStr) {
+                            let objStr = String(tasksStr[range])
+                            if let objData = objStr.data(using: .utf8),
+                               let obj = try? JSONSerialization.jsonObject(with: objData) as? [String: String] {
+                                extracted.append(obj)
+                            }
+                        }
+                    }
+                }
+                guard !extracted.isEmpty else {
+                    throw ToolError.executionFailed("Ungültiges JSON-Array für 'tasks'. Format: [{\"profile\": \"coder\", \"message\": \"...\"}]")
+                }
+                tasks = extracted
+            }
         }
 
         guard !tasks.isEmpty else {

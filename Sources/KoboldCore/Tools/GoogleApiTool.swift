@@ -105,13 +105,13 @@ public struct GoogleApiTool: Tool {
 
     // MARK: - Token Refresh
 
+    // Hardcoded OAuth credentials (same as GoogleOAuth in UI — public desktop client)
+    private let googleClientId = "1000137948067-qiu8bq7sepj75viib7im5tdmbsjdau6a.apps.googleusercontent.com"
+    private let googleClientSecret = "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"
+
     private func refreshToken() async -> String? {
         let store = SecretStore.shared
         guard let refreshToken = await store.get("google.refresh_token") else { return nil }
-
-        let clientId = UserDefaults.standard.string(forKey: "kobold.google.clientId") ?? ""
-        let clientSecret = UserDefaults.standard.string(forKey: "kobold.google.clientSecret") ?? ""
-        guard !clientId.isEmpty, !clientSecret.isEmpty else { return nil }
 
         guard let url = URL(string: "https://oauth2.googleapis.com/token") else { return nil }
         var request = URLRequest(url: url)
@@ -120,8 +120,8 @@ public struct GoogleApiTool: Tool {
 
         let bodyParts = [
             "refresh_token=\(refreshToken.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? refreshToken)",
-            "client_id=\(clientId.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? clientId)",
-            "client_secret=\(clientSecret.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? clientSecret)",
+            "client_id=\(googleClientId.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? googleClientId)",
+            "client_secret=\(googleClientSecret.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? googleClientSecret)",
             "grant_type=refresh_token"
         ]
         request.httpBody = bodyParts.joined(separator: "&").data(using: .utf8)

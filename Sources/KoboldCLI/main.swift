@@ -6,7 +6,7 @@ struct KoboldCLI: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "kobold",
         abstract: "KoboldOS — Native macOS AI Agent Runtime",
-        version: "0.2.3",
+        version: "0.2.5",
         subcommands: [
             InteractiveChatCommand.self,
             DaemonCommand.self,

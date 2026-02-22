@@ -11,6 +11,8 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.2.0"),
+        .package(url: "https://github.com/exPHAT/SwiftWhisper.git", branch: "master"),
+        .package(url: "https://github.com/apple/ml-stable-diffusion.git", branch: "main"),
     ],
     targets: [
         // MARK: - CLI
@@ -21,13 +23,20 @@ let package = Package(
                 "KoboldCore"
             ],
             path: "Sources/KoboldCLI",
-            swiftSettings: [.unsafeFlags(["-parse-as-library"])]
+            swiftSettings: [
+                .unsafeFlags(["-parse-as-library"]),
+                .swiftLanguageMode(.v5),
+            ]
         ),
 
         // MARK: - GUI
         .executableTarget(
             name: "KoboldOSControlPanel",
-            dependencies: ["KoboldCore"],
+            dependencies: [
+                "KoboldCore",
+                .product(name: "SwiftWhisper", package: "SwiftWhisper"),
+                .product(name: "StableDiffusion", package: "ml-stable-diffusion"),
+            ],
             path: "Sources/KoboldOSControlPanel",
             exclude: ["Info.plist", "AppIcon.icns"],
             swiftSettings: [.unsafeFlags(["-parse-as-library"])],

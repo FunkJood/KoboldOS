@@ -12,38 +12,32 @@ import CryptoKit
 // MARK: - GoogleScope
 
 enum GoogleScope: String, CaseIterable, Codable, Sendable {
-    case youtube_readonly, youtube_upload, drive, docs, sheets
-    case gmail, calendar, contacts, photos, tasks, maps
+    case youtube_readonly, drive, docs, sheets
+    case gmail, calendar, contacts, tasks
 
     var scopeString: String {
         switch self {
         case .youtube_readonly: return "https://www.googleapis.com/auth/youtube.readonly"
-        case .youtube_upload:   return "https://www.googleapis.com/auth/youtube.upload"
         case .drive:            return "https://www.googleapis.com/auth/drive"
         case .docs:             return "https://www.googleapis.com/auth/documents"
         case .sheets:           return "https://www.googleapis.com/auth/spreadsheets"
         case .gmail:            return "https://www.googleapis.com/auth/gmail.modify"
         case .calendar:         return "https://www.googleapis.com/auth/calendar"
-        case .contacts:         return "https://www.googleapis.com/auth/contacts"
-        case .photos:           return "https://www.googleapis.com/auth/photoslibrary"
+        case .contacts:         return "https://www.googleapis.com/auth/contacts.readonly"
         case .tasks:            return "https://www.googleapis.com/auth/tasks"
-        case .maps:             return "https://www.googleapis.com/auth/maps-platform.places"
         }
     }
 
     var label: String {
         switch self {
         case .youtube_readonly: return "YouTube"
-        case .youtube_upload:   return "YouTube Upload"
         case .drive:            return "Drive"
         case .docs:             return "Docs"
         case .sheets:           return "Sheets"
         case .gmail:            return "Gmail"
         case .calendar:         return "Kalender"
         case .contacts:         return "Kontakte"
-        case .photos:           return "Fotos"
         case .tasks:            return "Tasks"
-        case .maps:             return "Maps"
         }
     }
 }
@@ -77,9 +71,9 @@ final class GoogleOAuth: NSObject, @unchecked Sendable {
     private func getRefreshTokenRaw() -> String { lock.withLock { _refreshToken } }
     private func getTokenExpiry() -> Date { lock.withLock { _tokenExpiry } }
 
-    var clientId: String {
-        UserDefaults.standard.string(forKey: "kobold.google.clientId") ?? ""
-    }
+    // Hardcoded OAuth client for KoboldOS (Desktop installed app — public client)
+    let clientId = "1000137948067-qiu8bq7sepj75viib7im5tdmbsjdau6a.apps.googleusercontent.com"
+    let clientSecret = "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"
 
     private override init() {
         super.init()
@@ -133,13 +127,24 @@ final class GoogleOAuth: NSObject, @unchecked Sendable {
 
     // MARK: - Sign In (localhost redirect)
 
-    func signIn() {
-        let id = clientId
-        guard !id.isEmpty else {
-            print("[GoogleOAuth] No Client ID configured")
-            return
+    /// Enabled scopes — persisted in UserDefaults (reset if cached scopes contain removed values)
+    var enabledScopes: Set<GoogleScope> {
+        get {
+            if let data = UserDefaults.standard.data(forKey: "kobold.google.scopes"),
+               let scopes = try? JSONDecoder().decode(Set<GoogleScope>.self, from: data),
+               !scopes.isEmpty {
+                return scopes
+            }
+            return Set(GoogleScope.allCases) // default: all
         }
+        set {
+            if let data = try? JSONEncoder().encode(newValue) {
+                UserDefaults.standard.set(data, forKey: "kobold.google.scopes")
+            }
+        }
+    }
 
+    func signIn() {
         // Start local callback server
         guard startCallbackServer() else {
             print("[GoogleOAuth] Failed to start callback server")
@@ -154,14 +159,14 @@ final class GoogleOAuth: NSObject, @unchecked Sendable {
             pendingState = state
         }
 
-        let allScopes = GoogleScope.allCases.map(\.scopeString).joined(separator: " ")
+        let scopeStrings = enabledScopes.map(\.scopeString).joined(separator: " ")
         let redirectUri = "http://127.0.0.1:\(callbackPort)"
 
         var components = URLComponents(string: "https://accounts.google.com/o/oauth2/v2/auth")!
         components.queryItems = [
-            URLQueryItem(name: "client_id", value: id),
+            URLQueryItem(name: "client_id", value: clientId),
             URLQueryItem(name: "redirect_uri", value: redirectUri),
-            URLQueryItem(name: "scope", value: allScopes + " openid email profile"),
+            URLQueryItem(name: "scope", value: scopeStrings + " openid email profile"),
             URLQueryItem(name: "response_type", value: "code"),
             URLQueryItem(name: "access_type", value: "offline"),
             URLQueryItem(name: "prompt", value: "consent"),
@@ -310,6 +315,7 @@ final class GoogleOAuth: NSObject, @unchecked Sendable {
         let bodyParts = [
             "code=\(code.urlEncoded)",
             "client_id=\(clientId.urlEncoded)",
+            "client_secret=\(self.clientSecret.urlEncoded)",
             "redirect_uri=\(redirectUri.urlEncoded)",
             "grant_type=authorization_code",
             "code_verifier=\(verifier.urlEncoded)"
@@ -354,9 +360,6 @@ final class GoogleOAuth: NSObject, @unchecked Sendable {
         let refreshToken = getRefreshTokenRaw()
         guard !refreshToken.isEmpty else { return false }
 
-        let id = clientId
-        guard !id.isEmpty else { return false }
-
         let url = URL(string: "https://oauth2.googleapis.com/token")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -364,7 +367,8 @@ final class GoogleOAuth: NSObject, @unchecked Sendable {
 
         let bodyParts = [
             "refresh_token=\(refreshToken.urlEncoded)",
-            "client_id=\(id.urlEncoded)",
+            "client_id=\(clientId.urlEncoded)",
+            "client_secret=\(clientSecret.urlEncoded)",
             "grant_type=refresh_token"
         ]
         request.httpBody = bodyParts.joined(separator: "&").data(using: .utf8)
@@ -431,6 +435,7 @@ final class GoogleOAuth: NSObject, @unchecked Sendable {
         await store.delete("google.user_email")
 
         UserDefaults.standard.set(false, forKey: "kobold.google.connected")
+        UserDefaults.standard.removeObject(forKey: "kobold.google.email")
         print("[GoogleOAuth] Signed out")
     }
 
@@ -449,6 +454,7 @@ final class GoogleOAuth: NSObject, @unchecked Sendable {
                let email = json["email"] as? String {
                 setUserEmail(email)
                 await SecretStore.shared.set(email, forKey: "google.user_email")
+                UserDefaults.standard.set(email, forKey: "kobold.google.email")
                 print("[GoogleOAuth] User: \(email)")
             }
         } catch {

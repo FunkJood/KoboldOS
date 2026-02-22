@@ -152,23 +152,15 @@ struct GlassChatBubble: View {
                 Group {
                     if isLoading {
                         LoadingDots()
+                    } else if isUser {
+                        // User messages: plain text (no markdown rendering needed)
+                        Text(message)
+                            .font(.system(size: 14))
+                            .foregroundColor(.white)
+                            .textSelection(.enabled)
                     } else {
-                        // For very long messages, split into chunks to avoid SwiftUI layout freeze
-                        if message.count > 3000 {
-                            VStack(alignment: .leading, spacing: 0) {
-                                ForEach(Array(message.chunked(into: 2000).enumerated()), id: \.offset) { _, chunk in
-                                    Text(chunk)
-                                        .font(.system(size: 14))
-                                        .foregroundColor(isUser ? .white : .primary)
-                                        .textSelection(.enabled)
-                                }
-                            }
-                        } else {
-                            Text(message)
-                                .font(.system(size: 14))
-                                .foregroundColor(isUser ? .white : .primary)
-                                .textSelection(.enabled)
-                        }
+                        // Assistant messages: rich text with markdown, code blocks, images, links
+                        RichTextView(text: message, isUser: false)
                     }
                 }
                 .padding(.horizontal, 14)
@@ -400,6 +392,7 @@ struct MetricCard: View {
                         .foregroundColor(.secondary)
                 }
             }
+            .frame(maxWidth: .infinity, minHeight: 60, alignment: .leading)
         }
     }
 }
@@ -1055,6 +1048,39 @@ struct ToolStatusRow: View {
     }
 }
 
+// MARK: - ThinkingPlaceholderBubble (sofort sichtbar, bevor Steps ankommen)
+
+struct ThinkingPlaceholderBubble: View {
+    @State private var pulse = false
+
+    var body: some View {
+        HStack(alignment: .top) {
+            HStack(spacing: 8) {
+                Image(systemName: "brain")
+                    .font(.system(size: 13))
+                    .foregroundColor(.koboldGold)
+                    .scaleEffect(pulse ? 1.15 : 0.9)
+                    .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: pulse)
+                Text("Denkt...")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.koboldGold)
+                ProgressView()
+                    .controlSize(.mini)
+                    .scaleEffect(0.7)
+                Spacer()
+            }
+            .padding(.horizontal, 12).padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color.koboldGold.opacity(0.06))
+                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.koboldGold.opacity(0.2), lineWidth: 0.5))
+            )
+            Spacer(minLength: 80)
+        }
+        .onAppear { pulse = true }
+    }
+}
+
 // MARK: - SubAgentActivityBanner (always visible outside collapsed panel)
 
 struct SubAgentActivityBanner: View {
@@ -1090,6 +1116,190 @@ struct SubAgentActivityBanner: View {
                         .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.cyan.opacity(0.2), lineWidth: 0.5))
                 )
                 .padding(.horizontal, 16)
+            }
+        }
+    }
+}
+
+// MARK: - Rich Text Renderer (Markdown, Links, Code Blocks, Images)
+
+/// Parsed block from assistant markdown text
+private enum RichBlock: Identifiable {
+    case text(String)
+    case codeBlock(lang: String, code: String)
+    case image(url: URL, alt: String)
+
+    var id: String {
+        switch self {
+        case .text(let t): return "t-\(t.hashValue)"
+        case .codeBlock(_, let c): return "c-\(c.hashValue)"
+        case .image(let u, _): return "i-\(u.absoluteString)"
+        }
+    }
+}
+
+/// Parse markdown text into rich blocks (code blocks, images, text)
+private func parseRichBlocks(_ text: String) -> [RichBlock] {
+    var blocks: [RichBlock] = []
+    let lines = text.components(separatedBy: "\n")
+    var i = 0
+    var currentText: [String] = []
+
+    while i < lines.count {
+        let line = lines[i]
+
+        // Code block: ```lang ... ```
+        if line.trimmingCharacters(in: .whitespaces).hasPrefix("```") {
+            // Flush accumulated text
+            if !currentText.isEmpty {
+                blocks.append(.text(currentText.joined(separator: "\n")))
+                currentText = []
+            }
+            let lang = String(line.trimmingCharacters(in: .whitespaces).dropFirst(3)).trimmingCharacters(in: .whitespaces)
+            var codeLines: [String] = []
+            i += 1
+            while i < lines.count {
+                if lines[i].trimmingCharacters(in: .whitespaces).hasPrefix("```") {
+                    break
+                }
+                codeLines.append(lines[i])
+                i += 1
+            }
+            blocks.append(.codeBlock(lang: lang, code: codeLines.joined(separator: "\n")))
+            i += 1
+            continue
+        }
+
+        // Image: ![alt](url) or standalone image URL
+        if let range = line.range(of: #"!\[([^\]]*)\]\(([^)]+)\)"#, options: .regularExpression) {
+            if !currentText.isEmpty {
+                blocks.append(.text(currentText.joined(separator: "\n")))
+                currentText = []
+            }
+            let match = String(line[range])
+            let altRange = match.range(of: #"\[([^\]]*)\]"#, options: .regularExpression)!
+            let urlRange = match.range(of: #"\(([^)]+)\)"#, options: .regularExpression)!
+            let alt = String(match[altRange]).dropFirst().dropLast()
+            let urlStr = String(match[urlRange]).dropFirst().dropLast()
+            if let url = URL(string: String(urlStr)) {
+                blocks.append(.image(url: url, alt: String(alt)))
+            }
+            i += 1
+            continue
+        }
+
+        currentText.append(line)
+        i += 1
+    }
+
+    if !currentText.isEmpty {
+        blocks.append(.text(currentText.joined(separator: "\n")))
+    }
+    return blocks
+}
+
+/// Render a markdown text block as AttributedString (supports bold, italic, code, links)
+private func markdownAttributedString(_ text: String, isUser: Bool) -> AttributedString {
+    do {
+        var attr = try AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))
+        attr.font = .system(size: 14)
+        attr.foregroundColor = isUser ? .white : .primary
+        return attr
+    } catch {
+        var attr = AttributedString(text)
+        attr.font = .system(size: 14)
+        attr.foregroundColor = isUser ? .white : .primary
+        return attr
+    }
+}
+
+/// Rich text view that renders markdown blocks including code, images, and formatted text
+struct RichTextView: View {
+    let text: String
+    let isUser: Bool
+
+    var body: some View {
+        let blocks = parseRichBlocks(text)
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(blocks) { block in
+                switch block {
+                case .text(let t):
+                    if !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        Text(markdownAttributedString(t, isUser: isUser))
+                            .textSelection(.enabled)
+                            .environment(\.openURL, OpenURLAction { url in
+                                NSWorkspace.shared.open(url)
+                                return .handled
+                            })
+                    }
+                case .codeBlock(let lang, let code):
+                    VStack(alignment: .leading, spacing: 0) {
+                        // Header bar
+                        HStack {
+                            Text(lang.isEmpty ? "Code" : lang)
+                                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                .foregroundColor(.secondary)
+                            Spacer()
+                            Button(action: {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(code, forType: .string)
+                            }) {
+                                Image(systemName: "doc.on.doc")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Color(red: 0.12, green: 0.12, blue: 0.14))
+
+                        // Code content
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            Text(code)
+                                .font(.system(size: 12, design: .monospaced))
+                                .foregroundColor(Color(red: 0.85, green: 0.85, blue: 0.9))
+                                .textSelection(.enabled)
+                                .padding(10)
+                        }
+                        .background(Color(red: 0.08, green: 0.08, blue: 0.1))
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.1), lineWidth: 0.5))
+
+                case .image(let url, let alt):
+                    AsyncImage(url: url) { phase in
+                        switch phase {
+                        case .success(let image):
+                            image
+                                .resizable()
+                                .scaledToFit()
+                                .frame(maxWidth: 400, maxHeight: 300)
+                                .cornerRadius(10)
+                                .overlay(alignment: .bottomLeading) {
+                                    if !alt.isEmpty {
+                                        Text(alt)
+                                            .font(.caption2)
+                                            .foregroundColor(.white)
+                                            .padding(.horizontal, 6).padding(.vertical, 2)
+                                            .background(.ultraThinMaterial)
+                                            .cornerRadius(4)
+                                            .padding(6)
+                                    }
+                                }
+                        case .failure:
+                            HStack(spacing: 6) {
+                                Image(systemName: "photo.badge.exclamationmark")
+                                    .foregroundColor(.secondary)
+                                Link(alt.isEmpty ? url.lastPathComponent : alt, destination: url)
+                                    .font(.system(size: 12))
+                            }
+                        default:
+                            ProgressView()
+                                .frame(width: 200, height: 120)
+                        }
+                    }
+                }
             }
         }
     }

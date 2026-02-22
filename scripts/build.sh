@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Build script for KoboldOS
-VERSION="0.2.3"
+VERSION="0.2.5"
 echo "Building KoboldOS v${VERSION}..."
 
 # Clean previous builds
@@ -135,12 +135,19 @@ if command -v hdiutil &> /dev/null; then
     # 2. Create Applications symlink (drag-to-install)
     ln -s /Applications "$DMG_STAGING/Applications"
 
-    # 3. Copy documentation (.txt format)
-    if [ -f "dist/README.txt" ]; then
+    # 3. Copy documentation (prefer root .md files, fallback to dist/ .txt)
+    if [ -f "README.md" ]; then
+        cp README.md "$DMG_STAGING/"
+    elif [ -f "dist/README.txt" ]; then
         cp dist/README.txt "$DMG_STAGING/"
     fi
-    if [ -f "dist/CHANGELOG.txt" ]; then
+    if [ -f "CHANGELOG.md" ]; then
+        cp CHANGELOG.md "$DMG_STAGING/"
+    elif [ -f "dist/CHANGELOG.txt" ]; then
         cp dist/CHANGELOG.txt "$DMG_STAGING/"
+    fi
+    if [ -f "ARCHITECTURE.md" ]; then
+        cp ARCHITECTURE.md "$DMG_STAGING/"
     fi
     if [ -f "dist/DOKUMENTATION.txt" ]; then
         cp dist/DOKUMENTATION.txt "$DMG_STAGING/"

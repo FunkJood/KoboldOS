@@ -53,6 +53,7 @@ struct OnboardingView: View {
                 case .name:        nameView
                 case .personality: personalityView
                 case .use:         useView
+                case .models:      modelsView
                 case .hatching:    hatchingView
                 case .greeting:    greetingView
                 }
@@ -67,7 +68,7 @@ struct OnboardingView: View {
     // MARK: - Steps
 
     enum OnboardingStep {
-        case language, egg, name, personality, use, hatching, greeting
+        case language, egg, name, personality, use, models, hatching, greeting
     }
 
     enum KoboldPersonality: String, CaseIterable {
@@ -454,9 +455,8 @@ struct OnboardingView: View {
                 GlassButton(title: lang.obBack, icon: "chevron.left", isPrimary: false) {
                     withAnimation { step = .personality }
                 }
-                GlassButton(title: lang.obHatch, icon: "sparkles", isPrimary: true) {
-                    withAnimation(.spring()) { step = .hatching }
-                    Task { await performHatching() }
+                GlassButton(title: lang.obContinue, icon: "chevron.right", isPrimary: true) {
+                    withAnimation(.spring()) { step = .models }
                 }
             }
         }
@@ -484,6 +484,103 @@ struct OnboardingView: View {
         }
         .buttonStyle(.plain)
         .scaleEffect(isSelected ? 1.02 : 1.0)
+    }
+
+    // MARK: - Models Download View
+
+    @StateObject private var modelManager = ModelDownloadManager.shared
+    @State private var downloadSD: Bool = true
+    @State private var downloadChat: Bool = true
+
+    var modelsView: some View {
+        VStack(spacing: 24) {
+            progressDots(current: 4)
+
+            Text("Modelle herunterladen")
+                .font(.system(size: 28, weight: .bold))
+                .foregroundColor(.primary)
+
+            Text("Lade empfohlene KI-Modelle für Chat und Bildgenerierung.")
+                .font(.body)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+
+            VStack(spacing: 12) {
+                // Chat model
+                GlassCard(padding: 12, cornerRadius: 10) {
+                    HStack {
+                        Toggle(isOn: $downloadChat) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack(spacing: 6) {
+                                    Image(systemName: modelManager.chatModelInstalled ? "checkmark.circle.fill" : "cpu.fill")
+                                        .foregroundColor(modelManager.chatModelInstalled ? .koboldEmerald : .koboldGold)
+                                    Text("Chat-Modell").font(.system(size: 13, weight: .semibold))
+                                    Text("(\(modelManager.recommendedChatModel))").font(.caption).foregroundColor(.secondary)
+                                }
+                                Text(modelManager.chatModelInstalled ? "Bereits installiert" : "Empfohlen — Lokales Sprachmodell via Ollama")
+                                    .font(.caption).foregroundColor(.secondary)
+                            }
+                        }
+                        .toggleStyle(.checkbox)
+                    }
+
+                    if modelManager.isDownloadingChat {
+                        GlassProgressBar(value: modelManager.chatProgress, label: modelManager.chatStatus)
+                    }
+                }
+
+                // SD model
+                GlassCard(padding: 12, cornerRadius: 10) {
+                    HStack {
+                        Toggle(isOn: $downloadSD) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack(spacing: 6) {
+                                    Image(systemName: modelManager.sdModelInstalled ? "checkmark.circle.fill" : "photo.fill")
+                                        .foregroundColor(modelManager.sdModelInstalled ? .koboldEmerald : .purple)
+                                    Text("Bild-Modell").font(.system(size: 13, weight: .semibold))
+                                    Text("(Stable Diffusion)").font(.caption).foregroundColor(.secondary)
+                                }
+                                Text(modelManager.sdModelInstalled ? "Bereits installiert" : "Optional — CoreML Bildgenerierung (~1.5 GB)")
+                                    .font(.caption).foregroundColor(.secondary)
+                            }
+                        }
+                        .toggleStyle(.checkbox)
+                    }
+
+                    if modelManager.isDownloadingSD {
+                        GlassProgressBar(value: modelManager.sdProgress, label: modelManager.sdStatus)
+                    }
+                }
+            }
+            .frame(maxWidth: 420)
+
+            if let error = modelManager.lastError {
+                Text(error)
+                    .font(.caption).foregroundColor(.red)
+                    .padding(.horizontal, 20)
+            }
+
+            HStack(spacing: 16) {
+                GlassButton(title: lang.obBack, icon: "chevron.left", isPrimary: false) {
+                    withAnimation { step = .use }
+                }
+                GlassButton(title: "Herunterladen & Starten", icon: "sparkles", isPrimary: true) {
+                    if downloadChat && !modelManager.chatModelInstalled {
+                        modelManager.downloadChatModel()
+                    }
+                    if downloadSD && !modelManager.sdModelInstalled {
+                        modelManager.downloadSDModel()
+                    }
+                    // Start hatching (downloads continue in background)
+                    withAnimation(.spring()) { step = .hatching }
+                    Task { await performHatching() }
+                }
+                GlassButton(title: "Überspringen", icon: nil, isPrimary: false) {
+                    withAnimation(.spring()) { step = .hatching }
+                    Task { await performHatching() }
+                }
+            }
+        }
     }
 
     // MARK: - Hatching Animation

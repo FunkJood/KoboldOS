@@ -68,6 +68,7 @@ struct SettingsView: View {
     @AppStorage("kobold.a2a.trustedAgents") private var a2aTrustedAgents: String = ""
     @AppStorage("kobold.a2a.token") private var a2aToken: String = ""
     @State private var a2aRemoteToken: String = ""
+    @State private var a2aConnectedClients: [A2AConnectedClient] = []
 
     // Memory settings (AgentZero-style)
     @AppStorage("kobold.memory.recallEnabled") private var memoryRecallEnabled: Bool = true
@@ -97,7 +98,7 @@ struct SettingsView: View {
     @AppStorage("kobold.google.connected") private var googleConnected: Bool = false
     @State private var googleEmail: String = ""
 
-    private let sections = ["Konto", "Allgemein", "Agent", "Modelle", "Gedächtnis", "Proaktiv", "Berechtigungen", "Datenschutz & Sicherheit", "A2A", "Verbindungen", "Skills", "Über"]
+    private let sections = ["Konto", "Allgemein", "Agent", "Modelle", "Gedächtnis", "Berechtigungen", "Datenschutz & Sicherheit", "Verbindungen", "Wetter", "Sprache", "Fähigkeiten", "Über"]
 
     var body: some View {
         HStack(spacing: 0) {
@@ -139,12 +140,12 @@ struct SettingsView: View {
                     case "Agent":                    memoryPolicySection(); agentPersonalitySection()
                     case "Modelle":                  modelsSection()
                     case "Gedächtnis":               memorySettingsSection()
-                    case "Proaktiv":                 proactiveSettingsSection()
                     case "Berechtigungen":           permissionsSection()
                     case "Datenschutz & Sicherheit": securitySection()
-                    case "A2A":                      a2aSection()
                     case "Verbindungen":             connectionsSection()
-                    case "Skills":                   skillsSettingsSection()
+                    case "Wetter":                   weatherSettingsSection()
+                    case "Sprache":                  speechSettingsSection()
+                    case "Fähigkeiten":              skillsSettingsSection()
                     default:                         aboutSection()
                     }
                     Spacer(minLength: 40)
@@ -163,12 +164,12 @@ struct SettingsView: View {
         case "Agent":                   return "person.fill.viewfinder"
         case "Modelle":                 return "cpu.fill"
         case "Gedächtnis":              return "brain.head.profile"
-        case "Proaktiv":                return "lightbulb.fill"
         case "Berechtigungen":          return "shield.lefthalf.filled"
         case "Datenschutz & Sicherheit": return "lock.shield.fill"
-        case "A2A":                     return "arrow.left.arrow.right"
         case "Verbindungen":            return "link.circle.fill"
-        case "Skills":                  return "sparkles"
+        case "Wetter":                  return "cloud.sun.fill"
+        case "Sprache":                 return "waveform"
+        case "Fähigkeiten":            return "sparkles"
         default:                        return "info.circle.fill"
         }
     }
@@ -415,6 +416,10 @@ struct SettingsView: View {
                     Label("Darstellung", systemImage: "paintbrush.fill").font(.subheadline.bold())
                     Toggle("Erweiterte Statistiken", isOn: $showAdvancedStats)
                         .toggleStyle(.switch)
+                    Toggle("Medien automatisch einbetten", isOn: AppStorageToggle("kobold.chat.autoEmbed", default: true))
+                        .toggleStyle(.switch)
+                    Text("Bilder, Audio und Videos in Agent-Antworten inline anzeigen.")
+                        .font(.caption2).foregroundColor(.secondary)
                 }
                 .padding()
             }
@@ -689,6 +694,62 @@ struct SettingsView: View {
                         NSWorkspace.shared.open(URL(string: "https://ollama.ai")!)
                     }
                     .buttonStyle(.bordered)
+                }
+            }
+            .padding()
+        }
+
+        // Quick Model Downloads
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Label("Empfohlene Modelle", systemImage: "arrow.down.circle.fill").font(.subheadline.bold())
+                Text("Lade die empfohlenen Modelle mit einem Klick herunter.")
+                    .font(.caption).foregroundColor(.secondary)
+
+                HStack(spacing: 12) {
+                    // Chat model
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 6) {
+                            Image(systemName: ModelDownloadManager.shared.chatModelInstalled ? "checkmark.circle.fill" : "cpu.fill")
+                                .foregroundColor(ModelDownloadManager.shared.chatModelInstalled ? .koboldEmerald : .koboldGold)
+                            Text("Chat: \(ModelDownloadManager.shared.recommendedChatModel)")
+                                .font(.system(size: 12, weight: .medium))
+                        }
+                        if ModelDownloadManager.shared.isDownloadingChat {
+                            GlassProgressBar(value: ModelDownloadManager.shared.chatProgress, label: ModelDownloadManager.shared.chatStatus)
+                        } else if !ModelDownloadManager.shared.chatModelInstalled {
+                            Button("Herunterladen") { ModelDownloadManager.shared.downloadChatModel() }
+                                .buttonStyle(.bordered)
+                        } else {
+                            Text("Installiert").font(.caption).foregroundColor(.koboldEmerald)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                    Divider().frame(height: 40)
+
+                    // SD model
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 6) {
+                            Image(systemName: ModelDownloadManager.shared.sdModelInstalled ? "checkmark.circle.fill" : "photo.fill")
+                                .foregroundColor(ModelDownloadManager.shared.sdModelInstalled ? .koboldEmerald : .purple)
+                            Text("Bild: Stable Diffusion 2.1")
+                                .font(.system(size: 12, weight: .medium))
+                        }
+                        if ModelDownloadManager.shared.isDownloadingSD {
+                            GlassProgressBar(value: ModelDownloadManager.shared.sdProgress, label: ModelDownloadManager.shared.sdStatus)
+                        } else if !ModelDownloadManager.shared.sdModelInstalled {
+                            Button("Herunterladen (~1.5 GB)") { ModelDownloadManager.shared.downloadSDModel() }
+                                .buttonStyle(.bordered)
+                        } else {
+                            Text("Installiert").font(.caption).foregroundColor(.koboldEmerald)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                if let error = ModelDownloadManager.shared.lastError {
+                    Text(error).font(.caption).foregroundColor(.red)
                 }
             }
             .padding()
@@ -1534,180 +1595,81 @@ struct SettingsView: View {
         .onAppear { loadBackups() }
     }
 
-    // MARK: - A2A (Agent-to-Agent)
+    // (A2A section moved into connectionsSection above)
 
-    @ViewBuilder
-    private func a2aSection() -> some View {
-        sectionTitle("Agent-to-Agent (A2A)")
-
-        // Master toggle
-        GroupBox {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Label("A2A Server", systemImage: "arrow.left.arrow.right").font(.subheadline.bold())
-                    Spacer()
-                    GlassStatusBadge(label: a2aEnabled ? "Aktiv" : "Inaktiv", color: a2aEnabled ? .koboldEmerald : .secondary)
-                }
-                Text("Ermöglicht anderen KI-Agenten, sich mit deinem KoboldOS zu verbinden und Aufgaben auszutauschen.")
-                    .font(.caption).foregroundColor(.secondary)
-
-                HStack(spacing: 16) {
-                    Toggle("A2A aktivieren", isOn: $a2aEnabled)
-                        .toggleStyle(.switch)
-                        .tint(.koboldEmerald)
-                    Text("Port:").font(.caption).foregroundColor(.secondary)
-                    TextField("8081", value: $a2aPort, format: .number)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 80)
-                        .font(.system(.caption, design: .monospaced))
-                }
-            }
-            .padding()
-        }
-
-        // Permissions grid — what connected agents can access
-        GroupBox {
-            VStack(alignment: .leading, spacing: 14) {
-                Label("Berechtigungen für verbundene Agenten", systemImage: "shield.lefthalf.filled").font(.subheadline.bold())
-                Text("Steuere, was externe Agenten auf deinem System tun dürfen. Gedächtnis ist standardmäßig nur lesbar — unser Agent entscheidet, was behalten wird.")
-                    .font(.caption).foregroundColor(.secondary)
-
-                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-                    a2aPermCard(title: "Tools nutzen", icon: "wrench.fill", color: .koboldGold,
-                                desc: "Agent darf Tools aufrufen (Browser, etc.)", isOn: $a2aAllowTools)
-                    a2aPermCard(title: "Gedächtnis lesen", icon: "brain.fill", color: .cyan,
-                                desc: "Agent darf Memory-Blöcke lesen", isOn: $a2aAllowMemoryRead)
-                    a2aPermCard(title: "Gedächtnis schreiben", icon: "brain.head.profile", color: .orange,
-                                desc: "Agent darf Memory-Blöcke direkt ändern", isOn: $a2aAllowMemoryWrite)
-                    a2aPermCard(title: "Dateizugriff", icon: "folder.fill", color: .blue,
-                                desc: "Agent darf Dateien lesen und schreiben", isOn: $a2aAllowFiles)
-                    a2aPermCard(title: "Shell-Zugriff", icon: "terminal.fill", color: .red,
-                                desc: "Agent darf Shell-Befehle ausführen", isOn: $a2aAllowShell)
-                }
-            }
-            .padding()
-        }
-
-        // Quick Connect — Token Exchange
-        GroupBox {
-            VStack(alignment: .leading, spacing: 12) {
-                Label("Schnellverbindung (Token)", systemImage: "link.badge.plus").font(.subheadline.bold())
-                Text("Generiere einen Token und teile ihn mit einem anderen Agenten für eine direkte A2A-Verbindung.")
-                    .font(.caption).foregroundColor(.secondary)
-
-                HStack(spacing: 8) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Dein Token").font(.caption).foregroundColor(.secondary)
-                        HStack {
-                            TextField("Token wird generiert...", text: $a2aToken)
-                                .textFieldStyle(.roundedBorder)
-                                .font(.system(.caption, design: .monospaced))
-                                .disabled(true)
-                            Button("Generieren") {
-                                a2aToken = UUID().uuidString.lowercased().replacingOccurrences(of: "-", with: "").prefix(24).description
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .tint(.koboldEmerald)
-                            Button(action: {
-                                NSPasteboard.general.clearContents()
-                                NSPasteboard.general.setString(a2aToken, forType: .string)
-                            }) {
-                                Image(systemName: "doc.on.clipboard")
-                            }
-                            .buttonStyle(.bordered)
-                            .disabled(a2aToken.isEmpty)
-                            .help("Token kopieren")
-                        }
-                    }
-                }
-
-                HStack(spacing: 8) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Token des anderen Agenten").font(.caption).foregroundColor(.secondary)
-                        HStack {
-                            TextField("Token einfügen...", text: $a2aRemoteToken)
-                                .textFieldStyle(.roundedBorder)
-                                .font(.system(.caption, design: .monospaced))
-                            Button("Verbinden") {
-                                // Add to trusted agents
-                                if !a2aRemoteToken.isEmpty {
-                                    let existing = a2aTrustedAgents.trimmingCharacters(in: .whitespacesAndNewlines)
-                                    a2aTrustedAgents = existing.isEmpty ? a2aRemoteToken : existing + "\n" + a2aRemoteToken
-                                    a2aRemoteToken = ""
-                                }
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .tint(.koboldGold)
-                            .disabled(a2aRemoteToken.isEmpty)
-                        }
-                    }
-                }
-            }
-            .padding()
-        }
-
-        // Trusted agents
-        GroupBox {
-            VStack(alignment: .leading, spacing: 10) {
-                Label("Vertrauenswürdige Agenten", systemImage: "checkmark.shield.fill").font(.subheadline.bold())
-                Text("URLs oder Tokens von Agenten die sich ohne Bestätigung verbinden dürfen (eine pro Zeile).")
-                    .font(.caption).foregroundColor(.secondary)
-                TextEditor(text: $a2aTrustedAgents)
-                    .font(.system(.caption, design: .monospaced))
-                    .frame(height: 80)
-                    .padding(6)
-                    .background(Color.black.opacity(0.2))
-                    .cornerRadius(8)
-                    .scrollContentBackground(.hidden)
-                Text("z.B. http://192.168.1.100:8081, http://localhost:9090")
-                    .font(.caption2).foregroundColor(.secondary)
-            }
-            .padding()
-        }
-
-        // Info
-        GroupBox {
-            VStack(alignment: .leading, spacing: 8) {
-                Label("Protokoll", systemImage: "doc.text").font(.subheadline.bold())
-                Text("KoboldOS nutzt das Google A2A Protokoll. Jeder A2A-kompatible Agent kann sich verbinden.")
-                    .font(.caption).foregroundColor(.secondary)
-                HStack(spacing: 6) {
-                    Text("Agent Card:").font(.caption).foregroundColor(.secondary)
-                    Text("http://localhost:\(a2aPort)/.well-known/agent.json")
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundColor(.koboldEmerald)
-                        .textSelection(.enabled)
-                }
-            }
-            .padding()
-        }
-        settingsSaveButton(section: "A2A")
-    }
-
-    private func a2aPermCard(title: String, icon: String, color: Color, desc: String, isOn: Binding<Bool>) -> some View {
-        GroupBox {
-            HStack(spacing: 10) {
-                Image(systemName: icon)
-                    .font(.title3)
-                    .foregroundColor(isOn.wrappedValue ? color : .secondary)
-                    .frame(width: 28)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title).font(.system(size: 12, weight: .semibold))
-                    Text(desc).font(.caption2).foregroundColor(.secondary).lineLimit(2)
-                }
-                Spacer()
-                Toggle("", isOn: isOn)
-                    .toggleStyle(.switch)
-                    .labelsHidden()
-                    .tint(color)
-            }
-            .padding(6)
+    private func a2aPermToggle(title: String, icon: String, color: Color, isOn: Binding<Bool>) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.system(size: 12))
+                .foregroundColor(isOn.wrappedValue ? color : .secondary)
+                .frame(width: 18)
+            Text(title).font(.system(size: 11))
+            Spacer()
+            Toggle("", isOn: isOn)
+                .toggleStyle(.switch)
+                .labelsHidden()
+                .tint(color)
+                .controlSize(.small)
         }
     }
 
-    // MARK: - Verbindungen (WebApp + Telegram + geplante Integrationen)
+    // MARK: - Verbindungen
 
     @AppStorage("kobold.notificationChannel") private var notificationChannel: String = "gui"
+    @State private var iMessageAvailable: Bool = false
+
+    // MARK: - Weather Settings
+
+    @StateObject private var weatherMgr = WeatherManager.shared
+
+    @ViewBuilder
+    private func weatherSettingsSection() -> some View {
+        sectionTitle("Wetter-Widget")
+
+        GlassCard {
+            VStack(alignment: .leading, spacing: 16) {
+                GlassSectionHeader(title: "OpenWeatherMap", icon: "cloud.sun.fill")
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("API-Key").font(.caption).foregroundColor(.secondary)
+                    GlassTextField(text: $weatherMgr.apiKey, placeholder: "OpenWeatherMap API-Key eingeben")
+                    Text("Kostenlos auf openweathermap.org erhältlich")
+                        .font(.system(size: 10)).foregroundColor(.secondary)
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Standort (Stadt)").font(.caption).foregroundColor(.secondary)
+                    GlassTextField(text: $weatherMgr.manualCity, placeholder: "z.B. Stuttgart (leer = automatisch)")
+                    Text("Leer lassen für automatische Standortbestimmung")
+                        .font(.system(size: 10)).foregroundColor(.secondary)
+                }
+
+                HStack(spacing: 12) {
+                    GlassButton(title: "Wetter abrufen", icon: "arrow.clockwise", isPrimary: true) {
+                        weatherMgr.fetchWeather()
+                    }
+
+                    if let temp = weatherMgr.temperature {
+                        HStack(spacing: 6) {
+                            Image(systemName: weatherMgr.iconName)
+                                .foregroundColor(.koboldGold)
+                            Text(String(format: "%.0f°C", temp))
+                                .font(.system(size: 14, weight: .semibold))
+                            if !weatherMgr.cityName.isEmpty {
+                                Text(weatherMgr.cityName)
+                                    .font(.caption).foregroundColor(.secondary)
+                            }
+                        }
+                    }
+
+                    if let error = weatherMgr.lastError {
+                        Text(error)
+                            .font(.caption).foregroundColor(.red)
+                    }
+                }
+            }
+        }
+    }
 
     @ViewBuilder
     private func connectionsSection() -> some View {
@@ -1738,10 +1700,25 @@ struct SettingsView: View {
             .padding()
         }
 
-        // Active connections
-        telegramSection()
+        // Row 1: Google + SoundCloud
+        HStack(alignment: .top, spacing: 12) {
+            googleOAuthSection()
+            soundCloudOAuthSection()
+        }
 
-        // Geplante Integrationen
+        // Row 2: iMessage + Telegram
+        HStack(alignment: .top, spacing: 12) {
+            iMessageSection()
+            telegramSection()
+        }
+
+        // Row 3: WebApp-Server + Cloudflare Tunnel
+        HStack(alignment: .top, spacing: 12) {
+            webAppSection()
+            cloudflareTunnelSection()
+        }
+
+        // Weitere Integrationen
         GroupBox {
             VStack(alignment: .leading, spacing: 10) {
                 Label("Weitere Integrationen", systemImage: "puzzlepiece.extension.fill").font(.subheadline.bold())
@@ -1750,34 +1727,26 @@ struct SettingsView: View {
             }.padding()
         }
 
-        let connectionItems: [(String, String, Color, String)] = [
-            ("Google",     "globe",                                   .blue,              "Drive, Gmail, YouTube, Kalender"),
-            ("GitHub",     "chevron.left.forwardslash.chevron.right", .purple,            "Repos, Issues, PRs"),
-            ("Spotify",    "music.note",                              .green,             "Playlists, Wiedergabe"),
-            ("Discord",    "bubble.left.and.bubble.right.fill",       .indigo,            "Server, Nachrichten"),
-            ("X / Twitter","at",                                      .primary,           "Posts, DMs, Timeline"),
-            ("Microsoft",  "rectangle.split.3x1.fill",               .blue,              "OneDrive, Outlook, Teams"),
-            ("Dropbox",    "arrow.down.doc.fill",                     .cyan,              "Dateien synchronisieren"),
-            ("Apple",      "applelogo",                               .primary,           "iCloud, Erinnerungen"),
-            ("Amazon",     "cart.fill",                               .orange,            "Bestellungen, Alexa"),
-            ("Twitch",     "tv.fill",                                 .purple,            "Streams, Chat"),
-            ("Reddit",     "text.bubble.fill",                        Color(.systemPink), "Posts, Subreddits"),
-            ("Slack",      "number",                                  .green,             "Nachrichten, Kanäle"),
-            ("Notion",     "doc.text.fill",                           .primary,           "Seiten lesen/bearbeiten"),
-            ("SoundCloud", "waveform",                                .orange,            "Tracks, Playlists"),
-            ("LinkedIn",   "person.crop.rectangle.fill",              .blue,              "Profil, Netzwerk"),
+        let connectionItems: [(String, AnyView, Color, String, Bool)] = [
+            ("GitHub",      AnyView(brandLogoGitHub), .purple,   "Repos, Issues, PRs",          true),
+            ("Microsoft",   AnyView(brandLogoMicrosoft), .blue,  "OneDrive, Outlook, Teams",     true),
+            ("Hugging Face",AnyView(brandLogoHuggingFace), .orange, "AI-Inference, Modelle",     true),
+            ("Slack",       AnyView(brandLogoSlack), .green,     "Nachrichten, Kanäle",          true),
+            ("Notion",      AnyView(brandLogoNotion), .primary,  "Seiten lesen/bearbeiten",      true),
+            ("Discord",     AnyView(brandLogoDiscord), .indigo,  "Server, Nachrichten",          false),
+            ("Dropbox",     AnyView(brandLogoDropbox), .cyan,    "Dateien synchronisieren",      false),
+            ("Spotify",     AnyView(brandLogoSpotify), .green,   "Playlists, Wiedergabe",        false),
+            ("Linear",      AnyView(brandLogoLinear), .purple,   "Issues, Projekte",             false),
+            ("Todoist",     AnyView(brandLogoTodoist), .red,     "Tasks, Projekte",              false),
+            ("LinkedIn",    AnyView(brandLogoLinkedIn), .blue,   "Profil, Netzwerk",             false),
         ]
 
         LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
             ForEach(connectionItems, id: \.0) { item in
                 GroupBox {
                     HStack(spacing: 8) {
-                        Image(systemName: item.1)
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundColor(item.2)
+                        item.1
                             .frame(width: 32, height: 32)
-                            .background(item.2.opacity(0.12))
-                            .cornerRadius(8)
                         VStack(alignment: .leading, spacing: 1) {
                             Text(item.0)
                                 .font(.system(size: 12, weight: .semibold))
@@ -1790,19 +1759,427 @@ struct SettingsView: View {
                     .frame(minHeight: 36)
                 }
                 .overlay(alignment: .topTrailing) {
-                    Text("Geplant")
+                    Text(item.4 ? "Phase 1" : "Geplant")
                         .font(.system(size: 8, weight: .bold))
-                        .foregroundColor(.secondary)
+                        .foregroundColor(item.4 ? .koboldEmerald : .secondary)
                         .padding(.horizontal, 5).padding(.vertical, 2)
-                        .background(Capsule().fill(Color.secondary.opacity(0.15)))
+                        .background(Capsule().fill((item.4 ? Color.koboldEmerald : Color.secondary).opacity(0.15)))
                         .padding(6)
                 }
-                .opacity(0.55)
+                .opacity(item.4 ? 0.75 : 0.45)
             }
         }
 
-        // Fernsteuerung ganz unten
-        remoteControlSection()
+        // MARK: - A2A (Agent-to-Agent) — unter Verbindungen
+
+        sectionTitle("Agent-to-Agent (A2A)")
+
+        // Row: A2A Server + Berechtigungen
+        HStack(alignment: .top, spacing: 12) {
+            // A2A Server Card
+            GroupBox {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(spacing: 10) {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 8).fill(
+                                LinearGradient(colors: [Color.purple, Color.indigo], startPoint: .topLeading, endPoint: .bottomTrailing)
+                            )
+                            Image(systemName: "arrow.left.arrow.right")
+                                .font(.system(size: 18, weight: .bold))
+                                .foregroundColor(.white)
+                        }
+                        .frame(width: 36, height: 36)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("A2A Server").font(.system(size: 15, weight: .bold))
+                            Text("Agent-zu-Agent Protokoll").font(.system(size: 11)).foregroundColor(.secondary)
+                        }
+                        Spacer()
+                        if a2aEnabled {
+                            HStack(spacing: 5) {
+                                Circle().fill(Color.koboldEmerald).frame(width: 7, height: 7)
+                                Text("Aktiv").font(.system(size: 10, weight: .semibold)).foregroundColor(.koboldEmerald)
+                            }
+                        }
+                    }
+
+                    Divider().opacity(0.5)
+
+                    Toggle("A2A aktivieren", isOn: $a2aEnabled)
+                        .toggleStyle(.switch)
+                        .tint(.koboldEmerald)
+
+                    HStack(spacing: 8) {
+                        Text("Port:").font(.system(size: 11)).foregroundColor(.secondary)
+                        TextField("8081", value: $a2aPort, format: .number)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 70)
+                            .font(.system(.caption, design: .monospaced))
+                    }
+
+                    if a2aEnabled {
+                        HStack(spacing: 6) {
+                            Circle().fill(Color.koboldEmerald).frame(width: 6, height: 6)
+                            Text("http://localhost:\(a2aPort)")
+                                .font(.system(size: 10, design: .monospaced))
+                                .foregroundColor(.koboldEmerald)
+                                .textSelection(.enabled)
+                        }
+
+                        // Verbundene Clients
+                        if !a2aConnectedClients.isEmpty {
+                            Divider().opacity(0.3)
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("Verbundene Clients (\(a2aConnectedClients.count))")
+                                    .font(.system(size: 10, weight: .semibold)).foregroundColor(.secondary)
+                                ForEach(a2aConnectedClients, id: \.id) { client in
+                                    HStack(spacing: 8) {
+                                        Circle().fill(Color.koboldEmerald).frame(width: 5, height: 5)
+                                        VStack(alignment: .leading, spacing: 1) {
+                                            Text(client.name)
+                                                .font(.system(size: 11, weight: .medium))
+                                            Text(client.url)
+                                                .font(.system(size: 9, design: .monospaced))
+                                                .foregroundColor(.secondary)
+                                        }
+                                        Spacer()
+                                        Text(client.lastSeen)
+                                            .font(.system(size: 9)).foregroundColor(.secondary)
+                                        Button(action: {
+                                            a2aConnectedClients.removeAll { $0.id == client.id }
+                                            // Notify daemon to reject this client
+                                            NotificationCenter.default.post(
+                                                name: Notification.Name("koboldA2AKickClient"),
+                                                object: client.id
+                                            )
+                                        }) {
+                                            Image(systemName: "xmark.circle.fill")
+                                                .font(.system(size: 12))
+                                                .foregroundColor(.red.opacity(0.7))
+                                        }
+                                        .buttonStyle(.plain)
+                                        .help("Client trennen")
+                                    }
+                                }
+                            }
+                        } else {
+                            Text("Keine Clients verbunden")
+                                .font(.system(size: 10)).foregroundColor(.secondary.opacity(0.6))
+                        }
+                    }
+                }
+                .padding()
+            }
+            .frame(maxWidth: .infinity, alignment: .top)
+            .onReceive(NotificationCenter.default.publisher(for: Notification.Name("koboldA2AClientConnected"))) { notif in
+                if let info = notif.userInfo,
+                   let id = info["id"] as? String,
+                   let name = info["name"] as? String,
+                   let url = info["url"] as? String {
+                    let formatter = DateFormatter()
+                    formatter.timeStyle = .short
+                    let client = A2AConnectedClient(id: id, name: name, url: url, lastSeen: formatter.string(from: Date()))
+                    if !a2aConnectedClients.contains(where: { $0.id == id }) {
+                        a2aConnectedClients.append(client)
+                    } else {
+                        // Update last seen
+                        if let idx = a2aConnectedClients.firstIndex(where: { $0.id == id }) {
+                            a2aConnectedClients[idx].lastSeen = formatter.string(from: Date())
+                        }
+                    }
+                }
+            }
+
+            // Berechtigungen Card
+            GroupBox {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(spacing: 10) {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 8).fill(
+                                LinearGradient(colors: [Color.orange, Color.red], startPoint: .topLeading, endPoint: .bottomTrailing)
+                            )
+                            Image(systemName: "shield.lefthalf.filled")
+                                .font(.system(size: 18, weight: .bold))
+                                .foregroundColor(.white)
+                        }
+                        .frame(width: 36, height: 36)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("A2A Berechtigungen").font(.system(size: 15, weight: .bold))
+                            Text("Zugriff externer Agenten").font(.system(size: 11)).foregroundColor(.secondary)
+                        }
+                        Spacer()
+                    }
+
+                    Divider().opacity(0.5)
+
+                    VStack(spacing: 6) {
+                        a2aPermToggle(title: "Tools nutzen", icon: "wrench.fill", color: .koboldGold, isOn: $a2aAllowTools)
+                        a2aPermToggle(title: "Gedächtnis lesen", icon: "brain.fill", color: .cyan, isOn: $a2aAllowMemoryRead)
+                        a2aPermToggle(title: "Gedächtnis schreiben", icon: "brain.head.profile", color: .orange, isOn: $a2aAllowMemoryWrite)
+                        a2aPermToggle(title: "Dateizugriff", icon: "folder.fill", color: .blue, isOn: $a2aAllowFiles)
+                        a2aPermToggle(title: "Shell-Zugriff", icon: "terminal.fill", color: .red, isOn: $a2aAllowShell)
+                    }
+                }
+                .padding()
+            }
+            .frame(maxWidth: .infinity, alignment: .top)
+        }
+
+        // Row: Token-Austausch + Vertrauenswürdige Agenten
+        HStack(alignment: .top, spacing: 12) {
+            // Token Exchange
+            GroupBox {
+                VStack(alignment: .leading, spacing: 10) {
+                    Label("Schnellverbindung (Token)", systemImage: "link.badge.plus").font(.subheadline.bold())
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Dein Token").font(.system(size: 10, weight: .medium)).foregroundColor(.secondary)
+                        HStack(spacing: 6) {
+                            TextField("Token...", text: $a2aToken)
+                                .textFieldStyle(.roundedBorder)
+                                .font(.system(size: 10, design: .monospaced))
+                                .disabled(true)
+                            Button("Generieren") {
+                                a2aToken = UUID().uuidString.lowercased().replacingOccurrences(of: "-", with: "").prefix(24).description
+                            }
+                            .buttonStyle(.borderedProminent).tint(.koboldEmerald).controlSize(.small)
+                            Button(action: {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(a2aToken, forType: .string)
+                            }) {
+                                Image(systemName: "doc.on.clipboard")
+                            }
+                            .buttonStyle(.bordered).controlSize(.small)
+                            .disabled(a2aToken.isEmpty)
+                        }
+                    }
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Remote-Token").font(.system(size: 10, weight: .medium)).foregroundColor(.secondary)
+                        HStack(spacing: 6) {
+                            TextField("Token einfügen...", text: $a2aRemoteToken)
+                                .textFieldStyle(.roundedBorder)
+                                .font(.system(size: 10, design: .monospaced))
+                            Button("Verbinden") {
+                                if !a2aRemoteToken.isEmpty {
+                                    let existing = a2aTrustedAgents.trimmingCharacters(in: .whitespacesAndNewlines)
+                                    a2aTrustedAgents = existing.isEmpty ? a2aRemoteToken : existing + "\n" + a2aRemoteToken
+                                    a2aRemoteToken = ""
+                                }
+                            }
+                            .buttonStyle(.borderedProminent).tint(.koboldGold).controlSize(.small)
+                            .disabled(a2aRemoteToken.isEmpty)
+                        }
+                    }
+                }
+                .padding()
+            }
+            .frame(maxWidth: .infinity, alignment: .top)
+
+            // Vertrauenswürdige Agenten
+            GroupBox {
+                VStack(alignment: .leading, spacing: 10) {
+                    Label("Vertrauenswürdige Agenten", systemImage: "checkmark.shield.fill").font(.subheadline.bold())
+                    Text("URLs/Tokens die sich ohne Bestätigung verbinden dürfen (eine pro Zeile).")
+                        .font(.caption).foregroundColor(.secondary)
+                    TextEditor(text: $a2aTrustedAgents)
+                        .font(.system(size: 10, design: .monospaced))
+                        .frame(height: 60)
+                        .padding(4)
+                        .background(Color.black.opacity(0.2))
+                        .cornerRadius(6)
+                        .scrollContentBackground(.hidden)
+                    Text("z.B. http://192.168.1.100:8081")
+                        .font(.system(size: 9)).foregroundColor(.secondary)
+                }
+                .padding()
+            }
+            .frame(maxWidth: .infinity, alignment: .top)
+        }
+
+        settingsSaveButton(section: "A2A")
+    }
+
+    // MARK: - Brand Logos (SwiftUI drawn)
+
+    private var brandLogoGoogle: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.white)
+            // Google multi-color "G"
+            Text("G")
+                .font(.system(size: 20, weight: .bold, design: .rounded))
+                .foregroundStyle(
+                    .linearGradient(
+                        colors: [Color(red: 0.918, green: 0.259, blue: 0.208), Color(red: 0.984, green: 0.737, blue: 0.02), Color(red: 0.204, green: 0.659, blue: 0.325), Color(red: 0.259, green: 0.522, blue: 0.957)],
+                        startPoint: .topLeading, endPoint: .bottomTrailing
+                    )
+                )
+        }
+    }
+
+    private var brandLogoSoundCloud: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color(red: 1.0, green: 0.333, blue: 0.0)) // SoundCloud orange
+            // Cloud + sound waves
+            Image(systemName: "cloud.fill")
+                .font(.system(size: 16, weight: .bold))
+                .foregroundColor(.white)
+        }
+    }
+
+    private var brandLogoTelegram: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(
+                    LinearGradient(colors: [Color(red: 0.165, green: 0.733, blue: 0.914), Color(red: 0.114, green: 0.584, blue: 0.843)],
+                                   startPoint: .top, endPoint: .bottom)
+                )
+            Image(systemName: "paperplane.fill")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundColor(.white)
+                .offset(x: -1, y: 1)
+        }
+    }
+
+    private var brandLogoIMessage: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(
+                    LinearGradient(colors: [Color(red: 0.208, green: 0.824, blue: 0.341), Color(red: 0.118, green: 0.706, blue: 0.267)],
+                                   startPoint: .top, endPoint: .bottom)
+                )
+            Image(systemName: "message.fill")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(.white)
+        }
+    }
+
+    private var brandLogoGitHub: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color(red: 0.14, green: 0.15, blue: 0.16))
+            // Octocat approximation
+            Image(systemName: "cat.fill")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundColor(.white)
+        }
+    }
+
+    private var brandLogoMicrosoft: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.white)
+            // 4 colored squares
+            VStack(spacing: 1) {
+                HStack(spacing: 1) {
+                    Rectangle().fill(Color(red: 0.953, green: 0.318, blue: 0.212)).frame(width: 9, height: 9)
+                    Rectangle().fill(Color(red: 0.502, green: 0.725, blue: 0.055)).frame(width: 9, height: 9)
+                }
+                HStack(spacing: 1) {
+                    Rectangle().fill(Color(red: 0.004, green: 0.467, blue: 0.839)).frame(width: 9, height: 9)
+                    Rectangle().fill(Color(red: 1.0, green: 0.733, blue: 0.016)).frame(width: 9, height: 9)
+                }
+            }
+        }
+    }
+
+    private var brandLogoHuggingFace: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color(red: 1.0, green: 0.827, blue: 0.0))
+            Text("🤗")
+                .font(.system(size: 18))
+        }
+    }
+
+    private var brandLogoSlack: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color(red: 0.286, green: 0.114, blue: 0.333))
+            Image(systemName: "number")
+                .font(.system(size: 16, weight: .bold))
+                .foregroundColor(.white)
+        }
+    }
+
+    private var brandLogoNotion: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.white)
+            Text("N")
+                .font(.system(size: 18, weight: .bold, design: .serif))
+                .foregroundColor(.black)
+        }
+    }
+
+    private var brandLogoDiscord: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color(red: 0.345, green: 0.396, blue: 0.949))
+            Image(systemName: "gamecontroller.fill")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(.white)
+        }
+    }
+
+    private var brandLogoDropbox: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color(red: 0.004, green: 0.388, blue: 1.0))
+            Image(systemName: "shippingbox.fill")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(.white)
+        }
+    }
+
+    private var brandLogoSpotify: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color(red: 0.118, green: 0.843, blue: 0.376))
+            // 3 sound waves
+            VStack(spacing: 2) {
+                ForEach(0..<3, id: \.self) { i in
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(Color.black)
+                        .frame(width: CGFloat(18 - i * 3), height: 2.5)
+                        .rotationEffect(.degrees(-10))
+                }
+            }
+        }
+    }
+
+    private var brandLogoLinear: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(
+                    LinearGradient(colors: [Color(red: 0.353, green: 0.329, blue: 1.0), Color(red: 0.533, green: 0.314, blue: 0.969)],
+                                   startPoint: .topLeading, endPoint: .bottomTrailing)
+                )
+            Image(systemName: "circle.lefthalf.filled")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(.white)
+        }
+    }
+
+    private var brandLogoTodoist: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color(red: 0.882, green: 0.286, blue: 0.243))
+            Image(systemName: "checkmark")
+                .font(.system(size: 16, weight: .bold))
+                .foregroundColor(.white)
+        }
+    }
+
+    private var brandLogoLinkedIn: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color(red: 0.0, green: 0.467, blue: 0.71))
+            Text("in")
+                .font(.system(size: 17, weight: .bold, design: .serif))
+                .foregroundColor(.white)
+        }
     }
 
     // MARK: - Gedächtnis
@@ -1925,6 +2302,117 @@ struct SettingsView: View {
             }
             .padding()
         }
+
+        // MARK: Proaktive Vorschläge (ehemals eigener Reiter)
+        sectionTitle("Proaktive Vorschläge")
+
+        HStack(alignment: .top, spacing: 12) {
+            GroupBox {
+                VStack(alignment: .leading, spacing: 12) {
+                    Label("Allgemein", systemImage: "lightbulb.fill").font(.subheadline.bold())
+
+                    Toggle("Proaktive Vorschläge aktivieren", isOn: $proactiveEngine.isEnabled)
+                        .toggleStyle(.switch)
+                        .tint(.koboldEmerald)
+
+                    Toggle("Agent darf eigenständig anschreiben", isOn: AppStorageToggle("kobold.proactive.allowInitiate", default: false))
+                        .toggleStyle(.switch)
+                        .tint(.koboldGold)
+                    Text("Agent darf von sich aus Nachrichten senden, z.B. Erinnerungen oder Hinweise.")
+                        .font(.caption2).foregroundColor(.secondary)
+
+                    HStack {
+                        Text("Prüf-Intervall").font(.caption.bold()).foregroundColor(.secondary)
+                        Picker("", selection: $proactiveEngine.checkIntervalMinutes) {
+                            Text("5 Min").tag(5)
+                            Text("10 Min").tag(10)
+                            Text("30 Min").tag(30)
+                            Text("60 Min").tag(60)
+                        }.pickerStyle(.segmented).frame(maxWidth: 300)
+                    }
+                }.padding()
+            }
+            .frame(maxWidth: .infinity, alignment: .top)
+
+            GroupBox {
+                VStack(alignment: .leading, spacing: 10) {
+                    Label("Trigger-Typen", systemImage: "bell.badge.fill").font(.subheadline.bold())
+
+                    Toggle("Morgen-Briefing (08:00-09:00)", isOn: $proactiveEngine.morningBriefing)
+                        .toggleStyle(.switch).tint(.koboldEmerald)
+                    Toggle("Tages-Zusammenfassung (17:00-18:00)", isOn: $proactiveEngine.eveningSummary)
+                        .toggleStyle(.switch).tint(.koboldEmerald)
+                    Toggle("Fehler-Diagnose vorschlagen", isOn: $proactiveEngine.errorAlerts)
+                        .toggleStyle(.switch).tint(.koboldEmerald)
+                    Toggle("System-Health-Warnungen", isOn: $proactiveEngine.systemHealth)
+                        .toggleStyle(.switch).tint(.koboldEmerald)
+                }.padding()
+            }
+            .frame(maxWidth: .infinity, alignment: .top)
+        }
+
+        GroupBox {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Label("Benutzerdefinierte Regeln", systemImage: "list.bullet.rectangle").font(.subheadline.bold())
+                    Spacer()
+                    Button(action: {
+                        let rule = ProactiveRule(id: UUID().uuidString, name: "Neue Regel",
+                                                 triggerType: .timeOfDay, triggerValue: "12:00",
+                                                 prompt: "Was soll ich tun?", enabled: true)
+                        proactiveEngine.addRule(rule)
+                    }) {
+                        Label("Hinzufügen", systemImage: "plus")
+                            .font(.caption)
+                    }.buttonStyle(.bordered)
+                }
+
+                ForEach($proactiveEngine.rules) { $rule in
+                    HStack(spacing: 8) {
+                        Toggle("", isOn: $rule.enabled)
+                            .toggleStyle(.switch).labelsHidden().scaleEffect(0.7)
+                            .tint(.koboldEmerald)
+                            .onChange(of: rule.enabled) { proactiveEngine.saveRules() }
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            TextField("Name", text: $rule.name)
+                                .font(.system(size: 12, weight: .medium))
+                                .textFieldStyle(.plain)
+                                .onSubmit { proactiveEngine.saveRules() }
+                            TextField("Prompt", text: $rule.prompt)
+                                .font(.system(size: 11))
+                                .foregroundColor(.secondary)
+                                .textFieldStyle(.plain)
+                                .onSubmit { proactiveEngine.saveRules() }
+                        }
+
+                        Spacer()
+
+                        Picker("", selection: $rule.triggerType) {
+                            ForEach(ProactiveRule.TriggerType.allCases, id: \.self) { t in
+                                Text(t.rawValue).tag(t)
+                            }
+                        }.pickerStyle(.menu).frame(width: 90)
+                        .onChange(of: rule.triggerType) { proactiveEngine.saveRules() }
+
+                        if rule.triggerType == .timeOfDay {
+                            TextField("HH:MM", text: $rule.triggerValue)
+                                .font(.system(size: 11, design: .monospaced))
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 60)
+                                .onSubmit { proactiveEngine.saveRules() }
+                        }
+
+                        if !ProactiveRule.defaults.contains(where: { $0.id == rule.id }) {
+                            Button(action: { proactiveEngine.deleteRule(rule.id) }) {
+                                Image(systemName: "trash").font(.caption).foregroundColor(.red.opacity(0.7))
+                            }.buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+            }.padding()
+        }
         settingsSaveButton(section: "Gedächtnis")
     }
 
@@ -2002,48 +2490,68 @@ struct SettingsView: View {
     @State private var cloudflaredInstalling = false
 
     @ViewBuilder
-    private func remoteControlSection() -> some View {
-        sectionTitle("Fernsteuerung (WebApp)")
-
+    private func webAppSection() -> some View {
         GroupBox {
-            VStack(alignment: .leading, spacing: 14) {
-                Label("WebApp-Server", systemImage: "globe").font(.subheadline.bold())
-                Text("Starte eine Web-Oberfläche die dein KoboldOS spiegelt — als Fernbedienung von jedem Gerät.")
-                    .font(.caption).foregroundColor(.secondary)
+            VStack(alignment: .leading, spacing: 12) {
+                // Header
+                HStack(spacing: 10) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 8).fill(
+                            LinearGradient(colors: [Color.blue, Color.cyan], startPoint: .topLeading, endPoint: .bottomTrailing)
+                        )
+                        Image(systemName: "globe")
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundColor(.white)
+                    }
+                    .frame(width: 36, height: 36)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("WebApp-Server").font(.system(size: 15, weight: .bold))
+                        Text("Fernsteuerung im Browser").font(.system(size: 11)).foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    if webAppRunning {
+                        HStack(spacing: 5) {
+                            Circle().fill(Color.koboldEmerald).frame(width: 7, height: 7)
+                            Text("Aktiv").font(.system(size: 10, weight: .semibold)).foregroundColor(.koboldEmerald)
+                        }
+                    }
+                }
+
+                Divider().opacity(0.5)
 
                 Toggle("WebApp aktivieren", isOn: $webAppEnabled)
                     .toggleStyle(.switch)
                     .tint(.koboldEmerald)
 
-                HStack(spacing: 20) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Port").font(.caption.bold()).foregroundColor(.secondary)
-                        TextField("Port", value: $webAppPort, format: .number)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(width: 80)
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 12) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Port").font(.system(size: 10, weight: .medium)).foregroundColor(.secondary)
+                            TextField("Port", value: $webAppPort, format: .number)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 70)
+                        }
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Benutzer").font(.system(size: 10, weight: .medium)).foregroundColor(.secondary)
+                            TextField("Benutzer", text: $webAppUsername)
+                                .textFieldStyle(.roundedBorder)
+                        }
                     }
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Benutzername").font(.caption.bold()).foregroundColor(.secondary)
-                        TextField("Benutzername", text: $webAppUsername)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(width: 150)
-                    }
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Passwort").font(.caption.bold()).foregroundColor(.secondary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Passwort").font(.system(size: 10, weight: .medium)).foregroundColor(.secondary)
                         SecureField("Passwort", text: $webAppPassword)
                             .textFieldStyle(.roundedBorder)
-                            .frame(width: 150)
                     }
                 }
 
                 if webAppPassword.isEmpty {
-                    Label("Bitte ein Passwort setzen bevor du den Server startest.", systemImage: "exclamationmark.triangle.fill")
+                    Label("Passwort setzen", systemImage: "exclamationmark.triangle.fill")
                         .font(.caption).foregroundColor(.orange)
                 }
 
-                HStack(spacing: 12) {
+                HStack(spacing: 8) {
                     if webAppEnabled && !webAppPassword.isEmpty {
-                        Button(webAppRunning ? "Server stoppen" : "Server starten") {
+                        Button(webAppRunning ? "Stoppen" : "Starten") {
                             if webAppRunning {
                                 WebAppServer.shared.stop()
                                 webAppRunning = false
@@ -2064,17 +2572,11 @@ struct SettingsView: View {
                         }
                         .buttonStyle(.borderedProminent)
                         .tint(webAppRunning ? .red : .koboldEmerald)
+                        .controlSize(.small)
                     }
 
                     if webAppRunning {
-                        HStack(spacing: 6) {
-                            Circle().fill(Color.koboldEmerald).frame(width: 8, height: 8)
-                            Text("http://localhost:\(webAppPort)")
-                                .font(.system(size: 11, design: .monospaced))
-                                .foregroundColor(.koboldEmerald)
-                        }
-
-                        Button("Im Browser öffnen") {
+                        Button("Öffnen") {
                             if let url = URL(string: "http://localhost:\(webAppPort)") {
                                 NSWorkspace.shared.open(url)
                             }
@@ -2083,19 +2585,56 @@ struct SettingsView: View {
                         .controlSize(.small)
                     }
                 }
+
+                if webAppRunning {
+                    HStack(spacing: 6) {
+                        Circle().fill(Color.koboldEmerald).frame(width: 6, height: 6)
+                        Text("http://localhost:\(webAppPort)")
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundColor(.koboldEmerald)
+                    }
+                }
             }
             .padding()
         }
+        .frame(maxWidth: .infinity, alignment: .top)
+        .onAppear {
+            webAppRunning = WebAppServer.shared.isRunning
+        }
+    }
 
-        // Cloudflare Tunnel Section
+    @ViewBuilder
+    private func cloudflareTunnelSection() -> some View {
         GroupBox {
-            VStack(alignment: .leading, spacing: 14) {
-                Label("Cloudflare Tunnel", systemImage: "network").font(.subheadline.bold())
-                Text("Erstelle einen sicheren Tunnel zum Internet — zugreifbar von jedem Gerät, auch unterwegs. Kein Port-Forwarding nötig.")
-                    .font(.caption).foregroundColor(.secondary)
+            VStack(alignment: .leading, spacing: 12) {
+                // Header
+                HStack(spacing: 10) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 8).fill(
+                            LinearGradient(colors: [Color(red: 0.96, green: 0.65, blue: 0.14), Color(red: 0.96, green: 0.45, blue: 0.08)], startPoint: .topLeading, endPoint: .bottomTrailing)
+                        )
+                        Image(systemName: "network")
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundColor(.white)
+                    }
+                    .frame(width: 36, height: 36)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Cloudflare Tunnel").font(.system(size: 15, weight: .bold))
+                        Text("Sicherer Internet-Zugang").font(.system(size: 11)).foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    if tunnelRunning && !tunnelURL.isEmpty {
+                        HStack(spacing: 5) {
+                            Circle().fill(Color.koboldEmerald).frame(width: 7, height: 7)
+                            Text("Verbunden").font(.system(size: 10, weight: .semibold)).foregroundColor(.koboldEmerald)
+                        }
+                    }
+                }
+
+                Divider().opacity(0.5)
 
                 if !cloudflaredInstalled {
-                    HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 8) {
                         Label("cloudflared nicht installiert", systemImage: "exclamationmark.triangle.fill")
                             .font(.caption).foregroundColor(.orange)
                         Button(cloudflaredInstalling ? "Installiere..." : "Mit Homebrew installieren") {
@@ -2112,8 +2651,8 @@ struct SettingsView: View {
                         .disabled(cloudflaredInstalling)
                     }
                 } else if webAppRunning {
-                    HStack(spacing: 12) {
-                        Button(tunnelRunning ? "Tunnel stoppen" : "Tunnel starten") {
+                    HStack(spacing: 8) {
+                        Button(tunnelRunning ? "Stoppen" : "Starten") {
                             if tunnelRunning {
                                 WebAppServer.shared.stopTunnel()
                                 tunnelRunning = false
@@ -2125,34 +2664,35 @@ struct SettingsView: View {
                         }
                         .buttonStyle(.borderedProminent)
                         .tint(tunnelRunning ? .red : .blue)
+                        .controlSize(.small)
 
                         if tunnelRunning && tunnelURL.isEmpty {
-                            HStack(spacing: 6) {
+                            HStack(spacing: 4) {
                                 ProgressView().controlSize(.small)
-                                Text("Tunnel wird erstellt...")
-                                    .font(.caption).foregroundColor(.secondary)
+                                Text("Erstelle...").font(.caption).foregroundColor(.secondary)
                             }
                         }
                     }
 
                     if !tunnelURL.isEmpty {
-                        VStack(alignment: .leading, spacing: 10) {
+                        VStack(alignment: .leading, spacing: 8) {
                             HStack(spacing: 6) {
-                                Circle().fill(Color.blue).frame(width: 8, height: 8)
+                                Circle().fill(Color.blue).frame(width: 6, height: 6)
                                 Text(tunnelURL)
-                                    .font(.system(size: 11, design: .monospaced))
+                                    .font(.system(size: 10, design: .monospaced))
                                     .foregroundColor(.blue)
                                     .textSelection(.enabled)
+                                    .lineLimit(1)
                             }
 
-                            HStack(spacing: 8) {
-                                Button("URL kopieren") {
+                            HStack(spacing: 6) {
+                                Button("Kopieren") {
                                     NSPasteboard.general.clearContents()
                                     NSPasteboard.general.setString(tunnelURL, forType: .string)
                                 }
                                 .buttonStyle(.bordered).controlSize(.small)
 
-                                Button("Im Browser öffnen") {
+                                Button("Öffnen") {
                                     if let url = URL(string: tunnelURL) {
                                         NSWorkspace.shared.open(url)
                                     }
@@ -2161,17 +2701,17 @@ struct SettingsView: View {
                             }
 
                             // QR Code
-                            Text("QR-Code zum Scannen mit dem Handy:")
-                                .font(.caption).foregroundColor(.secondary)
                             if let qrImage = generateQRCode(from: tunnelURL) {
-                                Image(nsImage: qrImage)
-                                    .interpolation(.none)
-                                    .resizable()
-                                    .scaledToFit()
-                                    .frame(width: 180, height: 180)
-                                    .background(Color.white)
-                                    .cornerRadius(12)
-                                    .padding(.top, 4)
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("QR-Code:").font(.system(size: 10)).foregroundColor(.secondary)
+                                    Image(nsImage: qrImage)
+                                        .interpolation(.none)
+                                        .resizable()
+                                        .scaledToFit()
+                                        .frame(width: 120, height: 120)
+                                        .background(Color.white)
+                                        .cornerRadius(8)
+                                }
                             }
                         }
                     }
@@ -2182,9 +2722,9 @@ struct SettingsView: View {
             }
             .padding()
         }
+        .frame(maxWidth: .infinity, alignment: .top)
         .onAppear {
             cloudflaredInstalled = WebAppServer.isCloudflaredInstalled()
-            webAppRunning = WebAppServer.shared.isRunning
             tunnelRunning = WebAppServer.shared.isTunnelRunning
             tunnelURL = WebAppServer.shared.tunnelURL ?? ""
         }
@@ -2216,63 +2756,33 @@ struct SettingsView: View {
 
     @ViewBuilder
     private func googleOAuthSection() -> some View {
-        GroupBox {
-            VStack(alignment: .leading, spacing: 14) {
-                // Header
-                HStack(spacing: 10) {
-                    // Google "G" logo
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color(red: 0.259, green: 0.522, blue: 0.957))
-                            .frame(width: 36, height: 36)
-                        Text("G")
-                            .font(.system(size: 20, weight: .bold, design: .rounded))
-                            .foregroundColor(.white)
-                    }
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Google")
-                            .font(.system(size: 16, weight: .bold))
-                        Text("Drive, Gmail, YouTube, Kalender, Kontakte und mehr")
-                            .font(.caption).foregroundColor(.secondary)
-                    }
-                    Spacer()
-                    if googleConnected {
-                        HStack(spacing: 6) {
-                            Circle().fill(Color.koboldEmerald).frame(width: 8, height: 8)
-                            Text("Verbunden").font(.system(size: 11, weight: .semibold)).foregroundColor(.koboldEmerald)
-                        }
-                    }
-                }
-
-                if googleConnected {
-                    // Connected — show email + sign out
+        connectionCard(
+            logo: AnyView(brandLogoGoogle),
+            name: "Google",
+            subtitle: "Drive, Gmail, YouTube, Kalender",
+            isConnected: googleConnected,
+            connectedDetail: {
+                AnyView(VStack(alignment: .leading, spacing: 8) {
                     if !googleEmail.isEmpty {
                         HStack(spacing: 8) {
                             Image(systemName: "person.circle.fill")
-                                .font(.system(size: 18))
-                                .foregroundColor(.secondary)
+                                .font(.system(size: 16)).foregroundColor(.secondary)
                             Text(googleEmail)
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundColor(.primary)
+                                .font(.system(size: 12, weight: .medium))
                         }
                     }
-
-                    // Active scopes info
-                    HStack(spacing: 6) {
-                        ForEach(["Drive", "Gmail", "YouTube", "Kalender", "Kontakte"], id: \.self) { name in
-                            Text(name)
-                                .font(.system(size: 9, weight: .medium))
-                                .foregroundColor(.secondary)
-                                .padding(.horizontal, 6).padding(.vertical, 2)
-                                .background(Capsule().fill(Color.secondary.opacity(0.1)))
+                    let activeScopes = GoogleOAuth.shared.enabledScopes
+                    if !activeScopes.isEmpty {
+                        FlowLayout(spacing: 4) {
+                            ForEach(Array(activeScopes).sorted(by: { $0.label < $1.label }), id: \.self) { scope in
+                                Text(scope.label)
+                                    .font(.system(size: 9, weight: .medium))
+                                    .foregroundColor(.secondary)
+                                    .padding(.horizontal, 6).padding(.vertical, 2)
+                                    .background(Capsule().fill(Color.secondary.opacity(0.1)))
+                            }
                         }
-                        Text("+6")
-                            .font(.system(size: 9, weight: .medium))
-                            .foregroundColor(.secondary)
-                            .padding(.horizontal, 6).padding(.vertical, 2)
-                            .background(Capsule().fill(Color.secondary.opacity(0.1)))
                     }
-
                     Button("Abmelden") {
                         Task {
                             await GoogleOAuth.shared.signOut()
@@ -2280,61 +2790,29 @@ struct SettingsView: View {
                             googleEmail = ""
                         }
                     }
-                    .buttonStyle(.bordered)
-                    .foregroundColor(.red)
-                    .controlSize(.small)
-                } else {
-                    // Not connected — Sign In button
-                    Button(action: {
-                        GoogleOAuth.shared.signIn()
-                    }) {
-                        HStack(spacing: 12) {
-                            // Google "G" — white circle with colored G
+                    .buttonStyle(.bordered).foregroundColor(.red).controlSize(.small)
+                })
+            },
+            signInButton: {
+                AnyView(VStack(alignment: .leading, spacing: 10) {
+                    Button(action: { GoogleOAuth.shared.signIn() }) {
+                        HStack(spacing: 10) {
                             ZStack {
-                                RoundedRectangle(cornerRadius: 4)
-                                    .fill(Color.white)
-                                    .frame(width: 28, height: 28)
-                                Text("G")
-                                    .font(.system(size: 16, weight: .bold, design: .rounded))
-                                    .foregroundColor(Color(red: 0.259, green: 0.522, blue: 0.957)) // Google Blue
+                                RoundedRectangle(cornerRadius: 4).fill(Color.white).frame(width: 24, height: 24)
+                                Text("G").font(.system(size: 14, weight: .bold, design: .rounded))
+                                    .foregroundColor(Color(red: 0.259, green: 0.522, blue: 0.957))
                             }
                             Text("Sign in with Google")
-                                .font(.system(size: 14, weight: .medium))
-                                .foregroundColor(.white)
+                                .font(.system(size: 13, weight: .medium)).foregroundColor(.white)
                         }
-                        .padding(.leading, 4)
-                        .padding(.trailing, 16)
-                        .padding(.vertical, 4)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(Color(red: 0.259, green: 0.522, blue: 0.957)) // #4285F4
-                        )
+                        .padding(.leading, 4).padding(.trailing, 14).padding(.vertical, 4)
+                        .background(RoundedRectangle(cornerRadius: 6).fill(Color(red: 0.259, green: 0.522, blue: 0.957)))
                     }
                     .buttonStyle(.plain)
-                    .disabled(googleClientId.isEmpty)
-                    .opacity(googleClientId.isEmpty ? 0.5 : 1.0)
-
-                    if googleClientId.isEmpty {
-                        // Ersteinrichtung — minimaler Setup-Hinweis
-                        DisclosureGroup("Ersteinrichtung", isExpanded: $googleSetupExpanded) {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("Einmalig eine Client-ID von Google holen:")
-                                    .font(.caption).foregroundColor(.secondary)
-                                Text("console.cloud.google.com → Projekt → OAuth → Desktop-App")
-                                    .font(.system(size: 10, design: .monospaced)).foregroundColor(.secondary)
-                                TextField("Client ID einfügen", text: $googleClientId)
-                                    .textFieldStyle(.roundedBorder)
-                                    .font(.system(size: 12))
-                            }
-                            .padding(.top, 4)
-                        }
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    }
-                }
+                    scopeSelectionView
+                })
             }
-            .padding()
-        }
+        )
         .onAppear {
             googleConnected = GoogleOAuth.shared.isConnected
             googleEmail = GoogleOAuth.shared.userEmail
@@ -2343,6 +2821,191 @@ struct SettingsView: View {
             googleConnected = GoogleOAuth.shared.isConnected
             googleEmail = GoogleOAuth.shared.userEmail
         }
+    }
+
+    // MARK: - Google Scope Selection
+
+    @ViewBuilder
+    private var scopeSelectionView: some View {
+        DisclosureGroup("Berechtigungen wählen") {
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 6) {
+                ForEach(GoogleScope.allCases, id: \.self) { scope in
+                    let isEnabled = GoogleOAuth.shared.enabledScopes.contains(scope)
+                    Button(action: {
+                        var scopes = GoogleOAuth.shared.enabledScopes
+                        if isEnabled { scopes.remove(scope) } else { scopes.insert(scope) }
+                        GoogleOAuth.shared.enabledScopes = scopes
+                    }) {
+                        HStack(spacing: 6) {
+                            Image(systemName: isEnabled ? "checkmark.circle.fill" : "circle")
+                                .font(.system(size: 11))
+                                .foregroundColor(isEnabled ? .koboldEmerald : .secondary)
+                            Text(scope.label)
+                                .font(.system(size: 11))
+                                .foregroundColor(.primary)
+                            Spacer()
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.top, 4)
+
+            Text("Änderungen werden bei der nächsten Anmeldung wirksam.")
+                .font(.system(size: 9)).foregroundColor(.secondary)
+                .padding(.top, 4)
+        }
+        .font(.caption)
+        .foregroundColor(.secondary)
+    }
+
+    // MARK: - SoundCloud OAuth
+
+    @AppStorage("kobold.soundcloud.connected") private var soundCloudConnected: Bool = false
+    @State private var soundCloudUser: String = ""
+
+    @ViewBuilder
+    private func soundCloudOAuthSection() -> some View {
+        connectionCard(
+            logo: AnyView(brandLogoSoundCloud),
+            name: "SoundCloud",
+            subtitle: "Tracks, Playlists, Likes, Suche",
+            isConnected: soundCloudConnected,
+            connectedDetail: {
+                AnyView(VStack(alignment: .leading, spacing: 8) {
+                    if !soundCloudUser.isEmpty {
+                        HStack(spacing: 8) {
+                            Image(systemName: "person.circle.fill")
+                                .font(.system(size: 16)).foregroundColor(.secondary)
+                            Text(soundCloudUser)
+                                .font(.system(size: 12, weight: .medium))
+                        }
+                    }
+                    Button("Abmelden") {
+                        Task {
+                            await SoundCloudOAuth.shared.signOut()
+                            soundCloudConnected = false
+                            soundCloudUser = ""
+                        }
+                    }
+                    .buttonStyle(.bordered).foregroundColor(.red).controlSize(.small)
+                })
+            },
+            signInButton: {
+                AnyView(
+                    Button(action: { SoundCloudOAuth.shared.signIn() }) {
+                        HStack(spacing: 10) {
+                            ZStack {
+                                RoundedRectangle(cornerRadius: 4).fill(Color.white).frame(width: 24, height: 24)
+                                Image(systemName: "cloud.fill")
+                                    .font(.system(size: 12, weight: .bold))
+                                    .foregroundColor(Color(red: 1.0, green: 0.333, blue: 0.0))
+                            }
+                            Text("Sign in with SoundCloud")
+                                .font(.system(size: 13, weight: .medium)).foregroundColor(.white)
+                        }
+                        .padding(.leading, 4).padding(.trailing, 14).padding(.vertical, 4)
+                        .background(RoundedRectangle(cornerRadius: 6).fill(Color(red: 1.0, green: 0.333, blue: 0.0)))
+                    }
+                    .buttonStyle(.plain)
+                )
+            }
+        )
+        .onAppear {
+            soundCloudConnected = SoundCloudOAuth.shared.isConnected
+            soundCloudUser = SoundCloudOAuth.shared.userName
+        }
+        .onReceive(Timer.publish(every: 2, on: .main, in: .common).autoconnect()) { _ in
+            soundCloudConnected = SoundCloudOAuth.shared.isConnected
+            soundCloudUser = SoundCloudOAuth.shared.userName
+        }
+    }
+
+    // MARK: - iMessage
+
+    @AppStorage("kobold.imessage.enabled") private var iMessageEnabled: Bool = false
+
+    @ViewBuilder
+    private func iMessageSection() -> some View {
+        connectionCard(
+            logo: AnyView(brandLogoIMessage),
+            name: "iMessage",
+            subtitle: "Nachrichten lesen & senden",
+            isConnected: iMessageAvailable && iMessageEnabled,
+            connectedDetail: {
+                AnyView(VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 12)).foregroundColor(.koboldEmerald)
+                        Text("Automation-Berechtigung erteilt")
+                            .font(.system(size: 11)).foregroundColor(.secondary)
+                    }
+                    Text("Der Agent kann über AppleScript Nachrichten lesen und senden.")
+                        .font(.system(size: 10)).foregroundColor(.secondary)
+
+                    Toggle("iMessage aktiviert", isOn: $iMessageEnabled)
+                        .toggleStyle(.switch)
+                        .tint(.koboldEmerald)
+                        .font(.system(size: 12))
+                        .onChange(of: iMessageEnabled) {
+                            if !iMessageEnabled { iMessageAvailable = false }
+                        }
+                })
+            },
+            signInButton: {
+                AnyView(VStack(alignment: .leading, spacing: 10) {
+                    Text("Aktiviere iMessage um deinem Agent Zugriff auf Nachrichten zu geben. macOS fragt nach Automation-Berechtigung.")
+                        .font(.system(size: 11)).foregroundColor(.secondary)
+
+                    Toggle("iMessage aktivieren", isOn: Binding(
+                        get: { iMessageEnabled },
+                        set: { newVal in
+                            if newVal {
+                                // Trigger macOS permission prompt
+                                requestIMessageAccess()
+                            }
+                            iMessageEnabled = newVal
+                        }
+                    ))
+                    .toggleStyle(.switch)
+                    .tint(Color(red: 0.208, green: 0.824, blue: 0.341))
+                    .font(.system(size: 12))
+
+                    if iMessageEnabled && !iMessageAvailable {
+                        HStack(spacing: 6) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.system(size: 10)).foregroundColor(.orange)
+                            Text("Berechtigung noch nicht erteilt")
+                                .font(.system(size: 10)).foregroundColor(.orange)
+                        }
+                        Button("Systemeinstellungen öffnen") {
+                            NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation")!)
+                        }
+                        .font(.system(size: 11))
+                        .buttonStyle(.borderless)
+                        .foregroundColor(.secondary)
+                    }
+                })
+            }
+        )
+        .onAppear {
+            if iMessageEnabled { checkIMessageAvailability() }
+        }
+    }
+
+    private func checkIMessageAvailability() {
+        let script = NSAppleScript(source: "tell application \"Messages\" to count of every chat")
+        var errorInfo: NSDictionary?
+        script?.executeAndReturnError(&errorInfo)
+        iMessageAvailable = (errorInfo == nil)
+    }
+
+    private func requestIMessageAccess() {
+        // This triggers the macOS automation permission dialog
+        let script = NSAppleScript(source: "tell application \"Messages\" to count of every chat")
+        var errorInfo: NSDictionary?
+        script?.executeAndReturnError(&errorInfo)
+        iMessageAvailable = (errorInfo == nil)
     }
 
     // MARK: - Telegram Bot
@@ -2355,105 +3018,416 @@ struct SettingsView: View {
 
     @ViewBuilder
     private func telegramSection() -> some View {
-        sectionTitle("Telegram Bot")
-
-        GroupBox {
-            VStack(alignment: .leading, spacing: 14) {
-                Label("Telegram-Verbindung", systemImage: "paperplane.fill").font(.subheadline.bold())
-                Text("Verbinde deinen KoboldOS-Agent mit Telegram. Chatte von unterwegs per Handy mit deinem Agent.")
-                    .font(.caption).foregroundColor(.secondary)
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Bot-Token (von @BotFather)").font(.caption.bold()).foregroundColor(.secondary)
-                    SecureField("z.B. 123456:ABC-DEF1234...", text: $telegramToken)
-                        .textFieldStyle(.roundedBorder)
-                }
-
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        Text("Deine Chat-ID").font(.caption.bold()).foregroundColor(.secondary)
-                        Text("(optional — leer = alle erlauben)").font(.caption2).foregroundColor(.secondary)
-                    }
-                    TextField("z.B. 123456789", text: $telegramChatId)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 200)
-                }
-
-                HStack(spacing: 12) {
-                    Button(telegramRunning ? "Bot stoppen" : "Bot starten") {
-                        if telegramRunning {
-                            TelegramBot.shared.stop()
-                            telegramRunning = false
-                            telegramBotName = ""
-                        } else {
-                            guard !telegramToken.isEmpty else { return }
-                            let chatId = Int64(telegramChatId) ?? 0
-                            TelegramBot.shared.start(token: telegramToken, allowedChatId: chatId)
-                            telegramRunning = true
-                            // Poll for bot name
-                            Task {
-                                try? await Task.sleep(nanoseconds: 2_000_000_000)
-                                telegramBotName = TelegramBot.shared.botUsername
-                            }
-                        }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(telegramRunning ? .red : .koboldEmerald)
-                    .disabled(telegramToken.isEmpty)
-
-                    if telegramRunning {
+        connectionCard(
+            logo: AnyView(brandLogoTelegram),
+            name: "Telegram",
+            subtitle: "Bot-Chat von unterwegs",
+            isConnected: telegramRunning,
+            connectedDetail: {
+                AnyView(VStack(alignment: .leading, spacing: 8) {
+                    if !telegramBotName.isEmpty {
                         HStack(spacing: 6) {
-                            Circle().fill(Color.koboldEmerald).frame(width: 8, height: 8)
-                            if !telegramBotName.isEmpty {
-                                Text("@\(telegramBotName)")
-                                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                                    .foregroundColor(.koboldEmerald)
-                            } else {
-                                Text("Verbinde...")
-                                    .font(.system(size: 11)).foregroundColor(.secondary)
-                            }
+                            Image(systemName: "person.circle.fill")
+                                .font(.system(size: 16)).foregroundColor(.secondary)
+                            Text("@\(telegramBotName)")
+                                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                                .foregroundColor(.koboldEmerald)
                         }
                     }
-                }
-
-                if telegramRunning {
-                    HStack(spacing: 16) {
+                    HStack(spacing: 12) {
                         VStack(alignment: .leading) {
-                            Text("\(telegramStats.received)").font(.title3.bold()).foregroundColor(.koboldEmerald)
-                            Text("Empfangen").font(.caption2).foregroundColor(.secondary)
+                            Text("\(telegramStats.received)").font(.system(size: 16, weight: .bold)).foregroundColor(.koboldEmerald)
+                            Text("Empfangen").font(.system(size: 9)).foregroundColor(.secondary)
                         }
                         VStack(alignment: .leading) {
-                            Text("\(telegramStats.sent)").font(.title3.bold()).foregroundColor(.blue)
-                            Text("Gesendet").font(.caption2).foregroundColor(.secondary)
+                            Text("\(telegramStats.sent)").font(.system(size: 16, weight: .bold)).foregroundColor(.blue)
+                            Text("Gesendet").font(.system(size: 9)).foregroundColor(.secondary)
                         }
                     }
+                    Button("Bot stoppen") {
+                        TelegramBot.shared.stop()
+                        telegramRunning = false
+                        telegramBotName = ""
+                    }
+                    .buttonStyle(.bordered).foregroundColor(.red).controlSize(.small)
                     .onReceive(Timer.publish(every: 3, on: .main, in: .common).autoconnect()) { _ in
                         telegramStats = TelegramBot.shared.stats
                         if telegramBotName.isEmpty {
                             telegramBotName = TelegramBot.shared.botUsername
                         }
                     }
+                })
+            },
+            signInButton: {
+                AnyView(VStack(alignment: .leading, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Bot-Token").font(.system(size: 10, weight: .semibold)).foregroundColor(.secondary)
+                        SecureField("123456:ABC-DEF1234...", text: $telegramToken)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(size: 12))
+                    }
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Chat-ID (optional)").font(.system(size: 10, weight: .semibold)).foregroundColor(.secondary)
+                        TextField("123456789", text: $telegramChatId)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(size: 12))
+                    }
+                    Button(action: {
+                        guard !telegramToken.isEmpty else { return }
+                        let chatId = Int64(telegramChatId) ?? 0
+                        TelegramBot.shared.start(token: telegramToken, allowedChatId: chatId)
+                        telegramRunning = true
+                        Task {
+                            try? await Task.sleep(nanoseconds: 2_000_000_000)
+                            telegramBotName = TelegramBot.shared.botUsername
+                        }
+                    }) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "paperplane.fill").font(.system(size: 12))
+                            Text("Bot starten").font(.system(size: 13, weight: .medium))
+                        }
+                        .padding(.horizontal, 14).padding(.vertical, 6)
+                        .background(RoundedRectangle(cornerRadius: 6).fill(
+                            LinearGradient(colors: [Color(red: 0.165, green: 0.733, blue: 0.914), Color(red: 0.114, green: 0.584, blue: 0.843)],
+                                           startPoint: .leading, endPoint: .trailing)
+                        ))
+                        .foregroundColor(.white)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(telegramToken.isEmpty)
+                })
+            }
+        )
+        .onAppear {
+            telegramRunning = TelegramBot.shared.isRunning
+            telegramBotName = TelegramBot.shared.botUsername
+        }
+    }
+
+    // MARK: - Connection Card Template
+
+    @ViewBuilder
+    private func connectionCard(
+        logo: AnyView,
+        name: String,
+        subtitle: String,
+        isConnected: Bool,
+        connectedDetail: () -> AnyView,
+        signInButton: () -> AnyView
+    ) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                // Header
+                HStack(spacing: 10) {
+                    logo.frame(width: 36, height: 36)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(name).font(.system(size: 15, weight: .bold))
+                        Text(subtitle).font(.system(size: 11)).foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    if isConnected {
+                        HStack(spacing: 5) {
+                            Circle().fill(Color.koboldEmerald).frame(width: 7, height: 7)
+                            Text("Verbunden").font(.system(size: 10, weight: .semibold)).foregroundColor(.koboldEmerald)
+                        }
+                    }
+                }
+
+                Divider().opacity(0.5)
+
+                if isConnected {
+                    connectedDetail()
+                } else {
+                    signInButton()
+                }
+            }
+            .padding()
+        }
+        .frame(maxWidth: .infinity, alignment: .top)
+    }
+
+    // MARK: - Flow Layout (for scope tags)
+
+    private struct FlowLayout: Layout {
+        var spacing: CGFloat = 4
+
+        func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+            let maxWidth = proposal.width ?? .infinity
+            var currentX: CGFloat = 0
+            var currentY: CGFloat = 0
+            var lineHeight: CGFloat = 0
+
+            for subview in subviews {
+                let size = subview.sizeThatFits(.unspecified)
+                if currentX + size.width > maxWidth && currentX > 0 {
+                    currentX = 0
+                    currentY += lineHeight + spacing
+                    lineHeight = 0
+                }
+                lineHeight = max(lineHeight, size.height)
+                currentX += size.width + spacing
+            }
+            return CGSize(width: maxWidth, height: currentY + lineHeight)
+        }
+
+        func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+            var currentX: CGFloat = bounds.minX
+            var currentY: CGFloat = bounds.minY
+            var lineHeight: CGFloat = 0
+
+            for subview in subviews {
+                let size = subview.sizeThatFits(.unspecified)
+                if currentX + size.width > bounds.maxX && currentX > bounds.minX {
+                    currentX = bounds.minX
+                    currentY += lineHeight + spacing
+                    lineHeight = 0
+                }
+                subview.place(at: CGPoint(x: currentX, y: currentY), proposal: .unspecified)
+                lineHeight = max(lineHeight, size.height)
+                currentX += size.width + spacing
+            }
+        }
+    }
+
+    // MARK: - Sprache (TTS / STT)
+
+    @AppStorage("kobold.tts.voice") private var ttsVoice: String = "de-DE"
+    @AppStorage("kobold.tts.rate") private var ttsRate: Double = 0.5
+    @AppStorage("kobold.tts.volume") private var ttsVolume: Double = 0.8
+    @AppStorage("kobold.tts.autoSpeak") private var ttsAutoSpeak: Bool = false
+    @State private var ttsTestText: String = "Hallo! Ich bin dein KoboldOS Assistent."
+
+    @ViewBuilder
+    private func speechSettingsSection() -> some View {
+        sectionTitle("Sprache")
+
+        // TTS Section
+        GroupBox {
+            VStack(alignment: .leading, spacing: 14) {
+                Label("Text-to-Speech", systemImage: "speaker.wave.3.fill").font(.subheadline.bold())
+                Text("Der Agent kann Texte laut vorlesen. Nutze 'lies vor' oder 'sag mir' im Chat.")
+                    .font(.caption).foregroundColor(.secondary)
+
+                Toggle("Agent-Antworten automatisch vorlesen", isOn: $ttsAutoSpeak)
+                    .toggleStyle(.switch)
+                    .tint(.koboldEmerald)
+
+                HStack(spacing: 20) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Stimme / Sprache").font(.caption.bold()).foregroundColor(.secondary)
+                        Picker("", selection: $ttsVoice) {
+                            ForEach(TTSManager.availableLanguages, id: \.self) { lang in
+                                Text(lang).tag(lang)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .frame(width: 150)
+                    }
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Geschwindigkeit: \(String(format: "%.1f", ttsRate))").font(.caption.bold()).foregroundColor(.secondary)
+                        Slider(value: $ttsRate, in: 0.1...1.0, step: 0.05)
+                            .tint(.koboldEmerald)
+                            .frame(width: 150)
+                    }
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Lautstärke: \(String(format: "%.0f%%", ttsVolume * 100))").font(.caption.bold()).foregroundColor(.secondary)
+                        Slider(value: $ttsVolume, in: 0.0...1.0, step: 0.05)
+                            .tint(.koboldEmerald)
+                            .frame(width: 150)
+                    }
+                }
+
+                HStack(spacing: 8) {
+                    TextField("Testtext...", text: $ttsTestText)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 12))
+
+                    Button {
+                        TTSManager.shared.speak(ttsTestText, voice: ttsVoice, rate: Float(ttsRate))
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "play.fill").font(.system(size: 10))
+                            Text("Test").font(.system(size: 12, weight: .medium))
+                        }
+                        .padding(.horizontal, 10).padding(.vertical, 6)
+                        .background(Color.koboldEmerald)
+                        .foregroundColor(.white)
+                        .cornerRadius(6)
+                    }
+                    .buttonStyle(.plain)
+
+                    if TTSManager.shared.isSpeaking {
+                        Button(action: { TTSManager.shared.stop() }) {
+                            Image(systemName: "stop.fill").font(.system(size: 10))
+                        }
+                        .buttonStyle(.bordered)
+                        .foregroundColor(.red)
+                    }
                 }
             }
             .padding()
         }
 
+        // STT Section
         GroupBox {
-            VStack(alignment: .leading, spacing: 8) {
-                Label("So geht's", systemImage: "questionmark.circle.fill").font(.subheadline.bold())
-                Text("""
-                1. Öffne Telegram und suche @BotFather
-                2. Sende /newbot und folge den Anweisungen
-                3. Kopiere den Bot-Token hierher
-                4. Optional: Sende /start an deinen Bot, dann sende /status um deine Chat-ID zu erfahren
-                5. Klicke "Bot starten" — fertig!
-                """)
+            VStack(alignment: .leading, spacing: 14) {
+                Label("Speech-to-Text (Whisper)", systemImage: "mic.fill").font(.subheadline.bold())
+                Text("Sprachnachrichten und Audio-Dateien automatisch transkribieren mit lokalem Whisper-Model.")
                     .font(.caption).foregroundColor(.secondary)
-            }.padding()
+
+                Toggle("Sprachnachrichten automatisch transkribieren", isOn: AppStorageToggle("kobold.stt.autoTranscribe", default: true))
+                    .toggleStyle(.switch)
+                    .tint(.koboldEmerald)
+
+                HStack(spacing: 20) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Model").font(.caption.bold()).foregroundColor(.secondary)
+                        Picker("", selection: AppStorageBinding("kobold.stt.model", default: "base")) {
+                            Text("tiny (75 MB)").tag("tiny")
+                            Text("base (142 MB)").tag("base")
+                            Text("small (466 MB)").tag("small")
+                            Text("medium (1.5 GB)").tag("medium")
+                        }
+                        .pickerStyle(.menu)
+                        .frame(width: 160)
+                    }
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Sprache").font(.caption.bold()).foregroundColor(.secondary)
+                        Picker("", selection: AppStorageBinding("kobold.stt.language", default: "auto")) {
+                            Text("Auto-Detect").tag("auto")
+                            Text("Deutsch").tag("de")
+                            Text("English").tag("en")
+                            Text("Français").tag("fr")
+                            Text("Español").tag("es")
+                        }
+                        .pickerStyle(.menu)
+                        .frame(width: 140)
+                    }
+                }
+
+                HStack(spacing: 12) {
+                    if STTManager.shared.isModelLoaded {
+                        HStack(spacing: 6) {
+                            Circle().fill(Color.koboldEmerald).frame(width: 8, height: 8)
+                            Text("Model '\(STTManager.shared.currentModelName)' geladen")
+                                .font(.system(size: 11, weight: .medium)).foregroundColor(.koboldEmerald)
+                        }
+                    } else if STTManager.shared.isDownloading {
+                        HStack(spacing: 6) {
+                            ProgressView().controlSize(.small)
+                            Text("Lade Model...")
+                                .font(.system(size: 11)).foregroundColor(.secondary)
+                        }
+                    } else {
+                        Button("Model herunterladen") {
+                            Task { await STTManager.shared.downloadModel() }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.koboldEmerald)
+                        .controlSize(.small)
+                    }
+                }
+            }
+            .padding()
         }
-        .onAppear {
-            telegramRunning = TelegramBot.shared.isRunning
-            telegramBotName = TelegramBot.shared.botUsername
+
+        // Stable Diffusion Section
+        GroupBox {
+            VStack(alignment: .leading, spacing: 14) {
+                Label("Bildgenerierung (Stable Diffusion)", systemImage: "photo.artframe").font(.subheadline.bold())
+                Text("Generiere Bilder lokal auf deinem Mac mit Stable Diffusion. Sage z.B. 'Erstelle ein Bild von...' im Chat.")
+                    .font(.caption).foregroundColor(.secondary)
+
+                // Master Prompt
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Master-Prompt (wird jedem Prompt vorangestellt)").font(.caption.bold()).foregroundColor(.secondary)
+                    TextField("z.B. masterpiece, best quality, highly detailed",
+                              text: AppStorageBinding("kobold.sd.masterPrompt", default: "masterpiece, best quality, highly detailed"))
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 12))
+                }
+
+                // Negative Prompt
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Standard Negative Prompt").font(.caption.bold()).foregroundColor(.secondary)
+                    TextField("z.B. ugly, blurry, distorted",
+                              text: AppStorageBinding("kobold.sd.negativePrompt", default: "ugly, blurry, distorted, low quality, deformed"))
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 12))
+                }
+
+                HStack(spacing: 20) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Schritte: \(UserDefaults.standard.integer(forKey: "kobold.sd.steps") == 0 ? 30 : UserDefaults.standard.integer(forKey: "kobold.sd.steps"))")
+                            .font(.caption.bold()).foregroundColor(.secondary)
+                        Slider(value: AppStorageDoubleBinding("kobold.sd.steps", default: 30), in: 10...80, step: 5)
+                            .tint(.koboldEmerald)
+                            .frame(width: 150)
+                    }
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        let gv = UserDefaults.standard.float(forKey: "kobold.sd.guidanceScale")
+                        Text("Guidance: \(String(format: "%.1f", gv > 0 ? gv : 7.5))")
+                            .font(.caption.bold()).foregroundColor(.secondary)
+                        Slider(value: AppStorageDoubleBinding("kobold.sd.guidanceScale", default: 7.5), in: 1.0...20.0, step: 0.5)
+                            .tint(.koboldEmerald)
+                            .frame(width: 150)
+                    }
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Compute").font(.caption.bold()).foregroundColor(.secondary)
+                        Picker("", selection: AppStorageBinding("kobold.sd.computeUnits", default: "cpuAndGPU")) {
+                            Text("CPU + GPU").tag("cpuAndGPU")
+                            Text("Alle (+ ANE)").tag("all")
+                            Text("Nur CPU").tag("cpuOnly")
+                        }
+                        .pickerStyle(.menu)
+                        .frame(width: 130)
+                    }
+                }
+
+                // Model status
+                HStack(spacing: 12) {
+                    if ImageGenManager.shared.isModelLoaded {
+                        HStack(spacing: 6) {
+                            Circle().fill(Color.koboldEmerald).frame(width: 8, height: 8)
+                            Text("Model '\(ImageGenManager.shared.currentModelName)' geladen")
+                                .font(.system(size: 11, weight: .medium)).foregroundColor(.koboldEmerald)
+                        }
+                    } else {
+                        HStack(spacing: 6) {
+                            Image(systemName: "info.circle.fill").font(.caption).foregroundColor(.orange)
+                            Text("Lade ein CoreML Stable Diffusion Model herunter und lege es in ~/Library/Application Support/KoboldOS/sd-models/")
+                                .font(.system(size: 10)).foregroundColor(.secondary)
+                        }
+                    }
+
+                    Spacer()
+
+                    Button("Models-Ordner öffnen") {
+                        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+                            .appendingPathComponent("KoboldOS/sd-models")
+                        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                        NSWorkspace.shared.open(dir)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+
+                if ImageGenManager.shared.isGenerating {
+                    HStack(spacing: 8) {
+                        ProgressView(value: ImageGenManager.shared.generationProgress)
+                            .tint(.koboldEmerald)
+                        Text("\(Int(ImageGenManager.shared.generationProgress * 100))%")
+                            .font(.system(size: 11, weight: .bold, design: .monospaced))
+                            .foregroundColor(.koboldEmerald)
+                    }
+                }
+            }
+            .padding()
         }
     }
 
@@ -2825,108 +3799,7 @@ struct SettingsView: View {
 
     @StateObject private var proactiveEngine = ProactiveEngine.shared
 
-    @ViewBuilder
-    private func proactiveSettingsSection() -> some View {
-        sectionTitle("Proaktive Vorschläge")
-
-        GroupBox {
-            VStack(alignment: .leading, spacing: 12) {
-                Label("Allgemein", systemImage: "lightbulb.fill").font(.subheadline.bold())
-
-                Toggle("Proaktive Vorschläge aktivieren", isOn: $proactiveEngine.isEnabled)
-                    .toggleStyle(.switch)
-                    .tint(.koboldEmerald)
-
-                HStack {
-                    Text("Prüf-Intervall").font(.caption.bold()).foregroundColor(.secondary)
-                    Picker("", selection: $proactiveEngine.checkIntervalMinutes) {
-                        Text("5 Min").tag(5)
-                        Text("10 Min").tag(10)
-                        Text("30 Min").tag(30)
-                        Text("60 Min").tag(60)
-                    }.pickerStyle(.segmented).frame(maxWidth: 300)
-                }
-            }.padding(6)
-        }
-
-        GroupBox {
-            VStack(alignment: .leading, spacing: 10) {
-                Label("Trigger-Typen", systemImage: "bell.badge.fill").font(.subheadline.bold())
-
-                Toggle("Morgen-Briefing (08:00-09:00)", isOn: $proactiveEngine.morningBriefing)
-                    .toggleStyle(.switch).tint(.koboldEmerald)
-                Toggle("Tages-Zusammenfassung (17:00-18:00)", isOn: $proactiveEngine.eveningSummary)
-                    .toggleStyle(.switch).tint(.koboldEmerald)
-                Toggle("Fehler-Diagnose vorschlagen", isOn: $proactiveEngine.errorAlerts)
-                    .toggleStyle(.switch).tint(.koboldEmerald)
-                Toggle("System-Health-Warnungen", isOn: $proactiveEngine.systemHealth)
-                    .toggleStyle(.switch).tint(.koboldEmerald)
-            }.padding(6)
-        }
-
-        GroupBox {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    Label("Benutzerdefinierte Regeln", systemImage: "list.bullet.rectangle").font(.subheadline.bold())
-                    Spacer()
-                    Button(action: {
-                        let rule = ProactiveRule(id: UUID().uuidString, name: "Neue Regel",
-                                                 triggerType: .timeOfDay, triggerValue: "12:00",
-                                                 prompt: "Was soll ich tun?", enabled: true)
-                        proactiveEngine.addRule(rule)
-                    }) {
-                        Label("Hinzufügen", systemImage: "plus")
-                            .font(.caption)
-                    }.buttonStyle(.bordered)
-                }
-
-                ForEach($proactiveEngine.rules) { $rule in
-                    HStack(spacing: 8) {
-                        Toggle("", isOn: $rule.enabled)
-                            .toggleStyle(.switch).labelsHidden().scaleEffect(0.7)
-                            .tint(.koboldEmerald)
-                            .onChange(of: rule.enabled) { proactiveEngine.saveRules() }
-
-                        VStack(alignment: .leading, spacing: 2) {
-                            TextField("Name", text: $rule.name)
-                                .font(.system(size: 12, weight: .medium))
-                                .textFieldStyle(.plain)
-                                .onSubmit { proactiveEngine.saveRules() }
-                            TextField("Prompt", text: $rule.prompt)
-                                .font(.system(size: 11))
-                                .foregroundColor(.secondary)
-                                .textFieldStyle(.plain)
-                                .onSubmit { proactiveEngine.saveRules() }
-                        }
-
-                        Spacer()
-
-                        Picker("", selection: $rule.triggerType) {
-                            ForEach(ProactiveRule.TriggerType.allCases, id: \.self) { t in
-                                Text(t.rawValue).tag(t)
-                            }
-                        }.pickerStyle(.menu).frame(width: 90)
-                        .onChange(of: rule.triggerType) { proactiveEngine.saveRules() }
-
-                        if rule.triggerType == .timeOfDay {
-                            TextField("HH:MM", text: $rule.triggerValue)
-                                .font(.system(size: 11, design: .monospaced))
-                                .textFieldStyle(.roundedBorder)
-                                .frame(width: 60)
-                                .onSubmit { proactiveEngine.saveRules() }
-                        }
-
-                        if !ProactiveRule.defaults.contains(where: { $0.id == rule.id }) {
-                            Button(action: { proactiveEngine.deleteRule(rule.id) }) {
-                                Image(systemName: "trash").font(.caption).foregroundColor(.red.opacity(0.7))
-                            }.buttonStyle(.plain)
-                        }
-                    }
-                    .padding(.vertical, 4)
-                }
-            }.padding(6)
-        }
-    }
+    // proactiveSettingsSection moved into memorySettingsSection above
 
     // MARK: - Über
 
@@ -2944,7 +3817,7 @@ struct SettingsView: View {
                     )
                 VStack(alignment: .leading, spacing: 4) {
                     Text("KoboldOS").font(.title.bold())
-                    Text("Alpha v0.2.3").font(.title3).foregroundColor(.koboldGold)
+                    Text("Alpha v0.2.5").font(.title3).foregroundColor(.koboldGold)
                     Text("Dein lokaler KI-Assistent für macOS")
                         .font(.subheadline).foregroundColor(.secondary)
                 }
@@ -2956,7 +3829,7 @@ struct SettingsView: View {
         GroupBox {
             VStack(alignment: .leading, spacing: 8) {
                 Label("Build-Info", systemImage: "info.circle").font(.subheadline.bold())
-                infoRow("Version", "Alpha v0.2.3")
+                infoRow("Version", "Alpha v0.2.5")
                 infoRow("Build", "2026-02-22")
                 infoRow("Swift", "6.0")
                 infoRow("Plattform", "macOS 14+ (Sonoma)")
@@ -3062,7 +3935,7 @@ struct SettingsView: View {
         panel.allowedContentTypes = [.plainText]
         panel.nameFieldStringValue = "koboldos-logs.txt"
         if panel.runModal() == .OK, let url = panel.url {
-            let logs = "KoboldOS Alpha v0.2.3 — Logs\nPID: \(ProcessInfo.processInfo.processIdentifier)\nUptime: \(Date())\n"
+            let logs = "KoboldOS Alpha v0.2.5 — Logs\nPID: \(ProcessInfo.processInfo.processIdentifier)\nUptime: \(Date())\n"
             try? logs.write(to: url, atomically: true, encoding: .utf8)
         }
     }
@@ -3076,4 +3949,27 @@ private func AppStorageToggle(_ key: String, default defaultValue: Bool) -> Bind
         get: { UserDefaults.standard.object(forKey: key) as? Bool ?? defaultValue },
         set: { UserDefaults.standard.set($0, forKey: key) }
     )
+}
+
+private func AppStorageBinding(_ key: String, default defaultValue: String) -> Binding<String> {
+    Binding(
+        get: { UserDefaults.standard.string(forKey: key) ?? defaultValue },
+        set: { UserDefaults.standard.set($0, forKey: key) }
+    )
+}
+
+private func AppStorageDoubleBinding(_ key: String, default defaultValue: Double) -> Binding<Double> {
+    Binding(
+        get: { let v = UserDefaults.standard.double(forKey: key); return v != 0 ? v : defaultValue },
+        set: { UserDefaults.standard.set($0, forKey: key) }
+    )
+}
+
+// MARK: - A2A Connected Client Model
+
+struct A2AConnectedClient: Identifiable {
+    let id: String
+    let name: String
+    let url: String
+    var lastSeen: String
 }

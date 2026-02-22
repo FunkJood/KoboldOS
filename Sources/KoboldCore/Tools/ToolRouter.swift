@@ -13,6 +13,13 @@ public actor ToolRouter {
     /// Tools that run without timeout (sub-agent delegation, etc.)
     private let noTimeoutTools: Set<String> = ["call_subordinate", "delegate_parallel"]
 
+    /// Critical tools that must never be auto-disabled (instructor core tools)
+    private let neverDisableTools: Set<String> = [
+        "response", "call_subordinate", "delegate_parallel",
+        "core_memory_read", "core_memory_append", "core_memory_replace",
+        "shell", "file", "browser"
+    ]
+
     public init() {}
 
     // MARK: - Registration
@@ -110,9 +117,13 @@ public actor ToolRouter {
     private func recordError(_ name: String) {
         errorCounts[name, default: 0] += 1
         let count = errorCounts[name] ?? 0
-        if count >= maxErrorsBeforeDisable {
+        if count >= maxErrorsBeforeDisable && !neverDisableTools.contains(name) {
             disabledTools.insert(name)
             print("[ToolRouter] Auto-disabled '\(name)' after \(count) consecutive errors")
+        } else if count >= maxErrorsBeforeDisable {
+            // Reset error count for critical tools instead of disabling
+            errorCounts[name] = 0
+            print("[ToolRouter] Reset error count for critical tool '\(name)' (never-disable)")
         }
     }
 

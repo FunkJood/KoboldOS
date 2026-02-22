@@ -184,6 +184,9 @@ struct AgentsView: View {
                         }
                     }
                 }
+
+                // Tool Routing Map
+                toolRoutingSection
             }
             .padding(24)
         }
@@ -194,6 +197,150 @@ struct AgentsView: View {
     /// Returns active sessions matching this agent config id
     private func activeSessions(for agentId: String) -> [ActiveAgentSession] {
         viewModel.activeSessions.filter { $0.agentType == agentId && $0.status == .running }
+    }
+
+    // MARK: - Tool Routing Visualization
+
+    /// Tool routing data: which agent gets which tools and why
+    private static let toolRoutingDefaults: [(tool: String, icon: String, defaultAgents: [String], reason: String)] = [
+        ("shell",           "terminal.fill",                    ["instructor", "coder", "utility"],    "Shell-Befehle ausführen"),
+        ("file",            "doc.fill",                         ["instructor", "coder", "utility"],    "Dateien lesen/schreiben"),
+        ("browser",         "globe",                            ["instructor", "researcher", "web"],   "Webseiten laden & durchsuchen"),
+        ("http",            "network",                          ["instructor", "researcher", "web"],   "HTTP-Requests senden"),
+        ("calendar",        "calendar",                         ["instructor", "utility"],             "Kalender & Erinnerungen"),
+        ("contacts",        "person.crop.circle",               ["instructor", "utility"],             "Kontakte durchsuchen"),
+        ("applescript",     "applescript",                      ["instructor", "utility"],             "macOS-Automatisierung"),
+        ("memory_save",     "brain.head.profile",               ["instructor", "coder", "researcher"], "Erinnerungen speichern"),
+        ("memory_recall",   "magnifyingglass",                  ["instructor", "coder", "researcher"], "Erinnerungen abrufen"),
+        ("task_manage",     "checklist",                        ["instructor"],                        "Aufgaben erstellen/verwalten"),
+        ("workflow_manage", "arrow.triangle.branch",            ["instructor"],                        "Workflows verwalten"),
+        ("call_subordinate","person.2.fill",                    ["instructor"],                        "Sub-Agent delegieren"),
+        ("delegate_parallel","person.3.fill",                   ["instructor"],                        "Parallele Sub-Agents"),
+        ("skill_write",     "square.and.pencil",                ["instructor", "coder"],               "Skills erstellen"),
+        ("notify",          "bell.fill",                        ["instructor", "coder", "researcher"], "Benachrichtigungen senden"),
+        ("calculator",      "plusminus",                        ["instructor", "coder", "utility"],    "Berechnungen"),
+        ("telegram_send",   "paperplane.fill",                  ["instructor"],                        "Telegram-Nachrichten"),
+        ("google_api",      "globe",                            ["instructor", "web"],                 "Google API Zugriff"),
+        ("speak",           "speaker.wave.2.fill",              ["instructor"],                        "Text vorlesen (TTS)"),
+        ("generate_image",  "photo.artframe",                   ["instructor"],                        "Bilder generieren (SD)"),
+    ]
+
+    /// Persisted tool routing overrides
+    @AppStorage("kobold.toolRouting") private var toolRoutingData: String = ""
+
+    private func loadToolRouting() -> [String: Set<String>] {
+        guard !toolRoutingData.isEmpty,
+              let data = toolRoutingData.data(using: .utf8),
+              let dict = try? JSONDecoder().decode([String: [String]].self, from: data) else {
+            var map: [String: Set<String>] = [:]
+            for item in Self.toolRoutingDefaults {
+                map[item.tool] = Set(item.defaultAgents)
+            }
+            return map
+        }
+        return dict.mapValues { Set($0) }
+    }
+
+    private func saveToolRouting(_ map: [String: Set<String>]) {
+        let dict = map.mapValues { Array($0).sorted() }
+        if let data = try? JSONEncoder().encode(dict), let str = String(data: data, encoding: .utf8) {
+            toolRoutingData = str
+        }
+    }
+
+    private func isAgentEnabled(tool: String, agent: String) -> Bool {
+        loadToolRouting()[tool]?.contains(agent) ?? Self.toolRoutingDefaults.first(where: { $0.tool == tool })?.defaultAgents.contains(agent) ?? false
+    }
+
+    private func toggleAgent(tool: String, agent: String) {
+        var map = loadToolRouting()
+        var agents = map[tool] ?? Set(Self.toolRoutingDefaults.first(where: { $0.tool == tool })?.defaultAgents ?? [])
+        if agents.contains(agent) {
+            agents.remove(agent)
+        } else {
+            agents.insert(agent)
+        }
+        map[tool] = agents
+        saveToolRouting(map)
+    }
+
+    var toolRoutingSection: some View {
+        GlassCard(padding: 0, cornerRadius: 14) {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack {
+                    Label("Tool-Routing", systemImage: "arrow.triangle.swap")
+                        .font(.system(size: 14, weight: .semibold))
+                    Spacer()
+                    Text("\(Self.toolRoutingDefaults.count) Tools")
+                        .font(.caption).foregroundColor(.secondary)
+                }
+                .padding(14)
+
+                Divider()
+
+                // Header
+                HStack(spacing: 0) {
+                    Text("Tool").font(.system(size: 10, weight: .bold)).frame(width: 140, alignment: .leading)
+                    // Agent emoji headers
+                    HStack(spacing: 4) {
+                        ForEach(store.configs, id: \.id) { config in
+                            Text(config.emoji)
+                                .font(.system(size: 10))
+                                .frame(width: 24)
+                                .help(config.displayName)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    Text("Zweck").font(.system(size: 10, weight: .bold)).frame(width: 160, alignment: .leading)
+                }
+                .padding(.horizontal, 14).padding(.vertical, 6)
+                .background(Color.white.opacity(0.03))
+
+                ForEach(Self.toolRoutingDefaults, id: \.tool) { item in
+                    HStack(spacing: 0) {
+                        // Tool name + icon
+                        HStack(spacing: 6) {
+                            Image(systemName: item.icon)
+                                .font(.system(size: 10))
+                                .foregroundColor(.koboldCyan)
+                                .frame(width: 16)
+                            Text(item.tool)
+                                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        }
+                        .frame(width: 140, alignment: .leading)
+
+                        // Agent toggle badges — click to enable/disable
+                        HStack(spacing: 4) {
+                            ForEach(store.configs, id: \.id) { config in
+                                let enabled = isAgentEnabled(tool: item.tool, agent: config.id)
+                                Button(action: { toggleAgent(tool: item.tool, agent: config.id) }) {
+                                    Text(config.emoji)
+                                        .font(.system(size: 12))
+                                        .frame(width: 24, height: 24)
+                                        .background(RoundedRectangle(cornerRadius: 6)
+                                            .fill(enabled ? Color.koboldEmerald.opacity(0.25) : Color.white.opacity(0.04)))
+                                        .overlay(RoundedRectangle(cornerRadius: 6)
+                                            .stroke(enabled ? Color.koboldEmerald.opacity(0.5) : Color.clear, lineWidth: 1))
+                                        .saturation(enabled ? 1.0 : 0.0)
+                                        .opacity(enabled ? 1.0 : 0.3)
+                                }
+                                .buttonStyle(.plain)
+                                .help(enabled ? "\(config.displayName): aktiv" : "\(config.displayName): deaktiviert")
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                        // Reason
+                        Text(item.reason)
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                            .frame(width: 160, alignment: .leading)
+                    }
+                    .padding(.horizontal, 14).padding(.vertical, 5)
+                    Divider().padding(.leading, 14)
+                }
+            }
+        }
     }
 
     // MARK: - Sessions Table

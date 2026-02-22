@@ -106,7 +106,7 @@ public actor CoreMemory {
         b["capabilities"] = MemoryBlock(
             label: "capabilities",
             value: """
-            Du bist KoboldOS v0.2.3 — ein lokaler KI-Agent auf macOS.
+            Du bist KoboldOS v0.2.5 — ein lokaler KI-Agent auf macOS.
 
             DEINE TOOLS:
             - shell: Beliebige Terminal-Befehle (ls, git, python3, brew, curl, etc.)
