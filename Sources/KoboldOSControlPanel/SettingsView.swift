@@ -2030,7 +2030,7 @@ struct SettingsView: View {
                                 tunnelURL = ""
                             } else {
                                 let dPort = UserDefaults.standard.integer(forKey: "kobold.port")
-                                let dToken = UserDefaults.standard.string(forKey: "kobold.authToken") ?? ""
+                                let dToken = UserDefaults.standard.string(forKey: "kobold.authToken") ?? "kobold-secret"
                                 WebAppServer.shared.start(
                                     port: webAppPort,
                                     daemonPort: dPort == 0 ? 8080 : dPort,

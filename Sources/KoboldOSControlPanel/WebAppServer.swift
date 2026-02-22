@@ -236,15 +236,20 @@ final class WebAppServer: @unchecked Sendable {
     // MARK: - Proxy to Daemon
 
     private func proxyToDaemon(method: String, path: String, headers: [String: String], raw: String, conn: NWConnection, config: WebAppConfig) {
-        guard let url = URL(string: "http://localhost:\(config.daemonPort)\(path)") else {
+        // Read token dynamically (may have been regenerated since WebApp start)
+        let currentToken = UserDefaults.standard.string(forKey: "kobold.authToken") ?? config.daemonToken
+        let currentPort = UserDefaults.standard.integer(forKey: "kobold.port")
+        let port = currentPort > 0 ? currentPort : config.daemonPort
+
+        guard let url = URL(string: "http://localhost:\(port)\(path)") else {
             conn.cancel(); return
         }
 
         var req = URLRequest(url: url)
         req.httpMethod = method
-        req.setValue("Bearer \(config.daemonToken)", forHTTPHeaderField: "Authorization")
+        req.setValue("Bearer \(currentToken)", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.timeoutInterval = 300  // Agent calls can take up to 5 minutes
+        req.timeoutInterval = 300
 
         if let bodyStart = raw.range(of: "\r\n\r\n") {
             let bodyStr = String(raw[bodyStart.upperBound...])
@@ -859,7 +864,11 @@ final class WebAppServer: @unchecked Sendable {
         }
 
         async function api(path,opts={}){
-          const r=await fetch(API+path,{headers:{'Content-Type':'application/json'},...opts});
+          const r=await fetch(API+path,{credentials:'same-origin',headers:{'Content-Type':'application/json'},...opts});
+          if(!r.ok){
+            const text=await r.text().catch(()=>'');
+            throw new Error('HTTP '+r.status+(text?' — '+text:''));
+          }
           return r.json();
         }
         function esc(s){const d=document.createElement('div');d.textContent=s||'';return d.innerHTML}
@@ -904,8 +913,19 @@ final class WebAppServer: @unchecked Sendable {
           area.scrollTop=area.scrollHeight;
           lucide.createIcons();
 
+          // Timer to show elapsed time while waiting
+          let elapsed=0;
+          const timer=setInterval(()=>{
+            elapsed++;
+            const el=document.getElementById(tid);
+            if(el) el.innerHTML='<div class="typing-dots"><span></span><span></span><span></span></div>Denkt nach... ('+elapsed+'s)';
+          },1000);
+
           try{
-            const data=await api('/agent',{method:'POST',body:JSON.stringify({message:msg})});
+            const ctrl=new AbortController();
+            const timeout=setTimeout(()=>ctrl.abort(),300000); // 5min max
+            const data=await api('/agent',{method:'POST',body:JSON.stringify({message:msg}),signal:ctrl.signal});
+            clearTimeout(timeout);
             const el=document.getElementById(tid);
             const answer=data.output||data.error||'Keine Antwort';
             let tools='';
@@ -919,6 +939,7 @@ final class WebAppServer: @unchecked Sendable {
             const el=document.getElementById(tid);
             if(el) el.outerHTML='<div class="bubble bot error">Fehler: '+esc(e.message)+'</div>';
           }
+          clearInterval(timer);
           area.scrollTop=area.scrollHeight;
           isSending=false;
           document.getElementById('sendBtn').disabled=false;

@@ -187,8 +187,10 @@ class RuntimeViewModel: ObservableObject {
     }
 
     init() {
-        // Auto-generate auth token if not set
-        if storedToken.isEmpty {
+        // Ensure auth token is explicitly written to UserDefaults (not just @AppStorage default)
+        if UserDefaults.standard.string(forKey: "kobold.authToken") == nil {
+            storedToken = "kobold-secret"
+        } else if storedToken.isEmpty {
             storedToken = UUID().uuidString
         }
         loadChatHistory()
@@ -935,34 +937,27 @@ class RuntimeViewModel: ObservableObject {
     }
 
     func loadChatHistory() {
-        // Parse JSON off main thread to avoid blocking app startup
-        let url = historyURL
-        Task.detached(priority: .userInitiated) { [weak self] in
-            guard let data = try? Data(contentsOf: url),
-                  let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return }
-            let parsed: [ChatMessage] = arr.compactMap { item in
-                guard let kind = item["kind"] as? String else { return nil }
-                let text = item["text"] as? String ?? ""
-                let ts = Date(timeIntervalSince1970: item["ts"] as? Double ?? Date().timeIntervalSince1970)
-                switch kind {
-                case "user":      return ChatMessage(kind: .user(text: text), timestamp: ts)
-                case "assistant": return ChatMessage(kind: .assistant(text: text), timestamp: ts)
-                case "thinking":
-                    let entriesRaw = item["entries"] as? [[String: Any]] ?? []
-                    let entries: [ThinkingEntry] = entriesRaw.map { e in
-                        ThinkingEntry(
-                            type: ThinkingEntry.ThinkingEntryType(rawValue: e["type"] as? String ?? "thought") ?? .thought,
-                            content: e["content"] as? String ?? "",
-                            toolName: e["toolName"] as? String ?? "",
-                            success: e["success"] as? Bool ?? true
-                        )
-                    }
-                    return entries.isEmpty ? nil : ChatMessage(kind: .thinking(entries: entries), timestamp: ts)
-                default:          return nil
+        guard let data = try? Data(contentsOf: historyURL),
+              let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return }
+        messages = arr.compactMap { item in
+            guard let kind = item["kind"] as? String else { return nil }
+            let text = item["text"] as? String ?? ""
+            let ts = Date(timeIntervalSince1970: item["ts"] as? Double ?? Date().timeIntervalSince1970)
+            switch kind {
+            case "user":      return ChatMessage(kind: .user(text: text), timestamp: ts)
+            case "assistant": return ChatMessage(kind: .assistant(text: text), timestamp: ts)
+            case "thinking":
+                let entriesRaw = item["entries"] as? [[String: Any]] ?? []
+                let entries: [ThinkingEntry] = entriesRaw.map { e in
+                    ThinkingEntry(
+                        type: ThinkingEntry.ThinkingEntryType(rawValue: e["type"] as? String ?? "thought") ?? .thought,
+                        content: e["content"] as? String ?? "",
+                        toolName: e["toolName"] as? String ?? "",
+                        success: e["success"] as? Bool ?? true
+                    )
                 }
-            }
-            await MainActor.run { [weak self] in
-                self?.messages = parsed
+                return entries.isEmpty ? nil : ChatMessage(kind: .thinking(entries: entries), timestamp: ts)
+            default:          return nil
             }
         }
     }

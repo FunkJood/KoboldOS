@@ -43,7 +43,7 @@ class RuntimeManager: ObservableObject {
         guard daemonTask == nil else { return }
 
         let listenPort = port
-        let token = "kobold-secret"
+        let token = UserDefaults.standard.string(forKey: "kobold.authToken") ?? "kobold-secret"
 
         daemonTask = Task.detached(priority: .background) {
             let daemon = DaemonListener(port: listenPort, authToken: token)
