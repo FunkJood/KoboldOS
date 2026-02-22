@@ -12,6 +12,7 @@ public actor DaemonListener {
     private var chatRequests = 0
     private var toolCalls = 0
     private var errors = 0
+    private var tokensTotal = 0
     private var startTime = Date()
 
     // Latency tracking
@@ -185,7 +186,7 @@ public actor DaemonListener {
         case "/health":
             return jsonOK([
                 "status": "ok",
-                "version": "0.2.1",
+                "version": "0.2.2",
                 "pid": Int(ProcessInfo.processInfo.processIdentifier),
                 "uptime": Int(Date().timeIntervalSince(startTime))
             ])
@@ -206,6 +207,7 @@ public actor DaemonListener {
                 "chat_requests": chatRequests,
                 "tool_calls": toolCalls,
                 "errors": errors,
+                "tokens_total": tokensTotal,
                 "uptime": Int(Date().timeIntervalSince(startTime)),
                 "avg_latency_ms": round(averageLatencyMs * 100) / 100,
                 "backend": "ollama",
@@ -213,7 +215,7 @@ public actor DaemonListener {
             ])
 
         case "/metrics/reset":
-            chatRequests = 0; toolCalls = 0; errors = 0; startTime = Date(); latencySamples = []
+            chatRequests = 0; toolCalls = 0; errors = 0; tokensTotal = 0; startTime = Date(); latencySamples = []
             return jsonOK(["ok": true])
 
         case "/memory":
@@ -227,15 +229,27 @@ public actor DaemonListener {
         case "/memory/update":
             guard method == "POST", let body else { return jsonError("No body") }
             if let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
-               let label = json["label"] as? String,
-               let content = json["content"] as? String {
+               let label = json["label"] as? String {
                 if let agent = agentLoop {
-                    await agent.coreMemory.upsert(MemoryBlock(label: label, value: content))
+                    let isDelete = json["delete"] as? Bool ?? false
+                    if isDelete {
+                        try? await agent.coreMemory.clear(label: label)
+                        addTrace(event: "Gedächtnis", detail: "Gelöscht: \(label)")
+                    } else if let content = json["content"] as? String {
+                        let limit = json["limit"] as? Int ?? 2000
+                        await agent.coreMemory.upsert(MemoryBlock(label: label, value: content, limit: limit))
+                        addTrace(event: "Gedächtnis", detail: "Aktualisiert: \(label)")
+                    }
                 }
-                addTrace(event: "Gedächtnis", detail: "Aktualisiert: \(label)")
                 return jsonOK(["ok": true])
             }
             return jsonError("Invalid body")
+
+        case "/memory/flush":
+            if let agent = agentLoop {
+                await agent.coreMemory.flush()
+            }
+            return jsonOK(["ok": true, "msg": "Memory flushed to disk"])
 
         case "/memory/snapshot":
             return jsonOK(["ok": true, "msg": "Snapshot created"])
@@ -681,13 +695,14 @@ public actor DaemonListener {
     private func buildAgentCard() -> [String: Any] {
         [
             "name": "KoboldOS",
-            "version": "0.2.1",
+            "version": "0.2.2",
             "description": "Native macOS AI Agent Runtime — local-first, privacy-focused",
             "capabilities": [
                 "streaming": true,
                 "tools": ["shell", "file", "browser", "http", "applescript", "notify_user", "calculator",
                           "core_memory_read", "core_memory_append", "core_memory_replace",
                           "archival_memory_search", "archival_memory_insert",
+                          "calendar", "contacts",
                           "call_subordinate", "delegate_parallel"],
                 "agent_types": ["general", "coder", "researcher", "planner", "instructor"],
                 "memory": true,

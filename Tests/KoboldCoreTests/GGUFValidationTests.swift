@@ -318,6 +318,9 @@ final class FileToolExecutionTests: XCTestCase {
     }
 
     func testWriteAndReadFile() async throws {
+        // Enable delete permission for test
+        UserDefaults.standard.set(true, forKey: "kobold.perm.deleteFiles")
+        defer { UserDefaults.standard.removeObject(forKey: "kobold.perm.deleteFiles") }
         let tool = FileTool()
         let testPath = "~/Documents/__kobold_test_\(UUID().uuidString).txt"
         let content = "KoboldOS test content \(Date())"

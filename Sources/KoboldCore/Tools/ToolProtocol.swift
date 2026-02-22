@@ -139,6 +139,14 @@ public enum ToolError: Error, LocalizedError, Sendable {
     }
 }
 
+// MARK: - Permission Helper
+
+/// Check a UserDefaults permission key. Returns true if not set (default: enabled) or if explicitly true.
+public func permissionEnabled(_ key: String, defaultValue: Bool = true) -> Bool {
+    if UserDefaults.standard.object(forKey: key) == nil { return defaultValue }
+    return UserDefaults.standard.bool(forKey: key)
+}
+
 // MARK: - Tool Permission
 
 public enum ToolPermission: String, Codable, Sendable {

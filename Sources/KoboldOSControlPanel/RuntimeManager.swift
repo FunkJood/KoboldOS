@@ -29,6 +29,7 @@ class RuntimeManager: ObservableObject {
     private var daemonTask: Task<Void, Never>? = nil
     private var healthTimer: Timer?
     private var cancellables = Set<AnyCancellable>()
+    private var didPlayBootSound = false
 
     private init() {
         startHealthMonitor()
@@ -83,7 +84,9 @@ class RuntimeManager: ObservableObject {
     private func pingHealth() async {
         guard let url = URL(string: baseURL + "/health") else { return }
         do {
-            let (data, resp) = try await URLSession.shared.data(from: url)
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 3
+            let (data, resp) = try await URLSession.shared.data(for: request)
             guard (resp as? HTTPURLResponse)?.statusCode == 200 else {
                 healthStatus = "Error"; return
             }
@@ -105,6 +108,10 @@ class RuntimeManager: ObservableObject {
             }
             healthStatus = "OK"
             MenuBarController.shared.updateStatusIcon(healthy: true)
+            if !didPlayBootSound {
+                didPlayBootSound = true
+                SoundManager.shared.play(.boot)
+            }
         } catch {
             MenuBarController.shared.updateStatusIcon(healthy: false)
             if daemonTask != nil {

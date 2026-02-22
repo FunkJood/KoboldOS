@@ -106,7 +106,7 @@ public actor CoreMemory {
         b["capabilities"] = MemoryBlock(
             label: "capabilities",
             value: """
-            Du bist KoboldOS v0.2.1 — ein lokaler KI-Agent auf macOS.
+            Du bist KoboldOS v0.2.2 — ein lokaler KI-Agent auf macOS.
 
             DEINE TOOLS:
             - shell: Beliebige Terminal-Befehle (ls, git, python3, brew, curl, etc.)
@@ -114,11 +114,16 @@ public actor CoreMemory {
             - browser: Webseiten abrufen (fetch) und im Web suchen (search)
             - calculator: Mathematische Berechnungen
             - core_memory_append/replace/read: Dein eigenes Gedächtnis verwalten
+            - archival_memory_search/insert: Langzeit-Archiv durchsuchen/erweitern
             - skill_write: Skills erstellen/verwalten (.md Dateien die dein Verhalten erweitern)
             - task_manage: Geplante Aufgaben erstellen und verwalten (cron-artig)
             - workflow_manage: Workflow-Definitionen erstellen
             - call_subordinate: Sub-Agenten delegieren (coder, researcher, planner, reviewer)
             - delegate_parallel: Mehrere Sub-Agenten gleichzeitig starten
+            - calendar: Apple Kalender-Events und Erinnerungen verwalten
+            - contacts: Apple Kontakte durchsuchen und lesen
+            - applescript: macOS-Apps steuern (Safari, Mail, Messages, Notizen, Finder)
+            - notify_user: macOS Push-Benachrichtigungen senden
 
             DU KANNST:
             - Code schreiben und ausführen (Python, Swift, JS, Shell-Scripts)
@@ -128,6 +133,10 @@ public actor CoreMemory {
             - Systeminformationen abfragen (df, top, uname, etc.)
             - Aufgaben planen und automatisieren
             - Komplexe Aufgaben an Spezialisten-Agenten delegieren
+            - Kalender-Termine erstellen und lesen
+            - Kontakte durchsuchen, Emails senden/lesen
+            - macOS steuern (Lautstärke, Screenshots, Apps öffnen, Finder)
+            - Erinnerungen erstellen und verwalten
             """,
             limit: 2000,
             description: "What the agent can do — read-only reference.",
@@ -164,6 +173,9 @@ public actor CoreMemory {
     // MARK: - Agent-Callable Operations (Letta-style memory tools)
 
     public func append(label: String, content: String) throws {
+        guard permissionEnabled("kobold.perm.modifyMemory") else {
+            throw BlockMemoryError.blockReadOnly("Gedächtnis-Änderungen sind in den Einstellungen deaktiviert")
+        }
         guard var block = blocks[label] else {
             throw BlockMemoryError.blockNotFound(label)
         }
@@ -180,6 +192,9 @@ public actor CoreMemory {
     }
 
     public func replace(label: String, oldContent: String, newContent: String) throws {
+        guard permissionEnabled("kobold.perm.modifyMemory") else {
+            throw BlockMemoryError.blockReadOnly("Gedächtnis-Änderungen sind in den Einstellungen deaktiviert")
+        }
         guard var block = blocks[label] else {
             throw BlockMemoryError.blockNotFound(label)
         }
@@ -216,7 +231,32 @@ public actor CoreMemory {
         save()
     }
 
+    // MARK: - Memory Inheritance (for sub-agents)
+
+    /// Inherit read-only copies of key blocks from a parent agent's memory.
+    /// Sub-agents get persona, human, and knowledge context so they know who they're working for.
+    public func inheritFrom(_ parent: CoreMemory) async {
+        let parentBlocks = await parent.allBlocks()
+        let inheritLabels = ["persona", "human", "knowledge", "capabilities"]
+        for block in parentBlocks where inheritLabels.contains(block.label) {
+            // Import as read-only so sub-agent can see but not modify parent's memory
+            blocks[block.label] = MemoryBlock(
+                id: block.id,
+                label: block.label,
+                value: block.value,
+                limit: block.limit,
+                description: block.description + " (geerbt)",
+                readOnly: true
+            )
+        }
+    }
+
     // MARK: - Persistence
+
+    /// Flush memory blocks to disk immediately (called on app shutdown)
+    public func flush() {
+        save()
+    }
 
     private func save() {
         let data = blocks.values

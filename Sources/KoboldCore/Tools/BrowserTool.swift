@@ -77,6 +77,9 @@ public struct BrowserTool: Tool, Sendable {
     }
 
     public func execute(arguments: [String: String]) async throws -> String {
+        guard permissionEnabled("kobold.perm.network") else {
+            throw ToolError.unauthorized("Netzwerkzugriff ist in den Einstellungen deaktiviert.")
+        }
         let action = arguments["action"] ?? ""
         let timeoutStr = arguments["timeout"] ?? "15"
         let timeout = min(Double(timeoutStr) ?? 15.0, 60.0)

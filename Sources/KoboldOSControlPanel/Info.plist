@@ -7,9 +7,9 @@
     <key>CFBundleIdentifier</key>
     <string>com.koboldos.controlpanel</string>
     <key>CFBundleVersion</key>
-    <string>0.1.7</string>
+    <string>0.2.2</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.1.7</string>
+    <string>0.2.2</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleExecutable</key>
@@ -24,5 +24,23 @@
     <string>Copyright © 2026 KoboldOS. All rights reserved.</string>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
+
+    <!-- Privacy Permission Descriptions -->
+    <key>NSCalendarsUsageDescription</key>
+    <string>KoboldOS benötigt Zugriff auf deinen Kalender um Termine zu erstellen, lesen und verwalten.</string>
+    <key>NSCalendarsFullAccessUsageDescription</key>
+    <string>KoboldOS benötigt vollen Kalender-Zugriff um Termine zu erstellen und zu verwalten.</string>
+    <key>NSRemindersUsageDescription</key>
+    <string>KoboldOS benötigt Zugriff auf Erinnerungen um Aufgaben zu erstellen und zu verwalten.</string>
+    <key>NSRemindersFullAccessUsageDescription</key>
+    <string>KoboldOS benötigt vollen Zugriff auf Erinnerungen um sie zu erstellen und zu verwalten.</string>
+    <key>NSContactsUsageDescription</key>
+    <string>KoboldOS benötigt Zugriff auf deine Kontakte um Namen, Nummern und E-Mail-Adressen zu finden.</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>KoboldOS benötigt AppleScript-Zugriff um macOS-Apps wie Mail, Messages, Safari und Finder zu steuern.</string>
+    <key>NSAppleScriptEnabled</key>
+    <true/>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>KoboldOS benötigt lokalen Netzwerkzugriff für den Daemon-Server und die WebApp-Fernsteuerung.</string>
 </dict>
 </plist>

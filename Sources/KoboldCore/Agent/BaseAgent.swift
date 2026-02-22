@@ -19,14 +19,14 @@ open class BaseAgent: @unchecked Sendable, AgentEndpoint {
     public func start() async {
         isActive = true
         await messageBus.registerAgent(id: id, endpoint: self)
-        print("Agent \(name) (\(id)) started")
+        // Agent started
     }
 
     /// Stop the agent
     public func stop() async {
         isActive = false
         await messageBus.unregisterAgent(id: id)
-        print("Agent \(name) (\(id)) stopped")
+        // Agent stopped
     }
 
     /// Add a capability to the agent
@@ -73,7 +73,7 @@ open class BaseAgent: @unchecked Sendable, AgentEndpoint {
             throw AgentError.agentNotActive
         }
 
-        print("Agent \(name) received message from \(message.sender): \(message.content)")
+        // Message received, process via handler
 
         // Handle the message based on its type
         if let handler = messageHandlers[message.messageType] {

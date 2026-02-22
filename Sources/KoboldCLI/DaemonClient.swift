@@ -15,7 +15,7 @@ struct DaemonClient: Sendable {
     // MARK: - GET
 
     func get(_ path: String) async throws -> [String: Any] {
-        let url = URL(string: "\(baseURL)\(path)")!
+        guard let url = URL(string: "\(baseURL)\(path)") else { throw DaemonClientError.invalidResponse }
         var req = URLRequest(url: url)
         req.httpMethod = "GET"
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -38,7 +38,7 @@ struct DaemonClient: Sendable {
     // MARK: - POST
 
     func post(_ path: String, body: [String: Any]) async throws -> [String: Any] {
-        let url = URL(string: "\(baseURL)\(path)")!
+        guard let url = URL(string: "\(baseURL)\(path)") else { throw DaemonClientError.invalidResponse }
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")

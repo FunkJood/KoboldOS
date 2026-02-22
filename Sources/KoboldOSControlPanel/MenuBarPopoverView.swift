@@ -293,7 +293,7 @@ struct MenuBarPopoverView: View {
                 .font(.system(size: 9))
                 .foregroundColor(.secondary.opacity(0.6))
             Spacer()
-            Text("v0.2.1")
+            Text("v0.2.2")
                 .font(.system(size: 9))
                 .foregroundColor(.secondary.opacity(0.4))
         }

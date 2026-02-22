@@ -39,6 +39,8 @@ public struct DelegateTaskTool: Tool, Sendable {
 
     /// Provider config inherited from the parent agent, so sub-agents use the same backend
     public var providerConfig: LLMProviderConfig?
+    /// Parent agent's CoreMemory for inheritance
+    public var parentMemory: CoreMemory?
 
     public var schema: ToolSchema {
         ToolSchema(
@@ -63,8 +65,9 @@ public struct DelegateTaskTool: Tool, Sendable {
         )
     }
 
-    public init(providerConfig: LLMProviderConfig? = nil) {
+    public init(providerConfig: LLMProviderConfig? = nil, parentMemory: CoreMemory? = nil) {
         self.providerConfig = providerConfig
+        self.parentMemory = parentMemory
     }
 
     public func validate(arguments: [String: String]) throws {
@@ -90,6 +93,10 @@ public struct DelegateTaskTool: Tool, Sendable {
             subAgent = existing
         } else {
             subAgent = AgentLoop(agentID: "sub-\(profile)")
+            // Inherit parent memory so sub-agent knows context
+            if let parent = parentMemory {
+                await subAgent.coreMemory.inheritFrom(parent)
+            }
             await SubAgentCache.shared.set(profile, agent: subAgent)
         }
 
@@ -137,6 +144,8 @@ public struct DelegateParallelTool: Tool, Sendable {
 
     /// Provider config inherited from the parent agent
     public var providerConfig: LLMProviderConfig?
+    /// Parent agent's CoreMemory for inheritance
+    public var parentMemory: CoreMemory?
 
     public var schema: ToolSchema {
         ToolSchema(
@@ -151,8 +160,9 @@ public struct DelegateParallelTool: Tool, Sendable {
         )
     }
 
-    public init(providerConfig: LLMProviderConfig? = nil) {
+    public init(providerConfig: LLMProviderConfig? = nil, parentMemory: CoreMemory? = nil) {
         self.providerConfig = providerConfig
+        self.parentMemory = parentMemory
     }
 
     public func validate(arguments: [String: String]) throws {
@@ -173,6 +183,7 @@ public struct DelegateParallelTool: Tool, Sendable {
         }
 
         let parentConfig = self.providerConfig
+        let parentMem = self.parentMemory
 
         // Run all tasks in parallel using TaskGroup
         let results = await withTaskGroup(of: (Int, String, String).self, returning: [(Int, String, String)].self) { group in
@@ -183,6 +194,10 @@ public struct DelegateParallelTool: Tool, Sendable {
                 group.addTask {
                     let agentType = SubAgentProfile.agentType(for: profile)
                     let subAgent = AgentLoop(agentID: "parallel-\(profile)-\(index)")
+                    // Inherit parent memory
+                    if let parent = parentMem {
+                        await subAgent.coreMemory.inheritFrom(parent)
+                    }
                     do {
                         let result = try await subAgent.run(userMessage: message, agentType: agentType, providerConfig: parentConfig)
                         return (index, profile, result.finalOutput)

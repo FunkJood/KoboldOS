@@ -125,9 +125,12 @@ public actor AgentLoop {
         // New tools
         await registry.register(NotifyTool())
         await registry.register(AppleScriptTool())
-        // Sub-agent delegation (AgentZero-style call_subordinate) — pass provider config
-        await registry.register(DelegateTaskTool(providerConfig: providerConfig))
-        await registry.register(DelegateParallelTool(providerConfig: providerConfig))
+        // Apple Integration tools
+        await registry.register(CalendarTool())
+        await registry.register(ContactsTool())
+        // Sub-agent delegation (AgentZero-style call_subordinate) — pass provider config + parent memory
+        await registry.register(DelegateTaskTool(providerConfig: providerConfig, parentMemory: coreMemory))
+        await registry.register(DelegateParallelTool(providerConfig: providerConfig, parentMemory: coreMemory))
     }
 
     // MARK: - Configuration
@@ -195,8 +198,8 @@ public actor AgentLoop {
         var steps: [AgentStep] = []
         ruleEngine.reset()
 
+        // Cache static parts of system prompt (don't rebuild every step)
         let toolDescriptions = buildToolDescriptions()
-        let compiledMemory = await coreMemory.compile()
         let skillsPrompt = await SkillLoader.shared.enabledSkillsPrompt()
         let autonomyLevel = UserDefaults.standard.integer(forKey: "kobold.autonomyLevel")
         let selfCheckEnabled = UserDefaults.standard.bool(forKey: "kobold.perm.selfCheck")
@@ -217,6 +220,8 @@ public actor AgentLoop {
         Nutze archival_memory_search um archivierte Informationen wieder zu finden.
         """
 
+        // Build initial system prompt with current memory
+        let compiledMemory = await coreMemory.compile()
         let sysPrompt = buildSystemPrompt(toolDescriptions: toolDescriptions, compiledMemory: compiledMemory) + skillsPrompt + selfCheckPrompt + confidencePrompt + archivalPrompt
 
         var messages: [[String: String]] = [
@@ -225,6 +230,13 @@ public actor AgentLoop {
         ]
 
         for stepCount in 1...agentType.stepLimit {
+            // Refresh memory in system prompt every step (agent sees its own updates)
+            let freshMemory = await coreMemory.compile()
+            if freshMemory != compiledMemory {
+                let freshPrompt = buildSystemPrompt(toolDescriptions: toolDescriptions, compiledMemory: freshMemory) + skillsPrompt + selfCheckPrompt + confidencePrompt + archivalPrompt
+                messages[0] = ["role": "system", "content": freshPrompt]
+            }
+
             // Prune old messages to prevent context window overflow on long tasks
             pruneMessages(&messages)
 
@@ -454,9 +466,32 @@ public actor AgentLoop {
         }
     }
 
+    // MARK: - Memory Settings (read from UserDefaults, set by SettingsView)
+
+    private var isMemoryAutosaveEnabled: Bool {
+        if UserDefaults.standard.object(forKey: "kobold.memory.autosave") == nil { return true }
+        return UserDefaults.standard.bool(forKey: "kobold.memory.autosave")
+    }
+
+    private var isMemoryMemorizeEnabled: Bool {
+        if UserDefaults.standard.object(forKey: "kobold.memory.memorizeEnabled") == nil { return true }
+        return UserDefaults.standard.bool(forKey: "kobold.memory.memorizeEnabled")
+    }
+
+    private var isMemoryConsolidationEnabled: Bool {
+        if UserDefaults.standard.object(forKey: "kobold.memory.consolidation") == nil { return true }
+        return UserDefaults.standard.bool(forKey: "kobold.memory.consolidation")
+    }
+
+    private var memoryMaxSearchResults: Int {
+        let v = UserDefaults.standard.integer(forKey: "kobold.memory.maxResults")
+        return v > 0 ? v : 5
+    }
+
     // MARK: - Memory Auto-Commit & Archival
 
     private func autoCommitMemory(message: String) async {
+        guard isMemoryAutosaveEnabled else { return }
         let blocks = await coreMemory.allBlocks()
         var blockMap: [String: String] = [:]
         for b in blocks { blockMap[b.label] = b.value }
@@ -464,6 +499,7 @@ public actor AgentLoop {
     }
 
     private func checkAndArchiveOverflow() async {
+        guard isMemoryAutosaveEnabled else { return }
         let blocks = await coreMemory.allBlocks()
         for block in blocks where !block.readOnly && block.usagePercent > 0.8 {
             // Archive the oldest 50% of content
@@ -499,16 +535,25 @@ public actor AgentLoop {
                 ruleEngine.reset()
 
                 let toolDescriptions = buildToolDescriptions()
-                let compiledMemory = await coreMemory.compile()
                 let skillsPrompt = await SkillLoader.shared.enabledSkillsPrompt()
-                let sysPrompt = buildSystemPrompt(toolDescriptions: toolDescriptions, compiledMemory: compiledMemory) + skillsPrompt
+                let initialMemory = await coreMemory.compile()
+                let sysPrompt = buildSystemPrompt(toolDescriptions: toolDescriptions, compiledMemory: initialMemory) + skillsPrompt
 
                 var messages: [[String: String]] = [
                     ["role": "system", "content": sysPrompt],
                     ["role": "user", "content": userMessage]
                 ]
+                var lastMemorySnapshot = initialMemory
 
                 for stepCount in 1...agentType.stepLimit {
+                    // Refresh memory in system prompt if it changed (agent sees own updates)
+                    let freshMemory = await coreMemory.compile()
+                    if freshMemory != lastMemorySnapshot {
+                        lastMemorySnapshot = freshMemory
+                        let freshPrompt = buildSystemPrompt(toolDescriptions: toolDescriptions, compiledMemory: freshMemory) + skillsPrompt
+                        messages[0] = ["role": "system", "content": freshPrompt]
+                    }
+
                     // Prune old messages to prevent context window overflow on long tasks
                     self.pruneMessages(&messages)
 
@@ -816,8 +861,25 @@ public actor AgentLoop {
         {"tool_name": "notify_user", "tool_args": {"title": "Aufgabe erledigt", "body": "Die Datei wurde erfolgreich erstellt."}}
         ```
 
+        ### calendar
+        Kalender-Events und Erinnerungen verwalten (Apple EventKit).
+        ```json
+        {"tool_name": "calendar", "tool_args": {"action": "list_events", "days": 7}}
+        {"tool_name": "calendar", "tool_args": {"action": "create_event", "title": "Meeting mit Team", "start": "2026-02-23T14:00:00", "end": "2026-02-23T15:00:00", "location": "Büro"}}
+        {"tool_name": "calendar", "tool_args": {"action": "search_events", "query": "Zahnarzt"}}
+        {"tool_name": "calendar", "tool_args": {"action": "list_reminders"}}
+        {"tool_name": "calendar", "tool_args": {"action": "create_reminder", "title": "Einkaufen gehen", "notes": "Milch, Brot, Käse"}}
+        ```
+
+        ### contacts
+        Kontakte durchsuchen (Apple Contacts).
+        ```json
+        {"tool_name": "contacts", "tool_args": {"action": "search", "query": "Tim"}}
+        {"tool_name": "contacts", "tool_args": {"action": "list_recent"}}
+        ```
+
         ### applescript
-        Steuere macOS-Apps (Safari, Messages, Mail) via AppleScript.
+        Steuere macOS-Apps (Safari, Messages, Mail, Notizen) via AppleScript.
         ```json
         {"tool_name": "applescript", "tool_args": {"app": "safari", "action": "open_url", "params": "{\\"url\\": \\"https://example.com\\"}"}}
         {"tool_name": "applescript", "tool_args": {"app": "safari", "action": "get_tabs"}}
@@ -825,6 +887,13 @@ public actor AgentLoop {
         {"tool_name": "applescript", "tool_args": {"app": "messages", "action": "read_recent", "params": "{\\"count\\": \\"5\\"}"}}
         {"tool_name": "applescript", "tool_args": {"app": "mail", "action": "send_email", "params": "{\\"to\\": \\"test@example.com\\", \\"subject\\": \\"Betreff\\", \\"body\\": \\"Inhalt\\"}"}}
         {"tool_name": "applescript", "tool_args": {"app": "mail", "action": "read_inbox", "params": "{\\"count\\": \\"5\\"}"}}
+        ```
+
+        Für Apple Notizen und Mail nutze AppleScript direkt über das shell-Tool:
+        ```json
+        {"tool_name": "shell", "tool_args": {"command": "osascript -e 'tell application \\"Notes\\" to get name of every note of default account'"}}
+        {"tool_name": "shell", "tool_args": {"command": "osascript -e 'tell application \\"Notes\\" to get body of note \\"Einkaufsliste\\" of default account'"}}
+        {"tool_name": "shell", "tool_args": {"command": "osascript -e 'tell application \\"Notes\\" to tell default account to make new note at folder \\"Notizen\\" with properties {name:\\"Titel\\", body:\\"Inhalt\\"}'"}}
         ```
         """
     }
@@ -838,11 +907,63 @@ public actor AgentLoop {
         \(compiledMemory)
         """
 
+        // Agent personality from settings
+        let soul = UserDefaults.standard.string(forKey: "kobold.agent.soul") ?? ""
+        let personality = UserDefaults.standard.string(forKey: "kobold.agent.personality") ?? ""
+        let tone = UserDefaults.standard.string(forKey: "kobold.agent.tone") ?? "freundlich"
+        let agentLang = UserDefaults.standard.string(forKey: "kobold.agent.language") ?? "deutsch"
+        let verbosity = UserDefaults.standard.double(forKey: "kobold.agent.verbosity")
+
+        let memoryPolicy = UserDefaults.standard.string(forKey: "kobold.agent.memoryPolicy") ?? "auto"
+        let behaviorRules = UserDefaults.standard.string(forKey: "kobold.agent.behaviorRules") ?? ""
+
+        let personalitySection = (soul.isEmpty && personality.isEmpty) ? "" : """
+
+        ## Persönlichkeit
+        \(soul.isEmpty ? "" : "Kernidentität: \(soul)")
+        \(personality.isEmpty ? "" : "Verhaltensstil: \(personality)")
+        Tonfall: \(tone)
+        Ausführlichkeit: \(verbosity > 0.7 ? "ausführlich" : verbosity < 0.3 ? "kurz und knapp" : "normal")
+        """
+
+        let memoryPolicySection: String = {
+            switch memoryPolicy {
+            case "auto":
+                return "\n## Gedächtnis-Richtlinie\nSpeichere automatisch wichtige Fakten über den Nutzer und gelernte Lösungen in deinem Gedächtnis. Du MUSST aktiv core_memory_append/replace nutzen."
+            case "ask":
+                return "\n## Gedächtnis-Richtlinie\nFrage den Nutzer IMMER bevor du etwas ins Gedächtnis schreibst. Sage z.B. 'Soll ich mir merken, dass...?'"
+            case "manual":
+                return "\n## Gedächtnis-Richtlinie\nSchreibe NICHTS eigenständig ins Gedächtnis. Nur wenn der Nutzer explizit sagt 'Merk dir...' oder 'Speichere...'."
+            case "disabled":
+                return "\n## Gedächtnis-Richtlinie\nGedächtnis ist deaktiviert. Benutze KEINE Memory-Tools."
+            default:
+                return ""
+            }
+        }()
+
+        let behaviorRulesSection = behaviorRules.isEmpty ? "" : """
+
+        ## Verhaltensregeln (vom Nutzer definiert — IMMER befolgen!)
+        \(behaviorRules)
+        """
+
         return """
         Du bist KoboldOS, ein KI-Agent auf macOS mit echten Tools.
-        Du antwortest auf Deutsch.
+        Du antwortest auf \(agentLang == "auto" ? "der Sprache des Nutzers" : agentLang.isEmpty ? "Deutsch" : agentLang.capitalized).
+        Dein Kommunikationsstil ist \(tone).
         Standard-Arbeitsverzeichnis: \(UserDefaults.standard.string(forKey: "kobold.defaultWorkDir") ?? "~/Documents/KoboldOS")
         Nutze dieses Verzeichnis wenn der Nutzer neue Projekte oder Dateien erstellt und keinen Pfad angibt.
+        \(personalitySection)\(memoryPolicySection)\(behaviorRulesSection)
+
+        # ABSOLUTE GRUNDREGEL — NIEMALS AUFGEBEN
+        - Du sagst NIEMALS "das kann ich nicht", "das ist mir nicht möglich", "das geht leider nicht" oder ähnliches.
+        - Du hast eine vollständige macOS-Shell. Damit kannst du ALLES was ein Terminal kann: Programme installieren, Code ausführen, Dateien verwalten, Netzwerk-Anfragen senden, und mehr.
+        - Wenn du nicht weißt wie etwas geht: benutze shell mit `man <befehl>`, `<befehl> --help`, oder suche im Web.
+        - Wenn ein Weg fehlschlägt: probiere einen anderen. Es gibt IMMER einen Weg.
+        - Du kannst Python, Swift, JavaScript, Shell-Scripts schreiben und sofort ausführen.
+        - Du kannst mit brew, pip, npm Pakete installieren wenn nötig.
+        - Du kannst AppleScript nutzen um macOS-Apps zu steuern (Finder, Safari, Mail, Notes, Messages, etc.)
+        - Dein Motto: "Ich finde einen Weg." — Nicht "Das geht nicht."
 
         # Kommunikationsformat
         Du antwortest IMMER als JSON-Objekt. Kein Text vor oder nach dem JSON.
@@ -857,44 +978,59 @@ public actor AgentLoop {
         ```
 
         # Regeln
-        1. JEDE Antwort ist ein JSON-Objekt mit thoughts, tool_name, tool_args
+        1. JEDE Antwort ist ein JSON-Objekt mit thoughts, tool_name, tool_args — das ist dein INTERNES Format, der Nutzer sieht es NICHT
         2. Kein Text außerhalb des JSON erlaubt
-        3. Um dem Nutzer zu antworten: benutze das "response" Tool
+        3. Um dem Nutzer zu antworten: benutze IMMER das "response" Tool — das ist der EINZIGE Weg wie der Nutzer dich hört
         4. Um Aufgaben auszuführen: benutze das passende Tool
         5. Pro Antwort EIN Tool, dann warte auf das Ergebnis
-        6. DREISTUFIGES GEDÄCHTNIS — Du hast 3 Memory-Blöcke die du aktiv verwalten musst:
+        WICHTIG: JSON ist dein internes Denkformat. Der Nutzer sieht NUR die Ausgabe des "response" Tools. Zeige ihm NIEMALS JSON, Fehlercodes oder technische Meldungen direkt.
+        6. DREISTUFIGES GEDÄCHTNIS — Du hast 3 Memory-Blöcke die du aktiv verwalten MUSST:
 
-           ▸ "human" (Langzeit) — Permanente Fakten über den Nutzer:
-             Name, Beruf, Wohnort, Alter, Sprachen, Vorlieben, Anweisungen.
-             → Speichere hier was sich NICHT ändert.
+           ▸ "human" (LANGZEIT) — Permanente Informationen über Nutzer UND dich selbst:
+             - Über den Nutzer: Name, Beruf, Wohnort, Alter, Sprachen, Vorlieben, Anweisungen, Gewohnheiten
+             - Über dich selbst: Dein Name, deine Persönlichkeit, wie der Nutzer dich nennt
+             - Beziehung: Kommunikationsstil, Anrede, spezielle Wünsche
+             → DAUERHAFT. Ändert sich selten. Nur mit core_memory_replace aktualisieren.
 
-           ▸ "short_term" (Kurzzeit) — Aktueller Sitzungskontext:
-             Was gerade bearbeitet wird, aktuelle Dateipfade, laufende Aufgaben.
-             → Überschreibe/lösche wenn sich der Kontext ändert.
+           ▸ "short_term" (KURZZEIT) — Flüchtiger Sitzungskontext:
+             - Aktuelles Gesprächsthema, laufende Dateipfade, temporäre Notizen
+             - Unwichtige Gesprächsfragmente, Smalltalk, Zwischenergebnisse
+             - Alles was nach der Sitzung irrelevant wird
+             → TEMPORÄR. Regelmäßig überschreiben/löschen wenn Thema wechselt.
 
-           ▸ "knowledge" (Wissen) — Gelernte Lösungen und Muster:
-             Code-Snippets die funktioniert haben, API-Endpoints, Troubleshooting-Schritte.
-             → Speichere hier was für ZUKÜNFTIGE Aufgaben nützlich ist.
+           ▸ "knowledge" (WISSEN) — Gelerntes Wissen und funktionierende Lösungen:
+             - Code-Snippets die funktioniert haben (z.B. "Swift: URLSession timeout setzen: request.timeoutInterval = 30")
+             - Troubleshooting-Schritte (z.B. "Ollama startet nicht → brew services restart ollama")
+             - API-Endpoints, Konfigurationen, Pfade die wieder gebraucht werden
+             - Schulbuchwissen, Fakten, Definitionen die der Nutzer lernen wollte
+             - Funktionierende Befehle und Workflows
+             - Skills und Fähigkeiten die du gelernt hast
+             → PERMANENT. Wächst über die Zeit. Ist dein Wissensspeicher für die Zukunft.
 
-           WANN SPEICHERN:
-           - "Ich heiße...", "Ich bin...", "Mein Name ist..." → human
-           - "Ich mag...", "Ich bevorzuge...", "Du sollst..." → human
-           - "Ich arbeite gerade an...", "Öffne mal..." → short_term
-           - Wenn du eine Lösung findest die wiederverwendbar ist → knowledge
+           ENTSCHEIDUNGSBAUM — Was gehört wohin?
+           - Nutzer sagt etwas über SICH ("Ich heiße...", "Ich mag...", "Ich bin...") → human
+           - Nutzer sagt etwas über DICH ("Du heißt...", "Nenn dich...", "Sei immer...") → human
+           - Nutzer gibt DAUERHAFTE Anweisung ("Antworte immer auf Deutsch") → human
+           - Nutzer arbeitet GERADE an etwas ("Öffne mal...", aktueller Task) → short_term
+           - Smalltalk, Wetter, beiläufige Erwähnung → short_term
+           - Du findest eine LÖSUNG die wiederverwendbar ist → knowledge
+           - Du lernst einen neuen FAKT oder TRICK → knowledge
+           - Nutzer fragt nach Erklärung und du recherchierst → Ergebnis in knowledge
            - "Nein, ich meinte..." → core_memory_replace im passenden Block
 
-           NACH JEDER ANTWORT prüfe:
+           NACH JEDER ANTWORT prüfe\(isMemoryMemorizeEnabled ? "" : " (DEAKTIVIERT — speichere NUR wenn der Nutzer es ausdrücklich verlangt)"):
            - Hat der Nutzer etwas Neues über sich verraten? → human
            - Arbeiten wir an einem neuen Thema? → short_term aktualisieren
-           - Habe ich etwas Nützliches gelernt? → knowledge
+           - Habe ich etwas Nützliches gelernt/gelöst? → knowledge
 
         7. Erfinde KEINE Ergebnisse — benutze IMMER ein Tool
         12. FEHLERBEHANDLUNG — Wenn ein Tool fehlschlägt:
-            - Erkläre dem Nutzer auf Deutsch was schiefgegangen ist
+            - Erkläre dem Nutzer auf Deutsch was schiefgegangen ist, über das response Tool
             - Nenne den Grund (z.B. "Datei nicht gefunden", "Keine Internetverbindung", "Befehl nicht installiert")
-            - Schlage Alternativen oder Lösungen vor
-            - Gib NIEMALS rohen JSON-Output oder technische Fehlermeldungen als Antwort
-            - Beispiel: Statt {"error":"No such file"} → "Die Datei wurde nicht gefunden. Prüfe ob der Pfad korrekt ist."
+            - Schlage Alternativen oder Lösungen vor — oder probiere direkt einen anderen Weg
+            - Gib NIEMALS rohen JSON-Output, Fehlercodes oder technische Meldungen direkt an den Nutzer
+            - Der Nutzer sieht NUR was du über das "response" Tool schickst — alles andere (JSON, Tool-Aufrufe) ist intern und unsichtbar für ihn
+            - Beispiel: Statt {"error":"No such file"} → response: "Die Datei wurde nicht gefunden. Soll ich den Pfad prüfen?"
         11. DIREKTE CLI-BEFEHLE — Wenn die Nachricht des Nutzers ein direkter Terminal-Befehl ist
             (z.B. beginnt mit: ollama, git, ls, cd, cat, grep, find, brew, npm, node, python, python3,
             docker, kubectl, curl, wget, ssh, scp, ping, traceroute, ifconfig, top, htop, ps, kill,

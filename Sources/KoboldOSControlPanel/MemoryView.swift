@@ -50,7 +50,18 @@ enum MemoryType: String, CaseIterable, Identifiable {
     static func from(label: String) -> MemoryType {
         if label.hasPrefix("lz.") { return .langzeit }
         if label.hasPrefix("ws.") { return .wissen }
-        return .kurzzeit  // default
+        if label.hasPrefix("kt.") { return .kurzzeit }
+        // Map well-known CoreMemory block labels to appropriate types
+        switch label {
+        case "persona", "human", "system":
+            return .langzeit
+        case "knowledge", "capabilities":
+            return .wissen
+        case "short_term":
+            return .kurzzeit
+        default:
+            return .kurzzeit
+        }
     }
 }
 
@@ -85,6 +96,7 @@ struct MemoryView: View {
     @State private var saveStatus = ""
     @State private var searchText = ""
     @State private var filterType: MemoryType? = nil
+    @State private var errorMsg = ""
 
     // Add block form
     @State private var newLabel = ""
@@ -117,6 +129,17 @@ struct MemoryView: View {
                 memoryHeader
                 searchAndFilterBar
                 memoryTypeInfo
+                if !errorMsg.isEmpty {
+                    GlassCard {
+                        HStack(spacing: 8) {
+                            Image(systemName: "exclamationmark.triangle.fill").foregroundColor(.orange)
+                            Text(errorMsg).font(.caption).foregroundColor(.secondary)
+                            Spacer()
+                            Button("Erneut versuchen") { Task { await loadMemory() } }
+                                .font(.caption).buttonStyle(.bordered)
+                        }
+                    }
+                }
                 memoryList
                 archivalSection
                 versioningSection
@@ -129,6 +152,9 @@ struct MemoryView: View {
             await loadMemory()
             await loadArchival()
             await loadVersions()
+        }
+        .onReceive(Timer.publish(every: 5, on: .main, in: .common).autoconnect()) { _ in
+            Task { await loadMemory() }
         }
         .sheet(isPresented: $showAddBlock) { addBlockSheet }
     }
@@ -490,18 +516,40 @@ struct MemoryView: View {
 
     func loadMemory() async {
         isLoading = true
+        errorMsg = ""
         defer { isLoading = false }
-        guard let url = URL(string: viewModel.baseURL + "/memory"),
-              let (data, _) = try? await viewModel.authorizedData(from: url),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let blockList = json["blocks"] as? [[String: Any]] else { return }
 
-        blocks = blockList.compactMap { item in
-            guard let label = item["label"] as? String,
-                  let value = item["content"] as? String ?? item["value"] as? String else { return nil }
-            let limit = item["limit"] as? Int ?? 500
-            let type_ = MemoryType.from(label: label)
-            return MemoryBlock(label: label, content: value, limit: limit, memoryType: type_)
+        guard viewModel.isConnected else {
+            errorMsg = "Daemon nicht verbunden"
+            return
+        }
+
+        guard let url = URL(string: viewModel.baseURL + "/memory") else {
+            errorMsg = "Ungültige URL"
+            return
+        }
+
+        do {
+            let (data, resp) = try await viewModel.authorizedData(from: url)
+            if let http = resp as? HTTPURLResponse, http.statusCode != 200 {
+                errorMsg = "HTTP-Fehler \(http.statusCode)"
+                return
+            }
+            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let blockList = json["blocks"] as? [[String: Any]] else {
+                errorMsg = "Ungültige Antwort vom Daemon"
+                return
+            }
+
+            blocks = blockList.compactMap { item in
+                guard let label = item["label"] as? String,
+                      let value = item["content"] as? String ?? item["value"] as? String else { return nil }
+                let limit = item["limit"] as? Int ?? 2000
+                let type_ = MemoryType.from(label: label)
+                return MemoryBlock(label: label, content: value, limit: limit, memoryType: type_)
+            }
+        } catch {
+            errorMsg = "Verbindungsfehler: \(error.localizedDescription)"
         }
     }
 

@@ -74,8 +74,8 @@ public struct SkillWriteTool: Tool, Sendable {
 
         switch action {
         case "create":
-            let name = arguments["name"]!
-            let content = arguments["content"]!
+            guard let name = arguments["name"] else { throw ToolError.missingRequired("name") }
+            guard let content = arguments["content"] else { throw ToolError.missingRequired("content") }
             let sanitized = name.replacingOccurrences(of: " ", with: "_")
             let fileURL = skillsDir.appendingPathComponent("\(sanitized).md")
             try content.write(to: fileURL, atomically: true, encoding: .utf8)
@@ -92,7 +92,7 @@ public struct SkillWriteTool: Tool, Sendable {
             return "Skills (\(skills.count)):\n" + lines.joined(separator: "\n")
 
         case "delete":
-            let name = arguments["name"]!
+            guard let name = arguments["name"] else { throw ToolError.missingRequired("name") }
             let sanitized = name.replacingOccurrences(of: " ", with: "_")
             let fileURL = skillsDir.appendingPathComponent("\(sanitized).md")
             if fm.fileExists(atPath: fileURL.path) {

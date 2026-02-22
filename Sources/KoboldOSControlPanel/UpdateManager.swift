@@ -9,7 +9,7 @@ import AppKit
 final class UpdateManager: ObservableObject {
     static let shared = UpdateManager()
 
-    static let currentVersion = "0.2.1"
+    static let currentVersion = "0.2.2"
 
     @Published var state: UpdateState = .idle
     @Published var latestVersion: String?
@@ -63,7 +63,7 @@ final class UpdateManager: ObservableObject {
 
             guard httpResponse.statusCode == 200 else {
                 if httpResponse.statusCode == 404 {
-                    state = .error("Repository oder Release nicht gefunden")
+                    state = .upToDate  // No release yet = up to date
                 } else if httpResponse.statusCode == 403 {
                     state = .error("GitHub API Rate-Limit erreicht")
                 } else {

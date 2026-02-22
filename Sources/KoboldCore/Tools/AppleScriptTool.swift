@@ -34,6 +34,12 @@ public struct AppleScriptTool: Tool, Sendable {
 
     public func execute(arguments: [String: String]) async throws -> String {
         let app = (arguments["app"] ?? "").lowercased()
+        // Check mail permission for messages/mail apps
+        if app == "mail" || app == "messages" {
+            guard permissionEnabled("kobold.perm.mail", defaultValue: false) else {
+                return "Mail/Nachrichten-Zugriff ist in den Einstellungen deaktiviert. Bitte unter Einstellungen → Berechtigungen aktivieren."
+            }
+        }
         let action = (arguments["action"] ?? "").lowercased()
         let paramsStr = arguments["params"] ?? "{}"
         let params = (try? JSONSerialization.jsonObject(with: Data(paramsStr.utf8)) as? [String: String]) ?? [:]
@@ -185,10 +191,15 @@ public struct AppleScriptTool: Tool, Sendable {
             process.standardOutput = stdoutPipe
             process.standardError = stderrPipe
 
-            // 30s timeout
+            // Atomic flag to prevent double-resume (timer + terminationHandler race)
+            nonisolated(unsafe) let resumed = UnsafeMutablePointer<Bool>.allocate(capacity: 1)
+            resumed.initialize(to: false)
+
             let timer = DispatchSource.makeTimerSource(queue: .global())
             timer.schedule(deadline: .now() + 30)
             timer.setEventHandler {
+                guard !resumed.pointee else { return }
+                resumed.pointee = true
                 process.terminate()
                 continuation.resume(throwing: ToolError.timeout)
             }
@@ -196,6 +207,12 @@ public struct AppleScriptTool: Tool, Sendable {
 
             process.terminationHandler = { proc in
                 timer.cancel()
+                guard !resumed.pointee else {
+                    resumed.deinitialize(count: 1)
+                    resumed.deallocate()
+                    return
+                }
+                resumed.pointee = true
                 let out = String(data: stdoutPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
                 let err = String(data: stderrPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
                 if proc.terminationStatus == 0 {
@@ -203,13 +220,23 @@ public struct AppleScriptTool: Tool, Sendable {
                 } else {
                     continuation.resume(throwing: ToolError.executionFailed(err.isEmpty ? "Exit \(proc.terminationStatus)" : err))
                 }
+                resumed.deinitialize(count: 1)
+                resumed.deallocate()
             }
 
             do {
                 try process.run()
             } catch {
                 timer.cancel()
+                guard !resumed.pointee else {
+                    resumed.deinitialize(count: 1)
+                    resumed.deallocate()
+                    return
+                }
+                resumed.pointee = true
                 continuation.resume(throwing: ToolError.executionFailed(error.localizedDescription))
+                resumed.deinitialize(count: 1)
+                resumed.deallocate()
             }
         }
     }

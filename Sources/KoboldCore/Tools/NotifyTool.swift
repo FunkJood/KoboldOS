@@ -29,6 +29,9 @@ public struct NotifyTool: Tool, Sendable {
     public init() {}
 
     public func execute(arguments: [String: String]) async throws -> String {
+        guard permissionEnabled("kobold.perm.notifications") else {
+            return "Benachrichtigungen sind in den Einstellungen deaktiviert."
+        }
         let title = arguments["title"] ?? "KoboldOS"
         let body = arguments["body"] ?? ""
 

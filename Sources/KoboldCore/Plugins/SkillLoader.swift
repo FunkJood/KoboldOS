@@ -86,7 +86,7 @@ public actor SkillLoader {
 
     // MARK: - Default Skills
 
-    private let currentSkillsVersion = "v0.1.7"
+    private let currentSkillsVersion = "v0.2.2"
 
     private func createDefaultSkillsIfNeeded() {
         let marker = skillsDir.appendingPathComponent(".defaults_installed")
@@ -343,15 +343,15 @@ public actor SkillLoader {
             - Erinnerungen an den Nutzer
 
             ## Nutzer-Eingabe anfordern
-            Wenn du eine Entscheidung oder Information vom Nutzer brauchst:
+            Wenn du eine Entscheidung oder Information vom Nutzer brauchst, frag direkt per response:
             ```json
-            {"tool_name": "input", "tool_args": {"prompt": "Soll ich die Datei überschreiben? (ja/nein)"}}
+            {"tool_name": "response", "tool_args": {"message": "Soll ich die Datei überschreiben? Bitte antworte mit ja oder nein."}}
             ```
 
             Tipps:
             - Nutze `response` am Ende jeder abgeschlossenen Aufgabe
             - `notify_user` für Hintergrund-Tasks die lange dauern
-            - `input` sparsam einsetzen — nur wenn du wirklich eine Entscheidung brauchst
+            - Frag per `response` wenn du eine Entscheidung brauchst — der Nutzer antwortet dann
             """),
 
             ("api_skill_erstellen", """

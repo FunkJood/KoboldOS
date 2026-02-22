@@ -2,6 +2,9 @@ import SwiftUI
 import AppKit
 import ServiceManagement
 import UniformTypeIdentifiers
+import EventKit
+import Contacts
+@preconcurrency import UserNotifications
 import KoboldCore
 
 // MARK: - SettingsView
@@ -35,7 +38,15 @@ struct SettingsView: View {
     @AppStorage("kobold.perm.deleteFiles")   private var permDeleteFiles: Bool = false
     @AppStorage("kobold.perm.installPkgs")   private var permInstallPkgs: Bool = false
     @AppStorage("kobold.perm.modifyMemory")  private var permModifyMemory: Bool = true
-    @AppStorage("kobold.shell.customAllowlist") private var shellCustomAllowlist: String = ""
+    @AppStorage("kobold.perm.notifications") private var permNotifications: Bool = true
+    @AppStorage("kobold.perm.calendar")      private var permCalendar: Bool = true
+    @AppStorage("kobold.perm.contacts")      private var permContacts: Bool = false
+    @AppStorage("kobold.perm.mail")          private var permMail: Bool = false
+    // kobold.shell.customBlacklist used via direct UserDefaults binding in permissions section
+
+    // Sounds
+    @AppStorage("kobold.sounds.enabled") private var soundsEnabled: Bool = true
+    @AppStorage("kobold.sounds.volume") private var soundsVolume: Double = 0.5
 
     // Updates
     @AppStorage("kobold.autoCheckUpdates") private var autoCheckUpdates: Bool = true
@@ -80,7 +91,7 @@ struct SettingsView: View {
     // Working directory
     @AppStorage("kobold.defaultWorkDir") private var defaultWorkDir: String = "~/Documents/KoboldOS"
 
-    private let sections = ["Konto", "Allgemein", "Modelle", "Gedächtnis", "Berechtigungen", "Datenschutz & Sicherheit", "A2A", "Verbindungen", "Skills", "Über"]
+    private let sections = ["Konto", "Allgemein", "Agent", "Modelle", "Gedächtnis", "Proaktiv", "Berechtigungen", "Datenschutz & Sicherheit", "A2A", "Verbindungen", "Fernsteuerung", "Skills", "Über"]
 
     var body: some View {
         HStack(spacing: 0) {
@@ -119,12 +130,15 @@ struct SettingsView: View {
                     switch selectedSection {
                     case "Konto":                   profileSection()
                     case "Allgemein":                generalSection()
+                    case "Agent":                    agentPersonalitySection(); memoryPolicySection()
                     case "Modelle":                  modelsSection()
                     case "Gedächtnis":               memorySettingsSection()
+                    case "Proaktiv":                 proactiveSettingsSection()
                     case "Berechtigungen":           permissionsSection()
                     case "Datenschutz & Sicherheit": securitySection()
                     case "A2A":                      a2aSection()
                     case "Verbindungen":             connectionsSection()
+                    case "Fernsteuerung":            remoteControlSection()
                     case "Skills":                   skillsSettingsSection()
                     default:                         aboutSection()
                     }
@@ -141,12 +155,15 @@ struct SettingsView: View {
         switch s {
         case "Konto":                   return "person.crop.circle.fill"
         case "Allgemein":               return "gear"
+        case "Agent":                   return "person.fill.viewfinder"
         case "Modelle":                 return "cpu.fill"
         case "Gedächtnis":              return "brain.head.profile"
+        case "Proaktiv":                return "lightbulb.fill"
         case "Berechtigungen":          return "shield.lefthalf.filled"
         case "Datenschutz & Sicherheit": return "lock.shield.fill"
         case "A2A":                     return "arrow.left.arrow.right"
         case "Verbindungen":            return "link.circle.fill"
+        case "Fernsteuerung":           return "globe"
         case "Skills":                  return "sparkles"
         default:                        return "info.circle.fill"
         }
@@ -325,6 +342,25 @@ struct SettingsView: View {
                 }
                 .padding()
             }
+
+            GroupBox {
+                VStack(alignment: .leading, spacing: 12) {
+                    Label("Sounds", systemImage: "speaker.wave.2.fill").font(.subheadline.bold())
+                    Toggle("Systemsounds aktivieren", isOn: $soundsEnabled)
+                        .toggleStyle(.switch)
+                    if soundsEnabled {
+                        HStack {
+                            Image(systemName: "speaker.fill").foregroundColor(.secondary)
+                            Slider(value: $soundsVolume, in: 0.1...1.0, step: 0.1)
+                            Image(systemName: "speaker.wave.3.fill").foregroundColor(.secondary)
+                            Text("\(Int(soundsVolume * 100))%")
+                                .font(.caption).foregroundColor(.secondary)
+                                .frame(width: 35, alignment: .trailing)
+                        }
+                    }
+                }
+                .padding()
+            }
         }
 
         // Row 2: Arbeitsverzeichnis (full width)
@@ -493,7 +529,7 @@ struct SettingsView: View {
             .padding()
         }
 
-        // Row 3b: Onboarding
+        // Row 3b: Onboarding + Debug (side by side)
         HStack(alignment: .top, spacing: 16) {
             GroupBox {
                 VStack(alignment: .leading, spacing: 10) {
@@ -507,11 +543,7 @@ struct SettingsView: View {
                 }
                 .padding()
             }
-            Spacer()
-        }
 
-        // Row 4: Debug (full width)
-        HStack(alignment: .top, spacing: 16) {
             GroupBox {
                 VStack(alignment: .leading, spacing: 10) {
                     Label("Debug-Modus", systemImage: "ladybug.fill").font(.subheadline.bold())
@@ -909,9 +941,7 @@ struct SettingsView: View {
                     .font(.caption).foregroundColor(.secondary)
 
                 Picker("", selection: $autonomyLevel) {
-                    VStack(alignment: .leading) {
-                        Text("1 — Sicher").tag(1)
-                    }
+                    Text("1 — Sicher").tag(1)
                     Text("2 — Normal").tag(2)
                     Text("3 — Vollständig").tag(3)
                 }
@@ -980,10 +1010,70 @@ struct SettingsView: View {
                            icon: "checkmark.shield.fill", color: .koboldEmerald,
                            binding: $permSelfCheck)
                 Divider()
+                permToggle("Benachrichtigungen",
+                           detail: "Erlaubt dem Agent macOS-Benachrichtigungen zu senden",
+                           icon: "bell.fill", color: .indigo,
+                           binding: $permNotifications)
+                Divider()
+                permToggle("Kalender & Erinnerungen",
+                           detail: "Events lesen/erstellen, Erinnerungen verwalten",
+                           icon: "calendar", color: .red,
+                           binding: $permCalendar)
+                Divider()
+                permToggle("Kontakte",
+                           detail: "Kontakte durchsuchen und lesen",
+                           icon: "person.crop.rectangle.stack.fill", color: .blue,
+                           binding: $permContacts)
+                Divider()
+                permToggle("Mail & Nachrichten",
+                           detail: "Emails lesen/senden, iMessage lesen/senden via AppleScript",
+                           icon: "envelope.fill", color: .blue,
+                           binding: $permMail)
+                Divider()
                 permToggle("Admin-Aktionen bestätigen",
                            detail: "Fragt nach bei sudo, rm -rf, kritischen Aktionen",
                            icon: "exclamationmark.shield.fill", color: .red,
                            binding: $permConfirmAdmin)
+            }
+            .padding()
+        }
+
+        // Apple System Permissions — Request macOS access
+        GroupBox {
+            VStack(alignment: .leading, spacing: 14) {
+                Label("Apple Systemzugriff", systemImage: "apple.logo").font(.subheadline.bold())
+                Text("Fordere macOS-Systemzugriff an. Diese Berechtigungen werden vom Betriebssystem verwaltet.")
+                    .font(.caption).foregroundColor(.secondary)
+
+                systemPermRow(title: "Kalender & Erinnerungen", icon: "calendar", color: .red,
+                              detail: "Termine erstellen, lesen und Erinnerungen verwalten") {
+                    requestCalendarAccess()
+                }
+                Divider()
+                systemPermRow(title: "Kontakte", icon: "person.crop.rectangle.stack.fill", color: .blue,
+                              detail: "Kontakte durchsuchen und lesen") {
+                    requestContactsAccess()
+                }
+                Divider()
+                systemPermRow(title: "Mail & Nachrichten (AppleScript)", icon: "envelope.fill", color: .indigo,
+                              detail: "AppleScript-Zugriff für Mail, Messages, Safari, Finder") {
+                    requestAppleScriptAccess()
+                }
+                Divider()
+                systemPermRow(title: "Benachrichtigungen", icon: "bell.fill", color: .orange,
+                              detail: "Push-Benachrichtigungen auf deinem Mac") {
+                    requestNotificationAccess()
+                }
+                Divider()
+                HStack {
+                    Image(systemName: "gearshape.fill").foregroundColor(.secondary)
+                    Text("Weitere Berechtigungen findest du unter")
+                        .font(.caption).foregroundColor(.secondary)
+                    Button("Systemeinstellungen → Datenschutz") {
+                        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy")!)
+                    }
+                    .font(.caption).buttonStyle(.link)
+                }
             }
             .padding()
         }
@@ -1032,6 +1122,22 @@ struct SettingsView: View {
                 TextField("z.B. docker, terraform, ansible", text: Binding(
                     get: { UserDefaults.standard.string(forKey: "kobold.shell.customBlacklist") ?? "" },
                     set: { UserDefaults.standard.set($0, forKey: "kobold.shell.customBlacklist") }
+                ))
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(.caption, design: .monospaced))
+            }
+            .padding()
+        }
+
+        // Custom Allowlist
+        GroupBox {
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Benutzerdefinierte Whitelist", systemImage: "checkmark.shield.fill").font(.subheadline.bold())
+                Text("Zusätzlich erlaubte Befehle (kommagetrennt). Werden auch in Safe/Normal-Tier erlaubt.")
+                    .font(.caption).foregroundColor(.secondary)
+                TextField("z.B. python3, node, cargo, docker", text: Binding(
+                    get: { UserDefaults.standard.string(forKey: "kobold.shell.customAllowlist") ?? "" },
+                    set: { UserDefaults.standard.set($0, forKey: "kobold.shell.customAllowlist") }
                 ))
                     .textFieldStyle(.roundedBorder)
                     .font(.system(.caption, design: .monospaced))
@@ -1156,6 +1262,60 @@ struct SettingsView: View {
             permShell = true; permFileWrite = true
             permNetwork = true; permConfirmAdmin = false
         default: break
+        }
+    }
+
+    // MARK: - System Permission Helpers
+
+    @ViewBuilder
+    private func systemPermRow(title: String, icon: String, color: Color, detail: String, action: @escaping () -> Void) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 16))
+                .foregroundColor(color)
+                .frame(width: 24)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.system(size: 13, weight: .medium))
+                Text(detail).font(.caption).foregroundColor(.secondary)
+            }
+            Spacer()
+            Button("Berechtigung anfragen") { action() }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+        }
+    }
+
+    private func requestCalendarAccess() {
+        Task {
+            let store = EKEventStore()
+            if #available(macOS 14.0, *) {
+                _ = try? await store.requestFullAccessToEvents()
+                _ = try? await store.requestFullAccessToReminders()
+            } else {
+                store.requestAccess(to: .event) { _, _ in }
+                store.requestAccess(to: .reminder) { _, _ in }
+            }
+        }
+    }
+
+    private func requestContactsAccess() {
+        Task {
+            let store = CNContactStore()
+            _ = try? await store.requestAccess(for: .contacts)
+        }
+    }
+
+    private func requestAppleScriptAccess() {
+        // Trigger AppleScript permission by running a harmless script
+        let script = NSAppleScript(source: "tell application \"System Events\" to return name of first process")
+        var error: NSDictionary?
+        script?.executeAndReturnError(&error)
+    }
+
+    private func requestNotificationAccess() {
+        Task {
+            let center = UNUserNotificationCenter.current()
+            _ = try? await center.requestAuthorization(options: [.alert, .badge, .sound])
         }
     }
 
@@ -1805,6 +1965,107 @@ struct SettingsView: View {
         var isEnabled: Bool
     }
 
+    // MARK: - Fernsteuerung (WebApp)
+
+    @AppStorage("kobold.webapp.enabled") private var webAppEnabled: Bool = false
+    @AppStorage("kobold.webapp.port") private var webAppPort: Int = 8090
+    @AppStorage("kobold.webapp.username") private var webAppUsername: String = "admin"
+    @AppStorage("kobold.webapp.password") private var webAppPassword: String = ""
+    @State private var webAppRunning = false
+
+    @ViewBuilder
+    private func remoteControlSection() -> some View {
+        sectionTitle("Fernsteuerung (WebApp)")
+
+        GroupBox {
+            VStack(alignment: .leading, spacing: 14) {
+                Label("WebApp-Server", systemImage: "globe").font(.subheadline.bold())
+                Text("Starte eine Web-Oberfläche die dein KoboldOS spiegelt — als Fernbedienung von jedem Gerät im Netzwerk.")
+                    .font(.caption).foregroundColor(.secondary)
+
+                Toggle("WebApp aktivieren", isOn: $webAppEnabled)
+                    .toggleStyle(.switch)
+                    .tint(.koboldEmerald)
+
+                HStack(spacing: 20) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Port").font(.caption.bold()).foregroundColor(.secondary)
+                        TextField("Port", value: $webAppPort, format: .number)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 80)
+                    }
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Benutzername").font(.caption.bold()).foregroundColor(.secondary)
+                        TextField("Benutzername", text: $webAppUsername)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 150)
+                    }
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Passwort").font(.caption.bold()).foregroundColor(.secondary)
+                        SecureField("Passwort", text: $webAppPassword)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 150)
+                    }
+                }
+
+                if webAppPassword.isEmpty {
+                    Label("Bitte ein Passwort setzen bevor du den Server startest.", systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption).foregroundColor(.orange)
+                }
+
+                HStack(spacing: 12) {
+                    if webAppEnabled && !webAppPassword.isEmpty {
+                        Button(webAppRunning ? "Server stoppen" : "Server starten") {
+                            if webAppRunning {
+                                WebAppServer.shared.stop()
+                                webAppRunning = false
+                            } else {
+                                let dPort = UserDefaults.standard.integer(forKey: "kobold.port")
+                                let dToken = UserDefaults.standard.string(forKey: "kobold.authToken") ?? ""
+                                WebAppServer.shared.start(
+                                    port: webAppPort,
+                                    daemonPort: dPort == 0 ? 8080 : dPort,
+                                    daemonToken: dToken,
+                                    username: webAppUsername,
+                                    password: webAppPassword
+                                )
+                                webAppRunning = true
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(webAppRunning ? .red : .koboldEmerald)
+                    }
+
+                    if webAppRunning {
+                        HStack(spacing: 6) {
+                            Circle().fill(Color.koboldEmerald).frame(width: 8, height: 8)
+                            Text("Läuft auf http://localhost:\(webAppPort)")
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundColor(.koboldEmerald)
+                        }
+
+                        Button("Im Browser öffnen") {
+                            if let url = URL(string: "http://localhost:\(webAppPort)") {
+                                NSWorkspace.shared.open(url)
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                }
+            }
+            .padding()
+        }
+
+        GroupBox {
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Sicherheitshinweise", systemImage: "lock.shield.fill").font(.subheadline.bold())
+                Text("• Die WebApp ist nur im lokalen Netzwerk erreichbar\n• Benutze ein starkes Passwort\n• Der Server nutzt Basic Auth (HTTP) — NICHT für öffentliche Netzwerke\n• Alle Befehle werden über den lokalen Daemon geleitet")
+                    .font(.caption).foregroundColor(.secondary)
+            }.padding()
+        }
+    }
+
     @ViewBuilder
     private func skillsSettingsSection() -> some View {
         sectionTitle("Skills")
@@ -1997,6 +2258,264 @@ struct SettingsView: View {
 
     // advancedSection removed — content merged into generalSection
 
+    // MARK: - Agent-Persönlichkeit
+
+    @AppStorage("kobold.agent.personality") private var agentPersonality: String = ""
+    @AppStorage("kobold.agent.soul") private var agentSoul: String = ""
+    @AppStorage("kobold.agent.tone") private var agentTone: String = "freundlich"
+    @AppStorage("kobold.agent.language") private var agentLanguage: String = "deutsch"
+    @AppStorage("kobold.agent.verbosity") private var agentVerbosity: Double = 0.5
+
+    @ViewBuilder
+    private func agentPersonalitySection() -> some View {
+        sectionTitle("Agent-Persönlichkeit")
+
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Label("Soul.md — Kernidentität", systemImage: "heart.fill").font(.subheadline.bold())
+                Text("Definiert wer der Agent im Kern ist. Grundlegende Werte, Identität und Verhaltensmuster.")
+                    .font(.caption).foregroundColor(.secondary)
+                TextEditor(text: $agentSoul)
+                    .font(.system(size: 12, design: .monospaced))
+                    .frame(minHeight: 80, maxHeight: 150)
+                    .padding(6)
+                    .background(Color.black.opacity(0.2)).cornerRadius(8)
+                    .scrollContentBackground(.hidden)
+                if agentSoul.isEmpty {
+                    Text("Leer = Standard-Persönlichkeit (KoboldOS)")
+                        .font(.caption2).foregroundColor(.secondary).italic()
+                }
+            }.padding(6)
+        }
+
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Label("Personality.md — Verhaltensstil", systemImage: "theatermasks.fill").font(.subheadline.bold())
+                Text("Beschreibt wie der Agent kommuniziert: Tonfall, Humor, Formalität, Eigenheiten.")
+                    .font(.caption).foregroundColor(.secondary)
+                TextEditor(text: $agentPersonality)
+                    .font(.system(size: 12, design: .monospaced))
+                    .frame(minHeight: 80, maxHeight: 150)
+                    .padding(6)
+                    .background(Color.black.opacity(0.2)).cornerRadius(8)
+                    .scrollContentBackground(.hidden)
+                if agentPersonality.isEmpty {
+                    Text("Leer = neutraler, hilfsbereiter Stil")
+                        .font(.caption2).foregroundColor(.secondary).italic()
+                }
+            }.padding(6)
+        }
+
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Label("Kommunikation", systemImage: "bubble.left.and.bubble.right.fill").font(.subheadline.bold())
+
+                HStack(spacing: 20) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Tonfall").font(.caption.bold()).foregroundColor(.secondary)
+                        Picker("", selection: $agentTone) {
+                            Text("Freundlich").tag("freundlich")
+                            Text("Professionell").tag("professionell")
+                            Text("Locker").tag("locker")
+                            Text("Direkt").tag("direkt")
+                            Text("Humorvoll").tag("humorvoll")
+                        }.pickerStyle(.menu).labelsHidden()
+                    }
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Sprache").font(.caption.bold()).foregroundColor(.secondary)
+                        Picker("", selection: $agentLanguage) {
+                            Text("Deutsch").tag("deutsch")
+                            Text("Englisch").tag("englisch")
+                            Text("Auto").tag("auto")
+                        }.pickerStyle(.menu).labelsHidden()
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Ausführlichkeit: \(String(format: "%.0f%%", agentVerbosity * 100))")
+                        .font(.caption.bold()).foregroundColor(.secondary)
+                    Slider(value: $agentVerbosity, in: 0...1, step: 0.1)
+                        .tint(.koboldEmerald)
+                    HStack {
+                        Text("Kurz & knapp").font(.caption2).foregroundColor(.secondary)
+                        Spacer()
+                        Text("Ausführlich").font(.caption2).foregroundColor(.secondary)
+                    }
+                }
+            }.padding(6)
+        }
+    }
+
+    // MARK: - Memory Policy & Verhaltensregeln
+
+    @AppStorage("kobold.agent.memoryPolicy") private var memoryPolicy: String = "auto"
+    @AppStorage("kobold.agent.behaviorRules") private var behaviorRules: String = ""
+
+    @ViewBuilder
+    private func memoryPolicySection() -> some View {
+        sectionTitle("Gedächtnis-Richtlinie")
+
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Label("Memory Policy", systemImage: "brain.head.profile").font(.subheadline.bold())
+                Text("Bestimmt wie der Agent mit Erinnerungen umgeht — automatisch lernen oder nur auf Anweisung.")
+                    .font(.caption).foregroundColor(.secondary)
+
+                Picker("Richtlinie", selection: $memoryPolicy) {
+                    Text("Automatisch lernen").tag("auto")
+                    Text("Auf Nachfrage").tag("ask")
+                    Text("Nur manuell").tag("manual")
+                    Text("Deaktiviert").tag("disabled")
+                }.pickerStyle(.segmented)
+
+                switch memoryPolicy {
+                case "auto":
+                    Label("Agent speichert automatisch wichtige Fakten über dich und den Kontext.", systemImage: "checkmark.circle.fill")
+                        .font(.caption).foregroundColor(.koboldEmerald)
+                case "ask":
+                    Label("Agent fragt dich bevor er etwas ins Gedächtnis schreibt.", systemImage: "questionmark.circle.fill")
+                        .font(.caption).foregroundColor(.blue)
+                case "manual":
+                    Label("Nur du kannst Erinnerungen manuell hinzufügen.", systemImage: "hand.raised.fill")
+                        .font(.caption).foregroundColor(.orange)
+                case "disabled":
+                    Label("Gedächtnis komplett deaktiviert — Agent merkt sich nichts.", systemImage: "xmark.circle.fill")
+                        .font(.caption).foregroundColor(.red)
+                default:
+                    EmptyView()
+                }
+            }.padding(6)
+        }
+
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Label("Verhaltensregeln", systemImage: "list.bullet.clipboard.fill").font(.subheadline.bold())
+                Text("Feste Regeln, die der Agent immer befolgen muss. Z.B. 'Antworte immer auf Deutsch', 'Frage bei Löschvorgängen immer nach'.")
+                    .font(.caption).foregroundColor(.secondary)
+                TextEditor(text: $behaviorRules)
+                    .font(.system(size: 12, design: .monospaced))
+                    .frame(minHeight: 80, maxHeight: 150)
+                    .padding(6)
+                    .background(Color.black.opacity(0.2)).cornerRadius(8)
+                    .scrollContentBackground(.hidden)
+                if behaviorRules.isEmpty {
+                    Text("Keine besonderen Regeln definiert — Standardverhalten.")
+                        .font(.caption2).foregroundColor(.secondary).italic()
+                }
+                Text("Tipp: Jede Zeile = eine Regel. Der Agent sieht diese in jedem Gespräch.")
+                    .font(.caption2).foregroundColor(.secondary)
+            }.padding(6)
+        }
+    }
+
+    // MARK: - Proaktive Einstellungen
+
+    @StateObject private var proactiveEngine = ProactiveEngine.shared
+
+    @ViewBuilder
+    private func proactiveSettingsSection() -> some View {
+        sectionTitle("Proaktive Vorschläge")
+
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Label("Allgemein", systemImage: "lightbulb.fill").font(.subheadline.bold())
+
+                Toggle("Proaktive Vorschläge aktivieren", isOn: $proactiveEngine.isEnabled)
+                    .toggleStyle(.switch)
+                    .tint(.koboldEmerald)
+
+                HStack {
+                    Text("Prüf-Intervall").font(.caption.bold()).foregroundColor(.secondary)
+                    Picker("", selection: $proactiveEngine.checkIntervalMinutes) {
+                        Text("5 Min").tag(5)
+                        Text("10 Min").tag(10)
+                        Text("30 Min").tag(30)
+                        Text("60 Min").tag(60)
+                    }.pickerStyle(.segmented).frame(maxWidth: 300)
+                }
+            }.padding(6)
+        }
+
+        GroupBox {
+            VStack(alignment: .leading, spacing: 10) {
+                Label("Trigger-Typen", systemImage: "bell.badge.fill").font(.subheadline.bold())
+
+                Toggle("Morgen-Briefing (08:00-09:00)", isOn: $proactiveEngine.morningBriefing)
+                    .toggleStyle(.switch).tint(.koboldEmerald)
+                Toggle("Tages-Zusammenfassung (17:00-18:00)", isOn: $proactiveEngine.eveningSummary)
+                    .toggleStyle(.switch).tint(.koboldEmerald)
+                Toggle("Fehler-Diagnose vorschlagen", isOn: $proactiveEngine.errorAlerts)
+                    .toggleStyle(.switch).tint(.koboldEmerald)
+                Toggle("System-Health-Warnungen", isOn: $proactiveEngine.systemHealth)
+                    .toggleStyle(.switch).tint(.koboldEmerald)
+            }.padding(6)
+        }
+
+        GroupBox {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Label("Benutzerdefinierte Regeln", systemImage: "list.bullet.rectangle").font(.subheadline.bold())
+                    Spacer()
+                    Button(action: {
+                        let rule = ProactiveRule(id: UUID().uuidString, name: "Neue Regel",
+                                                 triggerType: .timeOfDay, triggerValue: "12:00",
+                                                 prompt: "Was soll ich tun?", enabled: true)
+                        proactiveEngine.addRule(rule)
+                    }) {
+                        Label("Hinzufügen", systemImage: "plus")
+                            .font(.caption)
+                    }.buttonStyle(.bordered)
+                }
+
+                ForEach($proactiveEngine.rules) { $rule in
+                    HStack(spacing: 8) {
+                        Toggle("", isOn: $rule.enabled)
+                            .toggleStyle(.switch).labelsHidden().scaleEffect(0.7)
+                            .tint(.koboldEmerald)
+                            .onChange(of: rule.enabled) { proactiveEngine.saveRules() }
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            TextField("Name", text: $rule.name)
+                                .font(.system(size: 12, weight: .medium))
+                                .textFieldStyle(.plain)
+                                .onSubmit { proactiveEngine.saveRules() }
+                            TextField("Prompt", text: $rule.prompt)
+                                .font(.system(size: 11))
+                                .foregroundColor(.secondary)
+                                .textFieldStyle(.plain)
+                                .onSubmit { proactiveEngine.saveRules() }
+                        }
+
+                        Spacer()
+
+                        Picker("", selection: $rule.triggerType) {
+                            ForEach(ProactiveRule.TriggerType.allCases, id: \.self) { t in
+                                Text(t.rawValue).tag(t)
+                            }
+                        }.pickerStyle(.menu).frame(width: 90)
+                        .onChange(of: rule.triggerType) { proactiveEngine.saveRules() }
+
+                        if rule.triggerType == .timeOfDay {
+                            TextField("HH:MM", text: $rule.triggerValue)
+                                .font(.system(size: 11, design: .monospaced))
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 60)
+                                .onSubmit { proactiveEngine.saveRules() }
+                        }
+
+                        if !ProactiveRule.defaults.contains(where: { $0.id == rule.id }) {
+                            Button(action: { proactiveEngine.deleteRule(rule.id) }) {
+                                Image(systemName: "trash").font(.caption).foregroundColor(.red.opacity(0.7))
+                            }.buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+            }.padding(6)
+        }
+    }
+
     // MARK: - Über
 
     @ViewBuilder
@@ -2013,7 +2532,7 @@ struct SettingsView: View {
                     )
                 VStack(alignment: .leading, spacing: 4) {
                     Text("KoboldOS").font(.title.bold())
-                    Text("Alpha v0.2.1").font(.title3).foregroundColor(.koboldGold)
+                    Text("Alpha v0.2.2").font(.title3).foregroundColor(.koboldGold)
                     Text("Dein lokaler KI-Assistent für macOS")
                         .font(.subheadline).foregroundColor(.secondary)
                 }
@@ -2025,7 +2544,7 @@ struct SettingsView: View {
         GroupBox {
             VStack(alignment: .leading, spacing: 8) {
                 Label("Build-Info", systemImage: "info.circle").font(.subheadline.bold())
-                infoRow("Version", "Alpha v0.2.1")
+                infoRow("Version", "Alpha v0.2.2")
                 infoRow("Build", "2026-02-22")
                 infoRow("Swift", "6.0")
                 infoRow("Plattform", "macOS 14+ (Sonoma)")
@@ -2049,8 +2568,8 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Label("Links", systemImage: "link").font(.subheadline.bold())
                 linkButton("Modellbibliothek (Ollama)", url: "https://ollama.ai/library")
-                linkButton("GitHub", url: "https://github.com/koboldos/koboldos")
-                linkButton("Problem melden", url: "https://github.com/koboldos/koboldos/issues")
+                linkButton("GitHub", url: "https://github.com/FunkJood/KoboldOS")
+                linkButton("Problem melden", url: "https://github.com/FunkJood/KoboldOS/issues")
             }
             .padding()
         }
@@ -2131,7 +2650,7 @@ struct SettingsView: View {
         panel.allowedContentTypes = [.plainText]
         panel.nameFieldStringValue = "koboldos-logs.txt"
         if panel.runModal() == .OK, let url = panel.url {
-            let logs = "KoboldOS Alpha v0.2.1 — Logs\nPID: \(ProcessInfo.processInfo.processIdentifier)\nUptime: \(Date())\n"
+            let logs = "KoboldOS Alpha v0.2.2 — Logs\nPID: \(ProcessInfo.processInfo.processIdentifier)\nUptime: \(Date())\n"
             try? logs.write(to: url, atomically: true, encoding: .utf8)
         }
     }

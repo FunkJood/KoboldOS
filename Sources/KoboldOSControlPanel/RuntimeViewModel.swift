@@ -60,6 +60,7 @@ struct KoboldNotification: Identifiable {
     let message: String
     let type: NotificationType
     let timestamp: Date
+    var navigationTarget: NavigationTarget? = nil
 
     enum NotificationType: String {
         case info, success, warning, error
@@ -82,6 +83,21 @@ struct KoboldNotification: Identifiable {
         case .error:   return .red
         }
     }
+}
+
+// MARK: - ChatMode
+
+enum ChatMode: String {
+    case normal, task, workflow
+}
+
+// MARK: - NavigationTarget (for notification taps)
+
+enum NavigationTarget {
+    case chat(sessionId: UUID)
+    case task(taskId: String)
+    case workflow(projectId: UUID)
+    case tab(SidebarTab)
 }
 
 // MARK: - RuntimeViewModel
@@ -143,7 +159,8 @@ class RuntimeViewModel: ObservableObject {
 
     /// Convenience: authorized GET data fetch
     func authorizedData(from url: URL) async throws -> (Data, URLResponse) {
-        let req = authorizedRequest(url: url)
+        var req = authorizedRequest(url: url)
+        req.timeoutInterval = 5
         return try await URLSession.shared.data(for: req)
     }
 
@@ -159,6 +176,16 @@ class RuntimeViewModel: ObservableObject {
         return appSupport.appendingPathComponent("KoboldOS/chat_sessions.json")
     }
 
+    private var taskSessionsURL: URL {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        return appSupport.appendingPathComponent("KoboldOS/task_sessions.json")
+    }
+
+    private var workflowSessionsURL: URL {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        return appSupport.appendingPathComponent("KoboldOS/workflow_sessions.json")
+    }
+
     init() {
         // Auto-generate auth token if not set
         if storedToken.isEmpty {
@@ -166,8 +193,29 @@ class RuntimeViewModel: ObservableObject {
         }
         loadChatHistory()
         loadSessions()
+        loadTaskSessions()
+        loadWorkflowSessions()
         loadProjects()
+
+        // Archive previous session and start fresh on app launch
+        if !messages.isEmpty {
+            upsertCurrentSession()
+            currentSessionId = UUID()
+            messages = []
+        }
+
         Task { await connect() }
+        startTaskScheduler()
+
+        // Listen for shutdown save notification
+        NotificationCenter.default.addObserver(
+            forName: .koboldShutdownSave,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.performShutdownSave()
+            }
+        }
     }
 
     // MARK: - Connection
@@ -344,6 +392,7 @@ class RuntimeViewModel: ObservableObject {
         var msg = ChatMessage(kind: .user(text: trimmed.isEmpty ? "📎" : trimmed), timestamp: Date())
         msg.attachments = attachments
         messages.append(msg)
+        SoundManager.shared.play(.send)
 
         // Ensure this chat immediately appears in sidebar history (atomic upsert prevents duplicates)
         upsertCurrentSession()
@@ -409,8 +458,8 @@ class RuntimeViewModel: ObservableObject {
 
     @AppStorage("kobold.pushNotifications") var pushNotificationsEnabled: Bool = true
 
-    func addNotification(title: String, message: String, type: KoboldNotification.NotificationType = .info) {
-        let n = KoboldNotification(title: title, message: message, type: type, timestamp: Date())
+    func addNotification(title: String, message: String, type: KoboldNotification.NotificationType = .info, target: NavigationTarget? = nil) {
+        let n = KoboldNotification(title: title, message: message, type: type, timestamp: Date(), navigationTarget: target)
         notifications.insert(n, at: 0)
         unreadNotificationCount += 1
         // Cap at 50
@@ -447,6 +496,30 @@ class RuntimeViewModel: ObservableObject {
         }
     }
 
+    /// Navigate to the target of a notification (e.g. a specific chat, task, or workflow)
+    func navigateToTarget(_ target: NavigationTarget) {
+        switch target {
+        case .chat(let sessionId):
+            // Find the session in any array and switch to it
+            if let session = sessions.first(where: { $0.id == sessionId }) {
+                switchToSession(session)
+            } else if let session = taskSessions.first(where: { $0.id == sessionId }) {
+                switchToSession(session)
+            } else if let session = workflowSessions.first(where: { $0.id == sessionId }) {
+                switchToSession(session)
+            }
+            NotificationCenter.default.post(name: .koboldNavigate, object: SidebarTab.chat)
+        case .task(let taskId):
+            openTaskChat(taskId: taskId, taskName: taskId)
+            NotificationCenter.default.post(name: .koboldNavigate, object: SidebarTab.tasks)
+        case .workflow(let projectId):
+            selectedProjectId = projectId
+            NotificationCenter.default.post(name: .koboldNavigate, object: SidebarTab.workflows)
+        case .tab(let tab):
+            NotificationCenter.default.post(name: .koboldNavigate, object: tab)
+        }
+    }
+
     func markAllNotificationsRead() { unreadNotificationCount = 0 }
 
     func clearNotifications() {
@@ -467,8 +540,10 @@ class RuntimeViewModel: ObservableObject {
             prompt: String(message.prefix(100)),
             status: .running, stepCount: 0, currentTool: ""
         )
+        // Remove old completed sessions before adding new one
+        activeSessions.removeAll { $0.status == ActiveAgentSession.SessionStatus.completed || $0.status == ActiveAgentSession.SessionStatus.error }
         activeSessions.insert(session, at: 0)
-        if activeSessions.count > 20 { activeSessions = Array(activeSessions.prefix(20)) }
+        if activeSessions.count > 5 { activeSessions = Array(activeSessions.prefix(5)) }
 
         defer {
             agentLoading = false
@@ -477,6 +552,8 @@ class RuntimeViewModel: ObservableObject {
                     activeSessions[idx].status = .completed
                 }
             }
+            // Remove inactive sessions immediately (active ones stay visible)
+            activeSessions.removeAll { $0.id == sessionId && $0.status != .running }
         }
 
         // Collect base64 images for vision
@@ -529,6 +606,7 @@ class RuntimeViewModel: ObservableObject {
             guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else {
                 let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
                 messages.append(ChatMessage(kind: .assistant(text: "HTTP Error \(code)"), timestamp: Date()))
+                SoundManager.shared.play(.error)
                 return
             }
 
@@ -551,8 +629,10 @@ class RuntimeViewModel: ObservableObject {
                     switch stepType {
                     case "think":
                         activeThinkingSteps.append(ThinkingEntry(type: .thought, content: content, toolName: "", success: true))
+                        SoundManager.shared.play(.typing)
                     case "toolCall":
                         activeThinkingSteps.append(ThinkingEntry(type: .toolCall, content: content, toolName: toolName, success: true))
+                        SoundManager.shared.play(.toolCall)
                         // Update active session with current tool
                         if let idx = activeSessions.firstIndex(where: { $0.id == sessionId }) {
                             activeSessions[idx].currentTool = toolName
@@ -563,6 +643,7 @@ class RuntimeViewModel: ObservableObject {
                     case "finalAnswer":
                         lastFinalAnswer = content
                         if let c = json["confidence"] as? Double { lastConfidence = c }
+                        SoundManager.shared.play(.success)
                     case "subAgentSpawn":
                         let profile = json["subAgent"] as? String ?? "agent"
                         activeThinkingSteps.append(ThinkingEntry(type: .subAgentSpawn, content: content, toolName: profile, success: true))
@@ -572,14 +653,19 @@ class RuntimeViewModel: ObservableObject {
                     case "notify":
                         let title = json["title"] as? String ?? "Benachrichtigung"
                         addNotification(title: title, message: content, type: .info)
+                        SoundManager.shared.play(.notification)
                     case "error":
                         messages.append(ChatMessage(kind: .assistant(text: "⚠️ \(content)"), timestamp: Date()))
                         addNotification(title: "Fehler", message: content, type: .error)
+                        SoundManager.shared.play(.error)
                     default:
                         break
                     }
                 }
             }
+
+            // Count tool steps BEFORE clearing (fix: was always 0 because cleared first)
+            let toolStepCount = activeThinkingSteps.filter { $0.type == .toolCall }.count
 
             // Compact all thinking steps into a single message
             let hadToolSteps = !activeThinkingSteps.isEmpty
@@ -591,9 +677,10 @@ class RuntimeViewModel: ObservableObject {
             // Append final answer with confidence
             if !lastFinalAnswer.isEmpty {
                 messages.append(ChatMessage(kind: .assistant(text: lastFinalAnswer), timestamp: Date(), confidence: lastConfidence))
-                if hadToolSteps {
+                // Only notify for multi-step tasks (>=3 tool calls), not simple responses
+                if toolStepCount >= 3 {
                     let preview = lastFinalAnswer.count > 80 ? String(lastFinalAnswer.prefix(77)) + "..." : lastFinalAnswer
-                    addNotification(title: "Aufgabe erledigt", message: preview, type: .success)
+                    addNotification(title: "Aufgabe erledigt", message: preview, type: .success, target: .chat(sessionId: currentSessionId))
                 }
             }
             trimMessages()
@@ -694,8 +781,44 @@ class RuntimeViewModel: ObservableObject {
     // MARK: - Session Persistence
 
     func saveSessions() {
-        let snapshot = sessions
+        // Deduplicate by ID before saving (keep first occurrence = most recent)
+        var seen = Set<UUID>()
+        let deduped = sessions.filter { seen.insert($0.id).inserted }
+        if deduped.count != sessions.count {
+            sessions = deduped
+        }
+        let snapshot = deduped
         let url = sessionsURL
+        Task.detached(priority: .utility) {
+            let dir = url.deletingLastPathComponent()
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            if let data = try? JSONEncoder().encode(snapshot) {
+                try? data.write(to: url)
+            }
+        }
+    }
+
+    func saveTaskSessions() {
+        var seen = Set<UUID>()
+        let deduped = taskSessions.filter { seen.insert($0.id).inserted }
+        if deduped.count != taskSessions.count { taskSessions = deduped }
+        let snapshot = deduped
+        let url = taskSessionsURL
+        Task.detached(priority: .utility) {
+            let dir = url.deletingLastPathComponent()
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            if let data = try? JSONEncoder().encode(snapshot) {
+                try? data.write(to: url)
+            }
+        }
+    }
+
+    func saveWorkflowSessions() {
+        var seen = Set<UUID>()
+        let deduped = workflowSessions.filter { seen.insert($0.id).inserted }
+        if deduped.count != workflowSessions.count { workflowSessions = deduped }
+        let snapshot = deduped
+        let url = workflowSessionsURL
         Task.detached(priority: .utility) {
             let dir = url.deletingLastPathComponent()
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -718,14 +841,50 @@ class RuntimeViewModel: ObservableObject {
         }
     }
 
-    /// Atomically ensure the current session is in the sessions list (prevents duplicates from race conditions)
+    func loadTaskSessions() {
+        guard let data = try? Data(contentsOf: taskSessionsURL),
+              let loaded = try? JSONDecoder().decode([ChatSession].self, from: data) else { return }
+        var seen = Set<UUID>()
+        taskSessions = loaded.filter { seen.insert($0.id).inserted }
+    }
+
+    func loadWorkflowSessions() {
+        guard let data = try? Data(contentsOf: workflowSessionsURL),
+              let loaded = try? JSONDecoder().decode([ChatSession].self, from: data) else { return }
+        var seen = Set<UUID>()
+        workflowSessions = loaded.filter { seen.insert($0.id).inserted }
+    }
+
+    /// Atomically ensure the current session is in the correct sessions list based on chatMode
     private func upsertCurrentSession() {
-        guard !isWorkflowChat, !messages.isEmpty else { return }
-        let title = generateSessionTitle(from: messages)
-        if let idx = sessions.firstIndex(where: { $0.id == currentSessionId }) {
-            sessions[idx] = ChatSession(id: currentSessionId, title: title, messages: messages)
-        } else {
-            sessions.insert(ChatSession(id: currentSessionId, title: title, messages: messages), at: 0)
+        guard !messages.isEmpty else { return }
+        let title: String
+        switch chatMode {
+        case .normal:
+            title = generateSessionTitle(from: messages)
+            if let idx = sessions.firstIndex(where: { $0.id == currentSessionId }) {
+                sessions[idx] = ChatSession(id: currentSessionId, title: title, messages: messages)
+            } else {
+                sessions.insert(ChatSession(id: currentSessionId, title: title, messages: messages), at: 0)
+            }
+        case .task:
+            title = taskChatLabel.isEmpty ? generateSessionTitle(from: messages) : taskChatLabel
+            var session = ChatSession(id: currentSessionId, title: title, messages: messages)
+            session.linkedId = taskChatId
+            if let idx = taskSessions.firstIndex(where: { $0.id == currentSessionId }) {
+                taskSessions[idx] = session
+            } else {
+                taskSessions.insert(session, at: 0)
+            }
+            saveTaskSessions()
+        case .workflow:
+            title = workflowChatLabel.isEmpty ? generateSessionTitle(from: messages) : workflowChatLabel
+            if let idx = workflowSessions.firstIndex(where: { $0.id == currentSessionId }) {
+                workflowSessions[idx] = ChatSession(id: currentSessionId, title: title, messages: messages)
+            } else {
+                workflowSessions.insert(ChatSession(id: currentSessionId, title: title, messages: messages), at: 0)
+            }
+            saveWorkflowSessions()
         }
     }
 
@@ -758,9 +917,19 @@ class RuntimeViewModel: ObservableObject {
     }
 
     private func syncCurrentSession() {
-        guard !isWorkflowChat else { return }
-        if let idx = sessions.firstIndex(where: { $0.id == currentSessionId }) {
-            sessions[idx] = ChatSession(id: currentSessionId, title: sessions[idx].title, messages: messages)
+        switch chatMode {
+        case .normal:
+            if let idx = sessions.firstIndex(where: { $0.id == currentSessionId }) {
+                sessions[idx] = ChatSession(id: currentSessionId, title: sessions[idx].title, messages: messages)
+            }
+        case .task:
+            if let idx = taskSessions.firstIndex(where: { $0.id == currentSessionId }) {
+                taskSessions[idx] = ChatSession(id: currentSessionId, title: taskSessions[idx].title, messages: messages)
+            }
+        case .workflow:
+            if let idx = workflowSessions.firstIndex(where: { $0.id == currentSessionId }) {
+                workflowSessions[idx] = ChatSession(id: currentSessionId, title: workflowSessions[idx].title, messages: messages)
+            }
         }
     }
 
@@ -815,37 +984,83 @@ class RuntimeViewModel: ObservableObject {
     @Published var sessions: [ChatSession] = []
     @Published var currentSessionId: UUID = UUID()
 
-    // Tracks whether the current chat is a temporary workflow chat (not in sidebar history)
-    @Published var isWorkflowChat: Bool = false
+    // Chat mode: determines which session array is active
+    @Published var chatMode: ChatMode = .normal
     @Published var workflowChatLabel: String = ""
+
+    // Task-Chat context
+    @Published var taskChatId: String = ""
+    @Published var taskChatLabel: String = ""
+
+    // Strictly separated session arrays
+    @Published var taskSessions: [ChatSession] = []      // Persisted in task_sessions.json
+    @Published var workflowSessions: [ChatSession] = []  // Persisted in workflow_sessions.json
 
     func newSession() {
         // Save current session before creating new one (atomic upsert prevents duplicates)
         upsertCurrentSession()
-        isWorkflowChat = false
+        chatMode = .normal
         workflowChatLabel = ""
+        taskChatId = ""
+        taskChatLabel = ""
         currentSessionId = UUID()
         messages = []
         saveSessions()
     }
 
-    /// Opens a temporary chat for a workflow node — not saved to sidebar history.
+    /// Opens a workflow chat for a node — persisted in workflowSessions.
     func openWorkflowChat(nodeName: String) {
-        // Save current regular session before switching (atomic upsert prevents duplicates)
+        // Save current session before switching (atomic upsert prevents duplicates)
         upsertCurrentSession()
         saveSessions()
-        messages = []
-        currentSessionId = UUID()
-        isWorkflowChat = true
+        chatMode = .workflow
         workflowChatLabel = nodeName
+        // Load existing workflow session if available
+        if let existing = workflowSessions.first(where: { $0.title == nodeName }) {
+            messages = restoreMessages(from: existing.messages)
+            currentSessionId = existing.id
+        } else {
+            messages = []
+            currentSessionId = UUID()
+        }
+        NotificationCenter.default.post(name: .koboldNavigate, object: SidebarTab.chat)
+    }
+
+    /// Opens a task chat — persisted in taskSessions.
+    func openTaskChat(taskId: String, taskName: String) {
+        upsertCurrentSession()
+        saveSessions()
+        chatMode = .task
+        taskChatId = taskId
+        taskChatLabel = taskName
+        // Load existing task session if available
+        if let existing = taskSessions.first(where: { $0.linkedId == taskId }) {
+            messages = restoreMessages(from: existing.messages)
+            currentSessionId = existing.id
+        } else {
+            messages = []
+            currentSessionId = UUID()
+        }
         NotificationCenter.default.post(name: .koboldNavigate, object: SidebarTab.chat)
     }
 
     func switchToSession(_ session: ChatSession) {
         // Save current session before switching (atomic upsert prevents duplicates)
         upsertCurrentSession()
-        isWorkflowChat = false
-        workflowChatLabel = ""
+        // Detect which type this session belongs to
+        if taskSessions.contains(where: { $0.id == session.id }) {
+            chatMode = .task
+            taskChatId = session.linkedId ?? ""
+            taskChatLabel = session.title
+        } else if workflowSessions.contains(where: { $0.id == session.id }) {
+            chatMode = .workflow
+            workflowChatLabel = session.title
+        } else {
+            chatMode = .normal
+            workflowChatLabel = ""
+            taskChatId = ""
+            taskChatLabel = ""
+        }
         messages = restoreMessages(from: session.messages)
         currentSessionId = session.id
         saveSessions()
@@ -853,8 +1068,18 @@ class RuntimeViewModel: ObservableObject {
 
     func deleteSession(_ session: ChatSession) {
         saveDebounceTask?.cancel()
-        sessions.removeAll { $0.id == session.id }
+        // Remove from the correct array
+        if taskSessions.contains(where: { $0.id == session.id }) {
+            taskSessions.removeAll { $0.id == session.id }
+            saveTaskSessions()
+        } else if workflowSessions.contains(where: { $0.id == session.id }) {
+            workflowSessions.removeAll { $0.id == session.id }
+            saveWorkflowSessions()
+        } else {
+            sessions.removeAll { $0.id == session.id }
+        }
         if session.id == currentSessionId {
+            chatMode = .normal
             currentSessionId = UUID()
             messages = []
         }
@@ -944,6 +1169,166 @@ class RuntimeViewModel: ObservableObject {
         activeStreamTask = nil
         agentLoading = false
     }
+
+    // MARK: - Task Scheduler
+
+    private var taskSchedulerTimer: Task<Void, Never>?
+
+    func startTaskScheduler() {
+        taskSchedulerTimer?.cancel()
+        taskSchedulerTimer = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 60_000_000_000) // Every 60 seconds
+                guard !Task.isCancelled else { break }
+                await checkScheduledTasks()
+            }
+        }
+    }
+
+    func stopTaskScheduler() {
+        taskSchedulerTimer?.cancel()
+        taskSchedulerTimer = nil
+    }
+
+    private func checkScheduledTasks() async {
+        guard isConnected else { return }
+        guard let url = URL(string: baseURL + "/tasks") else { return }
+        guard let (data, resp) = try? await authorizedData(from: url),
+              (resp as? HTTPURLResponse)?.statusCode == 200,
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let list = json["tasks"] as? [[String: Any]] else { return }
+
+        let now = Date()
+        let cal = Calendar.current
+        let minute = cal.component(.minute, from: now)
+        let hour = cal.component(.hour, from: now)
+        let dayOfMonth = cal.component(.day, from: now)
+        let month = cal.component(.month, from: now)
+        let weekday = cal.component(.weekday, from: now) // 1=Sun, 2=Mon...
+        let isoWeekday = weekday == 1 ? 7 : weekday - 1 // 1=Mon...7=Sun
+
+        for item in list {
+            guard let enabled = item["enabled"] as? Bool, enabled,
+                  let schedule = item["schedule"] as? String, !schedule.isEmpty,
+                  let taskId = item["id"] as? String,
+                  let name = item["name"] as? String,
+                  let prompt = item["prompt"] as? String, !prompt.isEmpty else { continue }
+
+            if cronMatches(schedule, minute: minute, hour: hour, day: dayOfMonth, month: month, weekday: isoWeekday) {
+                // Execute the task
+                openTaskChat(taskId: taskId, taskName: name)
+                sendMessage(prompt)
+                addNotification(title: "Task gestartet", message: name, type: .info, target: .task(taskId: taskId))
+                // Update last_run via backend
+                if let updateURL = URL(string: baseURL + "/tasks") {
+                    var req = authorizedRequest(url: updateURL, method: "POST")
+                    req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                    req.httpBody = try? JSONSerialization.data(withJSONObject: [
+                        "action": "update", "id": taskId, "last_run": ISO8601DateFormatter().string(from: now)
+                    ])
+                    _ = try? await URLSession.shared.data(for: req)
+                }
+                break // Only run one task per check cycle to avoid flooding
+            }
+        }
+    }
+
+    /// Simple cron matcher: supports */N, N, N-M, * for each of 5 fields
+    private func cronMatches(_ cron: String, minute: Int, hour: Int, day: Int, month: Int, weekday: Int) -> Bool {
+        let parts = cron.split(separator: " ").map(String.init)
+        guard parts.count == 5 else { return false }
+        return fieldMatches(parts[0], value: minute) &&
+               fieldMatches(parts[1], value: hour) &&
+               fieldMatches(parts[2], value: day) &&
+               fieldMatches(parts[3], value: month) &&
+               fieldMatches(parts[4], value: weekday)
+    }
+
+    private func fieldMatches(_ field: String, value: Int) -> Bool {
+        if field == "*" { return true }
+        if field.hasPrefix("*/"), let step = Int(field.dropFirst(2)) {
+            return step > 0 && value % step == 0
+        }
+        if field.contains("-") {
+            let range = field.split(separator: "-").compactMap { Int($0) }
+            if range.count == 2 { return value >= range[0] && value <= range[1] }
+        }
+        if field.contains(",") {
+            let values = field.split(separator: ",").compactMap { Int($0) }
+            return values.contains(value)
+        }
+        if let exact = Int(field) { return value == exact }
+        return false
+    }
+
+    // MARK: - Shutdown Save
+
+    /// Saves all important data synchronously before app terminates.
+    func performShutdownSave() {
+        // 1. Save chat history immediately (bypass debounce)
+        saveDebounceTask?.cancel()
+        let msgs = messages
+        let url = historyURL
+        let simplified: [[String: Any]] = msgs.compactMap { msg in
+            switch msg.kind {
+            case .user(let text):
+                return ["kind": "user", "text": text, "ts": msg.timestamp.timeIntervalSince1970]
+            case .assistant(let text):
+                return ["kind": "assistant", "text": text, "ts": msg.timestamp.timeIntervalSince1970]
+            case .thinking(let entries):
+                let entriesData: [[String: Any]] = entries.map { e in
+                    ["type": e.type.rawValue, "content": e.content, "toolName": e.toolName, "success": e.success]
+                }
+                return ["kind": "thinking", "text": "", "ts": msg.timestamp.timeIntervalSince1970, "entries": entriesData]
+            default:
+                return nil
+            }
+        }
+        if let data = try? JSONSerialization.data(withJSONObject: simplified) {
+            let dir = url.deletingLastPathComponent()
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try? data.write(to: url)
+        }
+
+        // 2. Save all 3 session arrays
+        var seen = Set<UUID>()
+        let deduped = sessions.filter { seen.insert($0.id).inserted }
+        if let data = try? JSONEncoder().encode(deduped) {
+            let dir = sessionsURL.deletingLastPathComponent()
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try? data.write(to: sessionsURL)
+        }
+        var seenTask = Set<UUID>()
+        let dedupedTask = taskSessions.filter { seenTask.insert($0.id).inserted }
+        if let data = try? JSONEncoder().encode(dedupedTask) {
+            try? data.write(to: taskSessionsURL)
+        }
+        var seenWf = Set<UUID>()
+        let dedupedWf = workflowSessions.filter { seenWf.insert($0.id).inserted }
+        if let data = try? JSONEncoder().encode(dedupedWf) {
+            try? data.write(to: workflowSessionsURL)
+        }
+
+        // 3. Save projects
+        if let data = try? JSONEncoder().encode(projects) {
+            let dir = projectsURL.deletingLastPathComponent()
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try? data.write(to: projectsURL)
+        }
+
+        // 4. Flush CoreMemory via daemon (fire-and-forget, no blocking)
+        let port = storedPort
+        let token = storedToken
+        if let flushURL = URL(string: "http://localhost:\(port)/memory/flush") {
+            var req = URLRequest(url: flushURL)
+            req.httpMethod = "POST"
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            req.timeoutInterval = 2
+            URLSession.shared.dataTask(with: req) { _, _, _ in }.resume()
+        }
+
+        UserDefaults.standard.synchronize()
+    }
 }
 
 // MARK: - Supporting Types
@@ -998,12 +1383,14 @@ struct ChatSession: Identifiable, Codable {
     var title: String
     var messages: [ChatMessageCodable]
     var createdAt: Date
+    var linkedId: String?  // Links to task ID or workflow node name
 
-    init(id: UUID = UUID(), title: String, messages: [ChatMessage] = []) {
+    init(id: UUID = UUID(), title: String, messages: [ChatMessage] = [], linkedId: String? = nil) {
         self.id = id
         self.title = title.isEmpty ? "Gespräch" : title
         self.messages = messages.compactMap { ChatMessageCodable(from: $0) }
         self.createdAt = Date()
+        self.linkedId = linkedId
     }
 
     var formattedDate: String {

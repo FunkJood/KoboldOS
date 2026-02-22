@@ -119,16 +119,22 @@ struct ChatView: View {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 8) {
-                        if viewModel.isWorkflowChat {
+                        switch viewModel.chatMode {
+                        case .workflow:
                             Text("⚡ \(viewModel.workflowChatLabel)").font(.headline)
                             GlassStatusBadge(label: "Workflow", color: .koboldGold, icon: "point.3.connected.trianglepath.dotted")
-                        } else {
+                        case .task:
+                            Text("📋 \(viewModel.taskChatLabel)").font(.headline)
+                            GlassStatusBadge(label: "Task", color: .blue, icon: "checklist")
+                        case .normal:
                             Text(koboldName.isEmpty ? "KoboldOS" : koboldName).font(.headline)
                             GlassStatusBadge(label: agentDisplayName, color: .koboldGold, icon: "brain")
                         }
                     }
-                    Text(viewModel.isWorkflowChat
-                         ? "Workflow-Chat · wird nicht in der Verlaufsliste gespeichert"
+                    Text(viewModel.chatMode == .workflow
+                         ? "Workflow-Chat · \(viewModel.workflowChatLabel)"
+                         : viewModel.chatMode == .task
+                         ? "Task-Chat · \(viewModel.taskChatLabel)"
                          : l10n.language.toolsAvailable)
                         .font(.caption).foregroundColor(.secondary)
                 }
@@ -172,19 +178,37 @@ struct ChatView: View {
             .padding(.horizontal, 16).padding(.vertical, 12)
             .background(Color.koboldPanel)
 
-            // Workflow chat banner
-            if viewModel.isWorkflowChat {
+            // Mode-specific banner
+            if viewModel.chatMode == .workflow {
                 HStack(spacing: 6) {
-                    Image(systemName: "exclamationmark.triangle.fill")
+                    Image(systemName: "point.3.connected.trianglepath.dotted")
                         .font(.caption)
                         .foregroundColor(.koboldGold)
-                    Text("Workflow-Chat — dieser Verlauf erscheint nicht in der Seitenleiste.")
+                    Text("Workflow-Chat — gespeichert unter Workflows")
                         .font(.caption)
                         .foregroundColor(.koboldGold)
                     Spacer()
+                    Button(action: { viewModel.newSession() }) {
+                        Text("Zurück zum Chat").font(.caption2).foregroundColor(.koboldEmerald)
+                    }.buttonStyle(.plain)
                 }
                 .padding(.horizontal, 14).padding(.vertical, 6)
                 .background(Color.koboldGold.opacity(0.1))
+            } else if viewModel.chatMode == .task {
+                HStack(spacing: 6) {
+                    Image(systemName: "checklist")
+                        .font(.caption)
+                        .foregroundColor(.blue)
+                    Text("Task-Chat — gespeichert unter Aufgaben")
+                        .font(.caption)
+                        .foregroundColor(.blue)
+                    Spacer()
+                    Button(action: { viewModel.newSession() }) {
+                        Text("Zurück zum Chat").font(.caption2).foregroundColor(.koboldEmerald)
+                    }.buttonStyle(.plain)
+                }
+                .padding(.horizontal, 14).padding(.vertical, 6)
+                .background(Color.blue.opacity(0.1))
             }
         }
     }
@@ -291,7 +315,7 @@ struct ChatView: View {
                     .disabled(inputText.trimmingCharacters(in: .whitespaces).isEmpty && pendingAttachments.isEmpty)
                 }
             }
-            .padding(.horizontal, 12).padding(.vertical, 8)
+            .padding(.horizontal, 12).padding(.vertical, 6)
         }
         .background(Color.koboldPanel)
     }

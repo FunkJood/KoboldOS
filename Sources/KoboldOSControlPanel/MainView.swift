@@ -121,7 +121,11 @@ struct SidebarView: View {
 
                         // Context-sensitive list
                         if selectedTab == .workflows {
+                            workflowSessionsList
+                            Divider().padding(.horizontal, 10).padding(.vertical, 4)
                             projectsList
+                        } else if selectedTab == .tasks {
+                            tasksSidebarList
                         } else {
                             sessionsList
                         }
@@ -163,6 +167,88 @@ struct SidebarView: View {
         }
         .background(Color.koboldPanel)
         .clipped()
+    }
+
+    // MARK: - Tasks Sidebar List
+    private var tasksSidebarList: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("Task-Chats")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundColor(.secondary)
+                    .padding(.leading, 16)
+                Spacer()
+            }
+            .padding(.vertical, 6)
+
+            if viewModel.taskSessions.isEmpty {
+                HStack(spacing: 6) {
+                    Image(systemName: "checklist")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                    Text("Noch keine Task-Chats")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 4)
+            } else {
+                ForEach(viewModel.taskSessions) { session in
+                    SidebarSessionRow(
+                        session: session,
+                        isCurrent: session.id == viewModel.currentSessionId,
+                        icon: "checklist",
+                        accentColor: .blue
+                    ) {
+                        viewModel.switchToSession(session)
+                        selectedTab = .chat
+                    } onDelete: {
+                        viewModel.deleteSession(session)
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Workflow Sessions List
+    private var workflowSessionsList: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("Workflow-Chats")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundColor(.secondary)
+                    .padding(.leading, 16)
+                Spacer()
+            }
+            .padding(.vertical, 6)
+
+            if viewModel.workflowSessions.isEmpty {
+                HStack(spacing: 6) {
+                    Image(systemName: "point.3.connected.trianglepath.dotted")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                    Text("Noch keine Workflow-Chats")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 4)
+            } else {
+                ForEach(viewModel.workflowSessions) { session in
+                    SidebarSessionRow(
+                        session: session,
+                        isCurrent: session.id == viewModel.currentSessionId,
+                        icon: "point.3.connected.trianglepath.dotted",
+                        accentColor: .koboldGold
+                    ) {
+                        viewModel.switchToSession(session)
+                        selectedTab = .chat
+                    } onDelete: {
+                        viewModel.deleteSession(session)
+                    }
+                }
+            }
+        }
     }
 
     // MARK: - Projects List
@@ -266,7 +352,7 @@ struct SidebarView: View {
         case .dashboard:  return l10n.language.dashboard
         case .memory:     return "Gedächtnis"
         case .tasks:      return l10n.language.tasks
-        case .skills:     return "Skills"
+        case .store:      return "Store"
         case .agents:     return l10n.language.agents
         case .workflows:  return l10n.language.team
         case .settings:   return l10n.language.settings
@@ -279,7 +365,7 @@ struct SidebarView: View {
         case .dashboard:  return "chart.bar.fill"
         case .memory:     return "brain.filled.head.profile"
         case .tasks:      return "checklist"
-        case .skills:     return "sparkles"
+        case .store:      return "bag.fill"
         case .agents:     return "person.3.fill"
         case .workflows:  return "point.3.connected.trianglepath.dotted"
         case .settings:   return "gearshape.fill"
@@ -292,20 +378,37 @@ struct SidebarView: View {
 struct SidebarSessionRow: View {
     let session: ChatSession
     let isCurrent: Bool
+    var icon: String = "message"
+    var accentColor: Color = .koboldEmerald
     let onTap: () -> Void
     let onDelete: () -> Void
+
+    init(session: ChatSession, isCurrent: Bool, icon: String = "message", accentColor: Color = .koboldEmerald,
+         onTap: @escaping () -> Void, onDelete: @escaping () -> Void) {
+        self.session = session
+        self.isCurrent = isCurrent
+        self.icon = icon
+        self.accentColor = accentColor
+        self.onTap = onTap
+        self.onDelete = onDelete
+    }
 
     var body: some View {
         HStack(spacing: 0) {
             Button(action: onTap) {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(session.title)
-                        .font(.system(size: 11, weight: isCurrent ? .semibold : .regular))
-                        .foregroundColor(isCurrent ? .koboldEmerald : .primary)
-                        .lineLimit(1)
-                    Text(session.formattedDate)
+                HStack(spacing: 6) {
+                    Image(systemName: icon)
                         .font(.system(size: 9))
-                        .foregroundColor(.secondary)
+                        .foregroundColor(isCurrent ? accentColor : .secondary)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(session.title)
+                            .font(.system(size: 11, weight: isCurrent ? .semibold : .regular))
+                            .foregroundColor(isCurrent ? accentColor : .primary)
+                            .lineLimit(1)
+                        Text(session.formattedDate)
+                            .font(.system(size: 9))
+                            .foregroundColor(.secondary)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 16)
@@ -393,7 +496,7 @@ struct ContentAreaView: View {
             case .dashboard:  DashboardView(viewModel: viewModel)
             case .memory:     MemoryView(viewModel: viewModel)
             case .tasks:      TasksView(viewModel: viewModel)
-            case .skills:     SkillsView()
+            case .store:      StoreView()
             case .agents:     AgentsView(viewModel: viewModel)
             case .workflows:  TeamView(viewModel: viewModel)
             case .settings:   SettingsView(viewModel: viewModel)
@@ -436,7 +539,7 @@ enum SidebarTab: String, CaseIterable {
     case tasks
     case workflows
     case memory
-    case skills
+    case store
     case agents
     case settings
 }
@@ -513,7 +616,7 @@ struct KoboldOSSidebarLogo: View {
                         .shadow(color: Color.koboldEmerald.opacity(0.8), radius: glowPulse ? 6 : 3)
                         .animation(.easeInOut(duration: 2).repeatForever(autoreverses: true), value: glowPulse)
 
-                    Text("Alpha v0.2.1")
+                    Text("Alpha v0.2.2")
                         .font(.system(size: 8, weight: .bold))
                         .foregroundColor(.koboldGold)
                         .padding(.horizontal, 4).padding(.vertical, 2)

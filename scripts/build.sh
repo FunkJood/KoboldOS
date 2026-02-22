@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Build script for KoboldOS
-VERSION="0.2.1"
+VERSION="0.2.2"
 echo "Building KoboldOS v${VERSION}..."
 
 # Clean previous builds
@@ -75,6 +75,22 @@ cat > dist/KoboldOSv${VERSION}.app/Contents/Info.plist << EOF
     <string>NSApplication</string>
     <key>NSSupportsAutomaticGraphicsSwitching</key>
     <true/>
+    <key>NSCalendarsUsageDescription</key>
+    <string>KoboldOS benoetigt Zugriff auf deinen Kalender um Termine zu erstellen, lesen und verwalten.</string>
+    <key>NSCalendarsFullAccessUsageDescription</key>
+    <string>KoboldOS benoetigt vollen Kalender-Zugriff um Termine zu erstellen und zu verwalten.</string>
+    <key>NSRemindersUsageDescription</key>
+    <string>KoboldOS benoetigt Zugriff auf Erinnerungen um Aufgaben zu erstellen und zu verwalten.</string>
+    <key>NSRemindersFullAccessUsageDescription</key>
+    <string>KoboldOS benoetigt vollen Zugriff auf Erinnerungen um sie zu erstellen und zu verwalten.</string>
+    <key>NSContactsUsageDescription</key>
+    <string>KoboldOS benoetigt Zugriff auf deine Kontakte um Namen, Nummern und E-Mail-Adressen zu finden.</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>KoboldOS benoetigt AppleScript-Zugriff um macOS-Apps wie Mail, Messages, Safari und Finder zu steuern.</string>
+    <key>NSAppleScriptEnabled</key>
+    <true/>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>KoboldOS benoetigt lokalen Netzwerkzugriff fuer den Daemon-Server und die WebApp-Fernsteuerung.</string>
 </dict>
 </plist>
 EOF

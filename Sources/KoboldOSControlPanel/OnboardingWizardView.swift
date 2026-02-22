@@ -191,8 +191,7 @@ struct OnboardingWizardView: View {
                     .padding(.leading, 20)
 
                     Button("Open Installation Guide") {
-                        // Open browser to installation guide
-                        print("Opening Claude Code installation guide")
+                        NSWorkspace.shared.open(URL(string: "https://docs.anthropic.com/en/docs/claude-code")!)
                     }
                     .buttonStyle(.bordered)
                 }
@@ -244,8 +243,7 @@ struct OnboardingWizardView: View {
                     .padding(.leading, 20)
 
                     Button("Open Ollama Website") {
-                        // Open browser to Ollama website
-                        print("Opening Ollama website")
+                        NSWorkspace.shared.open(URL(string: "https://ollama.com")!)
                     }
                     .buttonStyle(.bordered)
                 }
@@ -405,8 +403,7 @@ struct OnboardingWizardView: View {
         case 1: // Dependency check page
             if !(dependencyCheckResults["claude"] ?? false) ||
                 !(dependencyCheckResults["ollama"] ?? false) {
-                // Show warning but allow proceeding
-                print("Warning: Some dependencies are missing")
+                // Some dependencies missing — allow proceeding anyway
             }
         default:
             break
@@ -426,8 +423,7 @@ struct OnboardingWizardView: View {
 
     private func saveApiKey() {
         if !apiKey.isEmpty {
-            print("Saving API key...")
-            // In a real implementation, this would save to the secrets manager
+            UserDefaults.standard.set(apiKey, forKey: "kobold.apiKey")
             apiKey = ""
         }
     }
@@ -435,6 +431,5 @@ struct OnboardingWizardView: View {
     private func finishSetup() {
         completed = true
         isVisible = false
-        print("Onboarding completed")
     }
 }

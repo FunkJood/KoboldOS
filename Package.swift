@@ -52,7 +52,9 @@ let package = Package(
                 "Agent/OllamaAgent.swift",
             ],
             linkerSettings: [
-                .linkedFramework("Security")
+                .linkedFramework("Security"),
+                .linkedFramework("EventKit"),
+                .linkedFramework("Contacts")
             ]
         ),
 

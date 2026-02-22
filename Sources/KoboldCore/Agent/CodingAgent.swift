@@ -26,7 +26,7 @@ public class CodingAgent: @unchecked Sendable, BaseAgent {
 
     /// Handle coding tasks
     private func handleCodingTask(_ message: AgentMessage) async throws -> String {
-        print("CodingAgent \(name) handling task: \(message.content)")
+        // Handle coding task
 
         // Parse the coding task
         let task = CodingTask(from: message.content)
@@ -59,7 +59,7 @@ public class CodingAgent: @unchecked Sendable, BaseAgent {
 
     /// Handle coding requests
     private func handleCodingRequest(_ message: AgentMessage) async throws -> String {
-        print("CodingAgent \(name) handling request: \(message.content)")
+        // Handle coding request
 
         // Use Claude Code to process the request
         return try await executeClaudeCode(message.content)

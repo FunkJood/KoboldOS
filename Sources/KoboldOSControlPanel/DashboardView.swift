@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import Darwin
 
 // MARK: - SystemMetricsMonitor
@@ -69,6 +70,7 @@ struct DashboardView: View {
     @ObservedObject var viewModel: RuntimeViewModel
     @EnvironmentObject var l10n: LocalizationManager
     @StateObject private var sysMonitor = SystemMetricsMonitor()
+    @StateObject private var proactiveEngine = ProactiveEngine.shared
     @State private var refreshTimer: Timer? = nil
     @State private var selectedPeriod: MetricsPeriod = .session
     @AppStorage("kobold.koboldName") private var koboldName: String = "KoboldOS"
@@ -79,6 +81,10 @@ struct DashboardView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 dashboardHeader
+                ProactiveSuggestionsBar(engine: proactiveEngine) { action in
+                    viewModel.sendMessage(action)
+                    NotificationCenter.default.post(name: .koboldNavigate, object: SidebarTab.chat)
+                }
                 systemResourcesSection
                 shortcutTilesSection
                 statusSection
@@ -92,6 +98,7 @@ struct DashboardView: View {
         .onAppear {
             Task { await viewModel.loadMetrics() }
             sysMonitor.update()
+            proactiveEngine.startPeriodicCheck(viewModel: viewModel)
             refreshTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { _ in
                 Task { @MainActor in
                     await viewModel.loadMetrics()
@@ -102,6 +109,7 @@ struct DashboardView: View {
         .onDisappear {
             refreshTimer?.invalidate()
             refreshTimer = nil
+            proactiveEngine.stopPeriodicCheck()
         }
     }
 
@@ -191,6 +199,20 @@ struct DashboardView: View {
             .pickerStyle(.menu)
             .frame(width: 130)
 
+            Button(action: {
+                if let url = URL(string: "https://github.com/FunkJood/KoboldOS") {
+                    NSWorkspace.shared.open(url)
+                }
+            }) {
+                HStack(spacing: 4) {
+                    Image(systemName: "link")
+                    Text("GitHub")
+                }
+                .font(.caption)
+                .foregroundColor(.secondary)
+            }
+            .buttonStyle(.plain)
+
             GlassButton(title: "Zurücksetzen", icon: "arrow.clockwise", isPrimary: false) {
                 Task {
                     await resetMetrics()
@@ -226,17 +248,10 @@ struct DashboardView: View {
                 color: .koboldGold
             )
             MetricCard(
-                title: "Tokens",
-                value: formatTokens(viewModel.metrics.tokensTotal),
-                subtitle: selectedPeriod.rawValue,
-                icon: "text.word.spacing",
+                title: "Laufzeit",
+                value: formatUptime(viewModel.metrics.uptimeSeconds),
+                icon: "clock.fill",
                 color: .blue
-            )
-            MetricCard(
-                title: "Ø Latenz",
-                value: String(format: "%.0fms", viewModel.metrics.avgLatencyMs),
-                icon: "timer",
-                color: .purple
             )
             Button(action: { if viewModel.metrics.errors > 0 { showErrorPopover.toggle() } }) {
                 MetricCard(
@@ -255,18 +270,6 @@ struct DashboardView: View {
             .popover(isPresented: $showErrorPopover, arrowEdge: .bottom) {
                 ErrorListPopover(viewModel: viewModel)
             }
-            MetricCard(
-                title: "Laufzeit",
-                value: formatUptime(viewModel.metrics.uptimeSeconds),
-                icon: "clock.fill",
-                color: .koboldEmerald
-            )
-            MetricCard(
-                title: "Speicher frei",
-                value: String(format: "%.0f GB", sysMonitor.diskFreeGB),
-                icon: "internaldrive.fill",
-                color: sysMonitor.diskFreeGB < 20 ? .red : .koboldGold
-            )
         }
     }
 
@@ -432,11 +435,14 @@ struct DashboardView: View {
     }
 
     func resetMetrics() async {
-        // POST to daemon to reset counters
         guard let url = URL(string: viewModel.baseURL + "/metrics/reset") else { return }
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
+        req.setValue("Bearer \(viewModel.authToken)", forHTTPHeaderField: "Authorization")
+        req.timeoutInterval = 5
         _ = try? await URLSession.shared.data(for: req)
+        viewModel.metrics = RuntimeMetrics()
+        viewModel.recentTraces = []
         await viewModel.loadMetrics()
     }
 }

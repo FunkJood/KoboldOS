@@ -87,29 +87,56 @@ struct TasksView: View {
     @State private var showAddTask = false
     @State private var statusMsg = ""
 
-    // Add task form state
+    // Add/Edit task form state
     @State private var newName = ""
     @State private var newPrompt = ""
     @State private var newSchedulePreset: TaskSchedulePreset = .manual
     @State private var newCustomCron = ""
+    @State private var errorMsg = ""
+
+    // Edit mode
+    @State private var showEditTask = false
+    @State private var editingTask: ScheduledTask? = nil
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 tasksHeader
                 statsRow
+                if !errorMsg.isEmpty {
+                    GlassCard {
+                        HStack(spacing: 8) {
+                            Image(systemName: "exclamationmark.triangle.fill").foregroundColor(.orange)
+                            Text(errorMsg).font(.caption).foregroundColor(.secondary)
+                            Spacer()
+                            Button("Erneut versuchen") { Task { await loadTasks() } }
+                                .font(.caption).buttonStyle(.bordered)
+                        }
+                    }
+                }
                 if isLoading {
                     GlassProgressBar(value: 0.5, label: "Lade Aufgaben...")
                         .padding(.horizontal, 4)
-                } else if tasks.isEmpty {
+                } else if tasks.isEmpty && errorMsg.isEmpty {
                     emptyState
                 } else {
                     ForEach(tasks) { task in
-                        TaskCard(task: task) {
+                        TaskCard(task: task, onRun: {
                             Task { await runTask(task) }
-                        } onDelete: {
+                        }, onEdit: {
+                            editingTask = task
+                            newName = task.name
+                            newPrompt = task.prompt
+                            newSchedulePreset = task.schedulePreset == .custom ? .custom : task.schedulePreset
+                            newCustomCron = task.schedulePreset == .custom ? task.schedule : ""
+                            showEditTask = true
+                        }, onDelete: {
                             Task { await deleteTask(task) }
-                        }
+                        }, onToggle: { enabled in
+                            Task { await toggleTask(task, enabled: enabled) }
+                        }, onOpenChat: {
+                            viewModel.openTaskChat(taskId: task.id, taskName: task.name)
+                        })
                     }
                 }
             }
@@ -118,6 +145,7 @@ struct TasksView: View {
         .background(Color.koboldBackground)
         .task { await loadTasks() }
         .sheet(isPresented: $showAddTask) { addTaskSheet }
+        .sheet(isPresented: $showEditTask) { editTaskSheet }
     }
 
     // MARK: - Header
@@ -301,25 +329,119 @@ struct TasksView: View {
         return newSchedulePreset.cronExpression
     }
 
+    // MARK: - Edit Task Sheet
+
+    var editTaskSheet: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                HStack {
+                    Text("Aufgabe bearbeiten").font(.title3.bold())
+                    Spacer()
+                    Button(action: { showEditTask = false; editingTask = nil; resetForm() }) {
+                        Image(systemName: "xmark.circle.fill").foregroundColor(.secondary).font(.title3)
+                    }.buttonStyle(.plain)
+                }
+                .padding(.top, 20)
+
+                formField(title: "Aufgaben-Name", hint: "Name der Aufgabe") {
+                    GlassTextField(text: $newName, placeholder: "z.B. Morgen-Briefing...")
+                }
+
+                formField(title: "Prompt", hint: "Was soll der Agent tun?") {
+                    TextEditor(text: $newPrompt)
+                        .font(.system(size: 13))
+                        .frame(minHeight: 80, maxHeight: 160)
+                        .padding(8)
+                        .background(Color.black.opacity(0.2)).cornerRadius(8)
+                        .scrollContentBackground(.hidden)
+                }
+
+                formField(title: "Ausführungszeitpunkt", hint: "Zeitplan ändern") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
+                            ForEach(TaskSchedulePreset.allCases.filter { $0 != .custom }) { preset in
+                                schedulePresetButton(preset)
+                            }
+                        }
+                        if newSchedulePreset == .custom {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Cron-Ausdruck").font(.caption2).foregroundColor(.secondary)
+                                GlassTextField(text: $newCustomCron, placeholder: "z.B. */30 * * * *")
+                                    .font(.system(.caption, design: .monospaced))
+                            }
+                        }
+                    }
+                }
+
+                HStack(spacing: 12) {
+                    Spacer()
+                    GlassButton(title: "Abbrechen", isPrimary: false) {
+                        showEditTask = false; editingTask = nil; resetForm()
+                    }
+                    GlassButton(title: "Speichern", icon: "checkmark", isPrimary: true,
+                                isDisabled: newName.trimmingCharacters(in: .whitespaces).isEmpty) {
+                        Task { await updateTask() }
+                    }
+                }
+            }
+            .padding(24)
+        }
+        .frame(minWidth: 500, minHeight: 480)
+        .background(Color.koboldBackground)
+    }
+
     // MARK: - Networking
 
     func loadTasks() async {
         isLoading = true
+        errorMsg = ""
         defer { isLoading = false }
-        guard let url = URL(string: viewModel.baseURL + "/tasks"),
-              let (data, _) = try? await URLSession.shared.data(from: url),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let list = json["tasks"] as? [[String: Any]] else { return }
-        tasks = list.compactMap { item in
-            guard let name = item["name"] as? String else { return nil }
-            return ScheduledTask(
-                id: item["id"] as? String ?? UUID().uuidString,
-                name: name,
-                prompt: item["prompt"] as? String ?? "",
-                schedule: item["schedule"] as? String ?? "",
-                lastRun: item["last_run"] as? String,
-                enabled: item["enabled"] as? Bool ?? true
-            )
+
+        // Check daemon readiness first
+        guard viewModel.isConnected else {
+            errorMsg = "Daemon nicht verbunden. Warte auf Verbindung..."
+            return
+        }
+
+        guard let url = URL(string: viewModel.baseURL + "/tasks") else {
+            errorMsg = "Ungültige URL"
+            return
+        }
+
+        do {
+            let (data, resp) = try await viewModel.authorizedData(from: url)
+            guard let http = resp as? HTTPURLResponse else {
+                errorMsg = "Keine HTTP-Antwort"
+                return
+            }
+            guard http.statusCode == 200 else {
+                // Tasks endpoint may not exist yet — show empty state instead of error
+                if http.statusCode == 404 {
+                    tasks = []
+                    return
+                }
+                errorMsg = "HTTP-Fehler \(http.statusCode)"
+                return
+            }
+            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let list = json["tasks"] as? [[String: Any]] else {
+                // Empty or malformed response — treat as empty tasks
+                tasks = []
+                return
+            }
+            tasks = list.compactMap { item in
+                guard let name = item["name"] as? String else { return nil }
+                return ScheduledTask(
+                    id: item["id"] as? String ?? UUID().uuidString,
+                    name: name,
+                    prompt: item["prompt"] as? String ?? "",
+                    schedule: item["schedule"] as? String ?? "",
+                    lastRun: item["last_run"] as? String,
+                    enabled: item["enabled"] as? Bool ?? true
+                )
+            }
+        } catch {
+            errorMsg = "Verbindungsfehler: \(error.localizedDescription)"
         }
     }
 
@@ -328,8 +450,7 @@ struct TasksView: View {
         let prompt = newPrompt.trimmingCharacters(in: .whitespaces)
         guard !name.isEmpty else { return }
         guard let url = URL(string: viewModel.baseURL + "/tasks") else { return }
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
+        var req = viewModel.authorizedRequest(url: url, method: "POST")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try? JSONSerialization.data(withJSONObject: [
             "action": "create",
@@ -338,19 +459,73 @@ struct TasksView: View {
             "schedule": effectiveCron,
             "schedule_label": newSchedulePreset.rawValue
         ])
-        _ = try? await URLSession.shared.data(for: req)
+        do {
+            let (_, resp) = try await URLSession.shared.data(for: req)
+            if let http = resp as? HTTPURLResponse, http.statusCode != 200 {
+                statusMsg = "Fehler beim Erstellen (HTTP \(http.statusCode))"
+            }
+        } catch {
+            statusMsg = "Erstellen fehlgeschlagen"
+        }
         showAddTask = false
         resetForm()
         await loadTasks()
     }
 
+    func updateTask() async {
+        guard let task = editingTask else { return }
+        let name = newName.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else { return }
+        guard let url = URL(string: viewModel.baseURL + "/tasks") else { return }
+        var req = viewModel.authorizedRequest(url: url, method: "POST")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: [
+            "action": "update",
+            "id": task.id,
+            "name": name,
+            "prompt": newPrompt.trimmingCharacters(in: .whitespaces),
+            "schedule": effectiveCron,
+            "enabled": task.enabled
+        ] as [String: Any])
+        do {
+            let (_, resp) = try await URLSession.shared.data(for: req)
+            if let http = resp as? HTTPURLResponse, http.statusCode != 200 {
+                statusMsg = "Fehler beim Aktualisieren (HTTP \(http.statusCode))"
+            }
+        } catch {
+            statusMsg = "Aktualisieren fehlgeschlagen"
+        }
+        showEditTask = false
+        editingTask = nil
+        resetForm()
+        await loadTasks()
+    }
+
+    func toggleTask(_ task: ScheduledTask, enabled: Bool) async {
+        guard let url = URL(string: viewModel.baseURL + "/tasks") else { return }
+        var req = viewModel.authorizedRequest(url: url, method: "POST")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: [
+            "action": "update",
+            "id": task.id,
+            "enabled": enabled
+        ] as [String: Any])
+        _ = try? await URLSession.shared.data(for: req)
+        if let idx = tasks.firstIndex(where: { $0.id == task.id }) {
+            tasks[idx].enabled = enabled
+        }
+    }
+
     func deleteTask(_ task: ScheduledTask) async {
         guard let url = URL(string: viewModel.baseURL + "/tasks") else { return }
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
+        var req = viewModel.authorizedRequest(url: url, method: "POST")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try? JSONSerialization.data(withJSONObject: ["action": "delete", "id": task.id])
-        _ = try? await URLSession.shared.data(for: req)
+        do {
+            _ = try await URLSession.shared.data(for: req)
+        } catch {
+            statusMsg = "Löschen fehlgeschlagen"
+        }
         tasks.removeAll { $0.id == task.id }
     }
 
@@ -371,7 +546,10 @@ struct TasksView: View {
 struct TaskCard: View {
     let task: ScheduledTask
     let onRun: () -> Void
+    let onEdit: () -> Void
     let onDelete: () -> Void
+    let onToggle: (Bool) -> Void
+    let onOpenChat: () -> Void
     @State private var showDeleteConfirm = false
 
     var body: some View {
@@ -386,6 +564,14 @@ struct TaskCard: View {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 8) {
                         Text(task.name).font(.system(size: 14, weight: .semibold))
+                        // Enabled/Disabled toggle
+                        Toggle("", isOn: Binding(
+                            get: { task.enabled },
+                            set: { onToggle($0) }
+                        ))
+                        .toggleStyle(.switch)
+                        .controlSize(.mini)
+                        .labelsHidden()
                         GlassStatusBadge(
                             label: task.enabled ? "Aktiv" : "Pausiert",
                             color: task.enabled ? .koboldEmerald : .secondary
@@ -399,11 +585,9 @@ struct TaskCard: View {
                     }
 
                     HStack(spacing: 12) {
-                        // Schedule label
                         HStack(spacing: 4) {
                             Image(systemName: "clock").font(.caption2)
-                            Text(task.scheduleDescription)
-                                .font(.system(size: 10))
+                            Text(task.scheduleDescription).font(.system(size: 10))
                         }
                         .foregroundColor(.secondary)
                         .padding(.horizontal, 6).padding(.vertical, 3)
@@ -417,20 +601,29 @@ struct TaskCard: View {
 
                 // Actions
                 VStack(spacing: 6) {
-                    GlassButton(title: "Jetzt starten", icon: "play.fill", isPrimary: true) { onRun() }
+                    GlassButton(title: "Starten", icon: "play.fill", isPrimary: true) { onRun() }
                         .help("Aufgabe jetzt manuell ausführen")
-                    Button(action: { showDeleteConfirm = true }) {
-                        Image(systemName: "trash").foregroundColor(.red.opacity(0.7))
-                    }
-                    .buttonStyle(.plain)
-                    .help("Aufgabe löschen")
-                    .confirmationDialog(
-                        "Aufgabe '\(task.name)' löschen?",
-                        isPresented: $showDeleteConfirm,
-                        titleVisibility: .visible
-                    ) {
-                        Button("Löschen", role: .destructive) { onDelete() }
-                        Button("Abbrechen", role: .cancel) {}
+                    HStack(spacing: 4) {
+                        Button(action: onOpenChat) {
+                            Image(systemName: "message.fill").foregroundColor(.koboldEmerald.opacity(0.8))
+                        }
+                        .buttonStyle(.plain).help("Task-Chat öffnen")
+                        Button(action: onEdit) {
+                            Image(systemName: "pencil").foregroundColor(.koboldGold.opacity(0.8))
+                        }
+                        .buttonStyle(.plain).help("Aufgabe bearbeiten")
+                        Button(action: { showDeleteConfirm = true }) {
+                            Image(systemName: "trash").foregroundColor(.red.opacity(0.7))
+                        }
+                        .buttonStyle(.plain).help("Aufgabe löschen")
+                        .confirmationDialog(
+                            "Aufgabe '\(task.name)' löschen?",
+                            isPresented: $showDeleteConfirm,
+                            titleVisibility: .visible
+                        ) {
+                            Button("Löschen", role: .destructive) { onDelete() }
+                            Button("Abbrechen", role: .cancel) {}
+                        }
                     }
                 }
             }

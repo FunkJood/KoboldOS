@@ -25,9 +25,7 @@ struct ModelsView: View {
                         }
                     }
                     .pickerStyle(.segmented)
-                    .onChange(of: selectedBackend) { _, newValue in
-                        print("Selected backend: \(newValue)")
-                    }
+                    .onChange(of: selectedBackend) { _, _ in }
 
                     // Backend Health Status
                     if !backendHealth.isEmpty {

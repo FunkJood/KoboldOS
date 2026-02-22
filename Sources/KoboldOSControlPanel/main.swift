@@ -5,6 +5,7 @@ import AppKit
 
 extension Notification.Name {
     static let koboldNavigate = Notification.Name("koboldNavigateTo")
+    static let koboldShutdownSave = Notification.Name("koboldShutdownSave")
 }
 
 // MARK: - App Entry Point
@@ -102,39 +103,49 @@ struct KoboldOSApp: App {
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        // If menu bar mode is enabled, don't quit when window closes — hide to menu bar
-        let menuBarEnabled = UserDefaults.standard.bool(forKey: "kobold.menuBar.enabled")
-        let hideOnClose = UserDefaults.standard.bool(forKey: "kobold.menuBar.hideMainWindow")
-        if menuBarEnabled && hideOnClose {
-            // Switch to accessory mode (hides dock icon)
+        // NEVER quit when window closes — always minimize to menu bar / dock
+        return false
+    }
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        // Intercept window close button: hide instead of close
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification,
+            object: nil, queue: .main
+        ) { notif in
+            guard let window = notif.object as? NSWindow,
+                  window.className != "NSStatusBarWindow",
+                  !window.className.contains("Popover"),
+                  !window.className.contains("Sheet") else { return }
+            // Hide the window and switch to accessory mode (menu bar only)
             Task { @MainActor in
-                MenuBarController.shared.updateActivationPolicy()
+                NSApp.setActivationPolicy(.accessory)
             }
-            return false
         }
-        return true
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        // Notify all observers to save data before shutdown
+        NotificationCenter.default.post(name: .koboldShutdownSave, object: nil)
         RuntimeManager.shared.stopDaemon()
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
         // Restore regular activation policy when app becomes active
         Task { @MainActor in
-            if MenuBarController.shared.isMenuBarEnabled {
-                NSApp.setActivationPolicy(.regular)
-            }
+            NSApp.setActivationPolicy(.regular)
         }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        // Clicking dock icon when all windows closed: show main window
+        // Clicking dock icon or menu bar: show main window
         if !flag {
             Task { @MainActor in
                 NSApp.setActivationPolicy(.regular)
-                // Re-open the main window
-                if let window = NSApp.windows.first(where: { $0.className != "NSStatusBarWindow" && !$0.className.contains("Popover") }) {
+                NSApp.activate(ignoringOtherApps: true)
+                if let window = NSApp.windows.first(where: {
+                    $0.className != "NSStatusBarWindow" && !$0.className.contains("Popover")
+                }) {
                     window.makeKeyAndOrderFront(nil)
                 }
             }

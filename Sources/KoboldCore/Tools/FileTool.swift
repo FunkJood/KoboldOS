@@ -82,6 +82,12 @@ public struct FileTool: Tool, Sendable {
         case "read":
             return try readFile(at: resolvedPath)
         case "write":
+            guard permissionEnabled("kobold.perm.fileWrite") else {
+                throw ToolError.unauthorized("Dateischreiben ist in den Einstellungen deaktiviert.")
+            }
+            guard permissionEnabled("kobold.perm.createFiles") || FileManager.default.fileExists(atPath: resolvedPath) else {
+                throw ToolError.unauthorized("Dateien erstellen ist in den Einstellungen deaktiviert.")
+            }
             return try writeFile(at: resolvedPath, content: content)
         case "list":
             return try listDirectory(at: resolvedPath)
@@ -89,6 +95,9 @@ public struct FileTool: Tool, Sendable {
             let exists = FileManager.default.fileExists(atPath: resolvedPath)
             return exists ? "exists: true" : "exists: false"
         case "delete":
+            guard permissionEnabled("kobold.perm.deleteFiles", defaultValue: false) else {
+                throw ToolError.unauthorized("Dateien löschen ist in den Einstellungen deaktiviert.")
+            }
             return try deleteFile(at: resolvedPath)
         default:
             throw ToolError.invalidParameter("action", "unknown action: \(action)")

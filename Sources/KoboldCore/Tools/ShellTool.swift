@@ -84,34 +84,33 @@ public struct ShellTool: Tool, Sendable {
 
     // MARK: - Tier Logic
 
+    // Autonomy level is the PRIMARY control. Tier toggles can ADDITIONALLY enable tiers.
+    // Level 1 = Safe only, Level 2 = Safe+Normal, Level 3 = Power (all allowed)
+    private var autonomyLevel: Int {
+        min(max(UserDefaults.standard.integer(forKey: "kobold.autonomyLevel"), 1), 3)
+    }
+
     private var isPowerTier: Bool {
-        let useTierToggles = UserDefaults.standard.object(forKey: "kobold.shell.safeTier") != nil
-        if useTierToggles {
-            return UserDefaults.standard.bool(forKey: "kobold.shell.powerTier")
-        }
-        let level = min(max(UserDefaults.standard.integer(forKey: "kobold.autonomyLevel"), 1), 3)
-        return level >= 3
+        if autonomyLevel >= 3 { return true }
+        return UserDefaults.standard.bool(forKey: "kobold.shell.powerTier")
     }
 
     private var isNormalTier: Bool {
-        let useTierToggles = UserDefaults.standard.object(forKey: "kobold.shell.safeTier") != nil
-        if useTierToggles {
-            return UserDefaults.standard.bool(forKey: "kobold.shell.normalTier")
-        }
-        let level = min(max(UserDefaults.standard.integer(forKey: "kobold.autonomyLevel"), 1), 3)
-        return level >= 2
+        if autonomyLevel >= 2 { return true }
+        return UserDefaults.standard.bool(forKey: "kobold.shell.normalTier")
     }
 
     private var isSafeTier: Bool {
-        let useTierToggles = UserDefaults.standard.object(forKey: "kobold.shell.safeTier") != nil
-        if useTierToggles {
-            return UserDefaults.standard.bool(forKey: "kobold.shell.safeTier")
-        }
-        return true // safe tier always on in legacy mode
+        return true // safe tier always on
     }
 
     private var customBlacklist: [String] {
         let raw = UserDefaults.standard.string(forKey: "kobold.shell.customBlacklist") ?? ""
+        return raw.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    }
+
+    private var customAllowlist: [String] {
+        let raw = UserDefaults.standard.string(forKey: "kobold.shell.customAllowlist") ?? ""
         return raw.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
     }
 
@@ -136,6 +135,11 @@ public struct ShellTool: Tool, Sendable {
     }
 
     private func validateCommand(_ command: String) throws {
+        // 0. Check global shell permission (default: enabled)
+        guard permissionEnabled("kobold.perm.shell") else {
+            throw ToolError.unauthorized("Shell-Zugriff ist in den Einstellungen deaktiviert.")
+        }
+
         let trimmed = command.trimmingCharacters(in: .whitespaces)
         let lowered = trimmed.lowercased()
         let firstWord = trimmed.components(separatedBy: " ").first ?? ""
@@ -189,15 +193,16 @@ public struct ShellTool: Tool, Sendable {
             }
         }
 
-        // Build allowlist from active tiers
+        // Build allowlist from active tiers + custom allowlist
         var allowed: [String] = []
         if isSafeTier { allowed += safeTierAllowlist }
         if isNormalTier { allowed += normalTierAllowlist }
+        allowed += customAllowlist  // User-defined extra allowed commands
 
         let isAllowed = allowed.contains { firstBinary == $0 || firstWord.hasSuffix("/\($0)") }
         if !isAllowed {
             throw ToolError.unauthorized(
-                "Command '\(firstBinary)' not in tier allowlist. Enable Power-Tier for unrestricted access."
+                "Command '\(firstBinary)' nicht erlaubt. Aktiviere Power-Tier oder füge es zur Whitelist hinzu."
             )
         }
     }
@@ -243,32 +248,80 @@ public struct ShellTool: Tool, Sendable {
             process.standardOutput = stdoutPipe
             process.standardError = stderrPipe
 
+            // Collect output data incrementally to avoid readDataToEndOfFile() blocking
+            nonisolated(unsafe) var stdoutData = Data()
+            nonisolated(unsafe) var stderrData = Data()
+            let dataLock = NSLock()
+
+            stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
+                let chunk = handle.availableData
+                if !chunk.isEmpty {
+                    dataLock.lock()
+                    stdoutData.append(chunk)
+                    dataLock.unlock()
+                }
+            }
+            stderrPipe.fileHandleForReading.readabilityHandler = { handle in
+                let chunk = handle.availableData
+                if !chunk.isEmpty {
+                    dataLock.lock()
+                    stderrData.append(chunk)
+                    dataLock.unlock()
+                }
+            }
+
+            // Thread-safe guard against double-resume (timeout + terminationHandler race)
+            let resumeLock = NSLock()
+            nonisolated(unsafe) var hasResumed = false
+
+            @Sendable func tryResume(_ block: () -> Void) {
+                resumeLock.lock()
+                defer { resumeLock.unlock() }
+                guard !hasResumed else { return }
+                hasResumed = true
+                block()
+            }
+
             // Timeout
             let timer = DispatchSource.makeTimerSource(queue: .global())
             timer.schedule(deadline: .now() + timeout)
             timer.setEventHandler {
                 process.terminate()
-                continuation.resume(throwing: ToolError.timeout)
+                // Give a brief moment for output handlers to flush
+                DispatchQueue.global().asyncAfter(deadline: .now() + 0.2) {
+                    stdoutPipe.fileHandleForReading.readabilityHandler = nil
+                    stderrPipe.fileHandleForReading.readabilityHandler = nil
+                    tryResume { continuation.resume(throwing: ToolError.timeout) }
+                }
             }
             timer.resume()
 
             process.terminationHandler = { proc in
                 timer.cancel()
-                let outData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-                let errData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-                let stdout = String(data: outData, encoding: .utf8) ?? ""
-                let stderr = String(data: errData, encoding: .utf8) ?? ""
-                let exitCode = proc.terminationStatus
+                // Give a brief moment for output handlers to flush remaining data
+                DispatchQueue.global().asyncAfter(deadline: .now() + 0.1) {
+                    stdoutPipe.fileHandleForReading.readabilityHandler = nil
+                    stderrPipe.fileHandleForReading.readabilityHandler = nil
 
-                var output = "$ \(command)\n"
-                if !stdout.isEmpty { output += stdout }
-                if !stderr.isEmpty { output += "[stderr] \(stderr)" }
-                output += "\n[exit: \(exitCode)]"
+                    dataLock.lock()
+                    let stdout = String(data: stdoutData, encoding: .utf8) ?? ""
+                    let stderr = String(data: stderrData, encoding: .utf8) ?? ""
+                    dataLock.unlock()
 
-                if exitCode == 0 || !stdout.isEmpty {
-                    continuation.resume(returning: output)
-                } else {
-                    continuation.resume(throwing: ToolError.executionFailed(stderr.isEmpty ? "Exit code \(exitCode)" : stderr))
+                    let exitCode = proc.terminationStatus
+
+                    var output = "$ \(command)\n"
+                    if !stdout.isEmpty { output += stdout }
+                    if !stderr.isEmpty { output += "[stderr] \(stderr)" }
+                    output += "\n[exit: \(exitCode)]"
+
+                    tryResume {
+                        if exitCode == 0 || !stdout.isEmpty {
+                            continuation.resume(returning: output)
+                        } else {
+                            continuation.resume(throwing: ToolError.executionFailed(stderr.isEmpty ? "Exit code \(exitCode)" : stderr))
+                        }
+                    }
                 }
             }
 
@@ -276,7 +329,9 @@ public struct ShellTool: Tool, Sendable {
                 try process.run()
             } catch {
                 timer.cancel()
-                continuation.resume(throwing: ToolError.executionFailed(error.localizedDescription))
+                stdoutPipe.fileHandleForReading.readabilityHandler = nil
+                stderrPipe.fileHandleForReading.readabilityHandler = nil
+                tryResume { continuation.resume(throwing: ToolError.executionFailed(error.localizedDescription)) }
             }
         }
     }

@@ -117,7 +117,7 @@ struct GlassTextField: View {
         .textFieldStyle(.plain)
         .foregroundColor(.primary)
         .padding(.horizontal, 12)
-        .padding(.vertical, 9)
+        .padding(.vertical, 7)
         .background(
             RoundedRectangle(cornerRadius: 10)
                 .fill(Color.white.opacity(isFocused ? 0.12 : 0.08))
@@ -798,6 +798,15 @@ struct ThinkingPanelBubble: View {
                                 .scaleEffect(0.7)
                         }
                         Spacer()
+                        if !isLive {
+                            Button(action: { copyAllSteps() }) {
+                                Image(systemName: "doc.on.doc")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                            .help("Alle Schritte kopieren")
+                        }
                     }
                     .contentShape(Rectangle())
                 }
@@ -864,6 +873,23 @@ struct ThinkingPanelBubble: View {
         case .agentStep:     return .secondary
         }
     }
+
+    private func copyAllSteps() {
+        let text = entries.map { entry in
+            let prefix: String
+            switch entry.type {
+            case .thought:       prefix = "💭"
+            case .toolCall:      prefix = "🔧 \(entry.toolName)"
+            case .toolResult:    prefix = entry.success ? "✅ \(entry.toolName)" : "❌ \(entry.toolName)"
+            case .subAgentSpawn: prefix = "👤 \(entry.toolName)"
+            case .subAgentResult: prefix = "📋 \(entry.toolName)"
+            case .agentStep:     prefix = "→"
+            }
+            return "\(prefix): \(entry.content)"
+        }.joined(separator: "\n")
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
 }
 
 // MARK: - NotificationPopover
@@ -909,9 +935,13 @@ struct NotificationPopover: View {
                 ScrollView {
                     VStack(spacing: 0) {
                         ForEach(viewModel.notifications) { notif in
-                            NotificationRow(notification: notif) {
+                            NotificationRow(notification: notif, onTap: {
+                                if let target = notif.navigationTarget {
+                                    viewModel.navigateToTarget(target)
+                                }
+                            }, onDismiss: {
                                 viewModel.removeNotification(notif)
-                            }
+                            })
                             Divider().opacity(0.3)
                         }
                     }
@@ -926,6 +956,7 @@ struct NotificationPopover: View {
 
 struct NotificationRow: View {
     let notification: KoboldNotification
+    var onTap: (() -> Void)? = nil
     let onDismiss: () -> Void
     @State private var isHovered = false
 
@@ -944,9 +975,16 @@ struct NotificationRow: View {
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
                     .lineLimit(3)
-                Text(notification.timestamp, style: .relative)
-                    .font(.system(size: 9))
-                    .foregroundColor(.secondary.opacity(0.7))
+                HStack(spacing: 4) {
+                    Text(notification.timestamp, style: .relative)
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary.opacity(0.7))
+                    if notification.navigationTarget != nil {
+                        Image(systemName: "arrow.right.circle.fill")
+                            .font(.system(size: 9))
+                            .foregroundColor(.koboldEmerald.opacity(0.6))
+                    }
+                }
             }
 
             Spacer()
@@ -963,6 +1001,8 @@ struct NotificationRow: View {
         .padding(.horizontal, 14).padding(.vertical, 8)
         .background(isHovered ? Color.koboldSurface.opacity(0.5) : Color.clear)
         .onHover { isHovered = $0 }
+        .contentShape(Rectangle())
+        .onTapGesture { onTap?() }
     }
 }
 

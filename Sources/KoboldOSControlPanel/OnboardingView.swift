@@ -693,6 +693,9 @@ struct OnboardingView: View {
         UserDefaults.standard.set(koboldName, forKey: "kobold.koboldName")
         UserDefaults.standard.set(personality.rawValue, forKey: "kobold.personality")
         UserDefaults.standard.set(primaryUse.agentType, forKey: "kobold.agent.type")
+        // Sync language to agent prompt key (maps "de" → "deutsch", "en" → "englisch", etc.)
+        let langMap: [String: String] = ["de": "deutsch", "en": "englisch", "fr": "französisch", "es": "spanisch", "it": "italienisch", "pt": "portugiesisch", "hi": "hindi", "zh": "chinesisch", "ja": "japanisch", "ko": "koreanisch", "tr": "türkisch", "pl": "polnisch", "nl": "niederländisch", "ar": "arabisch", "ru": "russisch"]
+        UserDefaults.standard.set(langMap[languageCode] ?? "deutsch", forKey: "kobold.agent.language")
 
         // POST initial memory directly to /memory/update (bypasses LLM — reliable)
         let personaText = localizedPersonaText()

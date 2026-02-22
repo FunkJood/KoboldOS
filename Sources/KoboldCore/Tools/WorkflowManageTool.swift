@@ -71,7 +71,7 @@ public struct WorkflowManageTool: Tool, Sendable {
 
         switch action {
         case "create":
-            let name = arguments["name"]!
+            guard let name = arguments["name"] else { throw ToolError.missingRequired("name") }
             let desc = arguments["description"] ?? ""
             let stepsJSON = arguments["steps"] ?? "[]"
             let workflow = WorkflowDefinition(
@@ -93,7 +93,7 @@ public struct WorkflowManageTool: Tool, Sendable {
             return "Workflows (\(workflows.count)):\n" + lines.joined(separator: "\n")
 
         case "delete":
-            let id = arguments["id"]!
+            guard let id = arguments["id"] else { throw ToolError.missingRequired("id") }
             guard let idx = workflows.firstIndex(where: { $0.id.hasPrefix(id) || $0.id == id }) else {
                 return "Workflow mit ID '\(id)' nicht gefunden."
             }

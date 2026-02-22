@@ -1,14 +1,92 @@
 # KoboldOS Changelog
 
+## Alpha v0.2.2 — 2026-02-22
+
+### New Features (Session-Upgrade)
+- **Strikte Session-Trennung**: 3 separate Speicher für Chat, Task und Workflow Sessions
+  - `ChatMode` Enum (normal/task/workflow) ersetzt `isWorkflowChat`
+  - Eigene JSON-Dateien: `chat_sessions.json`, `task_sessions.json`, `workflow_sessions.json`
+  - Sessions werden beim App-Beenden alle 3 korrekt gespeichert
+- **Task-Bearbeitung**: Edit-Sheet mit vorausgefülltem Formular für bestehende Tasks
+  - Enabled/Disabled Toggle direkt auf der TaskCard
+  - Update via Backend `"action": "update"`
+- **Task-Chats**: Eigene Chat-Sessions pro Task
+  - Task-Chat-Button auf jeder TaskCard
+  - Task-Sessions in eigener Sidebar-Liste unter "Aufgaben"
+  - Chat-Header zeigt Task-Name mit blauem Badge
+- **Workflow-Chats**: Persistierte Workflow-Sessions (nicht mehr temporär)
+  - Workflow-Sessions in eigener Sidebar-Liste unter "Workflows"
+  - Zurück-zum-Chat Button im Banner
+- **Task Auto-Scheduler**: Automatische Task-Ausführung nach Cron-Zeitplan
+  - Alle 60 Sekunden Prüfung fälliger Tasks
+  - Cron-Parser für */N, N, N-M, * Syntax
+  - `last_run` wird automatisch aktualisiert
+- **Notification-Navigation**: Klick auf Benachrichtigung navigiert zum relevanten Chat/Task/Workflow
+  - `NavigationTarget` System (chat, task, workflow, tab)
+  - Pfeil-Icon bei navigierbaren Benachrichtigungen
+
+### Previous Features
+- **ProactiveEngine**: Proaktive Vorschläge auf dem Dashboard
+  - Zeitbasierte Trigger (Morgen-Briefing, Tagesabschluss)
+  - Error-Recovery-Vorschläge bei Fehlern im Chat
+  - Systemgesundheits-Monitoring (Ollama-Status)
+  - Benutzerdefinierte Regeln (Uhrzeit, Startup)
+  - ProactiveSuggestionsBar UI-Komponente
+- **StoreView**: Marketplace-Platzhalter für Tools, Skills und Automationen (Coming Soon)
+- **VectorSearch**: Semantische Suche für Memory-Einträge
+- **DelegateTaskTool**: Agent kann Aufgaben an Sub-Agenten delegieren
+- **WebApp-Fernsteuerung**: Lokaler Web-Server mit Basic Auth
+  - Spiegelt Chat, Dashboard, Gedächtnis, Aufgaben als Web-UI
+  - Passwort-geschützt (Einstellungen → Fernsteuerung)
+  - Proxy zum Daemon-API mit automatischer Token-Weiterleitung
+- **Memory Policy**: Konfigurierbare Gedächtnis-Richtlinie (auto/ask/manual/disabled)
+- **Verhaltensregeln**: Freie Textregeln die der Agent immer befolgt (in System-Prompt)
+- **Apple Systemzugriff**: "Berechtigung anfragen"-Buttons für Kalender, Kontakte, Mail, Benachrichtigungen
+- **Neue Chat-Session beim Start**: App startet immer mit frischem Chat, alte Session wird archiviert
+- **Auto-Save bei App-Beendigung**: Chat, Sessions, Projekte und CoreMemory werden automatisch gespeichert
+
+### Bug Fixes
+- **KRITISCH: App-Freeze behoben** (3 Ursachen):
+  - `performShutdownSave()`: DispatchSemaphore auf Main Thread entfernt → fire-and-forget
+  - ShellTool Race Condition: `UnsafeMutablePointer<Bool>` → `NSLock` für Thread-Safety
+  - ShellTool Blocking IO: `readDataToEndOfFile()` → inkrementelles `availableData` mit readabilityHandler
+- **Tasks 401-Fehler behoben**: Auth-Header fehlte in TasksView (loadTasks, createTask, deleteTask)
+- **Memory-Seite zeigt Einträge**: Typ-Mapping für Standard-CoreMemory-Blocks (persona→Langzeit, knowledge→Wissen)
+- **Memory-Seite Fehlerbehandlung**: Verbindungsfehler werden angezeigt statt still ignoriert
+- **Daemon /memory/update**: Delete-Flag wird verarbeitet, Limit wird beibehalten
+- **ProactiveEngine Retain Cycle**: Timer-Closure captured ViewModel stark → weak capture fix
+- **ProactiveEngine Zeitabgleich**: Stunde+Minute statt nur Stunde für Regel-Trigger
+- **Metriken-Reset funktioniert**: Auth-Header + Token-Tracking + lokaler State-Reset
+- **Token-Tracking**: Daemon `/metrics` liefert jetzt `tokens_total` Feld
+- **Force-Unwrap Crashes**: `arguments["key"]!` → `guard let` in WorkflowManageTool, SkillWriteTool, TaskManageTool
+- **DaemonClient URL-Crashes**: `URL(string:)!` → `guard let` in GET/POST Methoden
+- **Version-Inkonsistenzen**: Info.plist war auf 0.1.7, DaemonCommand auf v1.0.1, SkillLoader auf v0.1.7 — alle auf 0.2.2 synchronisiert
+
+### UI Improvements
+- **Chat-Eingabezeile kompakter**: Reduzierte Padding (vertical 7px statt 9px, bar 6px statt 8px)
+- **OnboardingWizard Buttons funktional**: "Open Ollama" → öffnet ollama.com, "Installation Guide" → öffnet Docs
+- **Debug-Prints entfernt**: OnboardingWizardView, ModelsView, BaseAgent, CodingAgent bereinigt
+- **Einstellungen**: Neue Sektionen "Fernsteuerung" und "Apple Systemzugriff"
+- **Info.plist**: macOS Privacy-Beschreibungen für Kalender, Kontakte, AppleScript, Benachrichtigungen
+
+### Agent Improvements
+- **Sprache aus Onboarding**: `kobold.agent.language` wird automatisch beim Onboarding gesetzt (15 Sprachen)
+- **Dynamische Sprachwahl**: System Prompt unterstützt alle 15 Sprachen statt nur Deutsch/Englisch/Auto
+- **Memory Policy im System-Prompt**: Agent befolgt konfigurierte Gedächtnis-Richtlinie
+- **Verhaltensregeln im System-Prompt**: Benutzerdefinierte Regeln werden in jedes Gespräch injiziert
+
+---
+
 ## Alpha v0.2.1 — 2026-02-22
 
 ### GitHub Auto-Update System
-- **UpdateManager**: Check for updates against any GitHub repository
-  - Configurable repo field in Settings (e.g., `user/KoboldOS`)
-  - Compares GitHub Release tags with current version (semver)
-  - Shows release notes, download progress, and status
-  - Downloads DMG, replaces app, and restarts automatically
-  - Auto-check on launch (configurable toggle)
+- **UpdateManager**: Automatische Updates über GitHub Releases
+  - Hardcoded repo `FunkJood/KoboldOS` (kein Setup nötig)
+  - Vergleicht GitHub Release Tags mit aktueller Version (semver)
+  - Zeigt Release Notes, Download-Fortschritt und Status
+  - Lädt DMG herunter, ersetzt App und startet automatisch neu
+  - Auto-Check beim Start (konfigurierbar)
+  - 404/kein Release = "Aktuell" statt Fehlermeldung
 
 ### Tool Environment & Dependencies
 - **ToolEnvironment scanner**: Detects available system tools (Python, Node, Git, Ollama, Homebrew, etc.)
@@ -40,13 +118,39 @@
   - Modified feedback in all run methods (run, runStreaming, resume)
 - **Workdir in System Prompt**: Agent knows the configured working directory
 
+### Apple Integration
+- **CalendarTool** (EventKit): Kalender-Events und Erinnerungen verwalten
+  - `list_events`: Events der nächsten N Tage anzeigen
+  - `create_event`: Neue Events mit Titel, Start/Ende, Ort, Notizen
+  - `search_events`: Events nach Suchbegriff durchsuchen (±3 Monate)
+  - `list_reminders`: Offene Erinnerungen auflisten
+  - `create_reminder`: Neue Erinnerungen mit Fälligkeitsdatum
+- **ContactsTool** (Contacts Framework): Apple Kontakte durchsuchen
+  - `search`: Kontakte nach Name suchen (mit Telefon, Email, Firma, Geburtstag)
+  - `list_recent`: Erste 20 Kontakte auflisten
+- **AppleScript-Steuerung**: Mail, Messages, Notes, Safari, Finder, System
+  - In System-Prompt dokumentiert mit Beispielen
+- **Berechtigungen**: Neue Toggles in Einstellungen
+  - Kalender & Erinnerungen, Kontakte, Mail & Nachrichten, Benachrichtigungen
+
 ### Bug Fixes
+- **App-Freeze behoben (KRITISCH)**: Double-Resume in ShellTool
+  - Timer und terminationHandler konnten beide `continuation.resume()` aufrufen
+  - Fix: Atomarer Flag (`UnsafeMutablePointer<Bool>`) verhindert doppeltes Resume
+- **HTTP Timeouts**: Health-Check 3s, Metrics/Auth-Requests 5s (war unbegrenzt)
+- **"Unknown tool: input"**: SkillLoader JSON-Beispiel korrigiert (`input` → `response`)
+- **Autonomielevel 1 nicht auswählbar**: Entfernte `VStack` um ersten Picker-Tag
+- **Update 404-Fehler**: GitHub API 404 zeigt jetzt "Aktuell" statt Fehlermeldung
+- **Session-Duplikate**: Alte Sessions werden vor neuer Erstellung aufgeräumt (max 5, Auto-Cleanup nach 5s)
+- **Memory-System**: Entscheidungsbaum für human/short_term/knowledge komplett neu geschrieben
 - **BrowserTool DDG Search**: Fixed parsing of multi-class HTML elements, removed broken Google scraping
-  - DuckDuckGo uses `class="links_main links_deep result__body"` — fixed split logic
-  - Added ad filtering, improved URL decoding for DDG redirects
-  - Search chain: SearXNG → DuckDuckGo → error message
 - **Autostart Linked**: MenuBarController now uses LaunchAgentManager (was raw UserDefaults)
 - **Version bumped to 0.2.1** across all files
+
+### UI Improvements (v0.2.1)
+- Einrichtungsassistent + Debug-Modus nebeneinander in einer Zeile
+- Dashboard: Tokens/Latenz/Speicher-Karten entfernt → Anfragen, Tools, Laufzeit, Fehler in einer Reihe
+- Verfügbare Tools Grid in Einstellungen mit Python-Download-Button
 
 ---
 

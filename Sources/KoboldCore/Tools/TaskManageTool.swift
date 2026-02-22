@@ -78,8 +78,8 @@ public struct TaskManageTool: Tool, Sendable {
 
         switch action {
         case "create":
-            let name = arguments["name"]!
-            let prompt = arguments["prompt"]!
+            guard let name = arguments["name"] else { throw ToolError.missingRequired("name") }
+            guard let prompt = arguments["prompt"] else { throw ToolError.missingRequired("prompt") }
             let schedule = arguments["schedule"] ?? "0 8 * * *"
             let enabled = arguments["enabled"] != "false"
             let task = ScheduledTask(
@@ -102,7 +102,7 @@ public struct TaskManageTool: Tool, Sendable {
             return "Aufgaben (\(tasks.count)):\n" + lines.joined(separator: "\n")
 
         case "update":
-            let id = arguments["id"]!
+            guard let id = arguments["id"] else { throw ToolError.missingRequired("id") }
             guard let idx = tasks.firstIndex(where: { $0.id.hasPrefix(id) || $0.id == id }) else {
                 return "Aufgabe mit ID '\(id)' nicht gefunden."
             }
@@ -114,7 +114,7 @@ public struct TaskManageTool: Tool, Sendable {
             return "Aufgabe '\(tasks[idx].name)' aktualisiert."
 
         case "delete":
-            let id = arguments["id"]!
+            guard let id = arguments["id"] else { throw ToolError.missingRequired("id") }
             guard let idx = tasks.firstIndex(where: { $0.id.hasPrefix(id) || $0.id == id }) else {
                 return "Aufgabe mit ID '\(id)' nicht gefunden."
             }

@@ -27,7 +27,7 @@ KoboldOS/
 
 ### Package.swift Dependencies
 - No external dependencies! Everything is written from scratch.
-- Uses only Apple frameworks: Foundation, SwiftUI, AppKit, Security, ServiceManagement, Darwin
+- Uses only Apple frameworks: Foundation, SwiftUI, AppKit, Security, ServiceManagement, Darwin, EventKit, Contacts
 
 ---
 
@@ -256,14 +256,25 @@ private func handleYourEndpoint(body: Data) async -> String {
 
 ```swift
 // 1. Create Sources/KoboldCore/Tools/YourTool.swift
-public struct YourTool: AgentTool {
-    public var name: String { "your_tool" }
-    public var description: String { "Does X. Parameters: param1 (String) — description." }
+public struct YourTool: Tool {
+    public let name = "your_tool"
+    public let description = "Does X."
+    public let riskLevel: RiskLevel = .low
 
-    public func execute(_ call: ToolCall) async -> ToolResult {
-        let param = call.arguments["param1"] ?? ""
-        // ... do work ...
-        return .success("Result: \(result)", metadata: nil)
+    public var schema: ToolSchema {
+        ToolSchema(
+            properties: [
+                "param1": ToolSchemaProperty(type: "string", description: "Description", required: true)
+            ],
+            required: ["param1"]
+        )
+    }
+
+    public init() {}
+
+    public func execute(arguments: [String: String]) async throws -> String {
+        let param = arguments["param1"] ?? ""
+        return "Result: \(param)"
     }
 }
 
@@ -372,13 +383,50 @@ The build script:
 
 ---
 
-## 13. Planned / TODO
+## 13. Apple Integration (v0.2.1)
+
+### CalendarTool (`Sources/KoboldCore/Tools/CalendarTool.swift`)
+- Uses **EventKit** framework for calendar events and reminders
+- `EKEventStore` with `requestFullAccessToEvents()` (macOS 14+) / `requestAccess(to:)` fallback
+- Actions: `list_events`, `create_event`, `search_events`, `list_reminders`, `create_reminder`
+- Reminder fetch uses `withCheckedThrowingContinuation` with `nonisolated(unsafe)` for Sendability
+
+### ContactsTool (`Sources/KoboldCore/Tools/ContactsTool.swift`)
+- Uses **Contacts** framework (`CNContactStore`)
+- Actions: `search` (by name), `list_recent` (first 20)
+- Fetches: name, phone, email, organization, birthday
+
+### AppleScript Integration
+- Mail, Messages, Notes, Safari, Finder, System controls via existing `AppleScriptTool`
+- Documented in AgentLoop system prompt with examples
+
+### UpdateManager (`Sources/KoboldOSControlPanel/UpdateManager.swift`)
+- GitHub Releases API auto-update (`FunkJood/KoboldOS`)
+- DMG download → mount → replace app → restart
+- `DownloadDelegate` for progress tracking
+
+### ToolEnvironment (`Sources/KoboldOSControlPanel/ToolEnvironment.swift`)
+- Scans system for available tools (Python, Node, Git, etc.)
+- On-demand Python 3.12 download to App Support
+- `enhancedPATH` for intelligent PATH construction
+
+### New AppStorage Keys (v0.2.1)
+
+| Key | Type | Default | Purpose |
+|---|---|---|---|
+| `kobold.perm.notifications` | Bool | true | Push notifications |
+| `kobold.perm.calendar` | Bool | false | Calendar & Reminders access |
+| `kobold.perm.contacts` | Bool | false | Contacts access |
+| `kobold.perm.mail` | Bool | false | Mail & Messages access |
+
+---
+
+## 14. Planned / TODO
 
 - [ ] Actual cron scheduler daemon (background process executing tasks at schedule)
 - [ ] Workflow node connections: drag to connect/disconnect nodes
 - [ ] GPU utilization % (requires IOKit AcceleratorEntry)
-- [ ] Streaming LLM responses (SSE from daemon to UI)
 - [ ] Multi-agent delegation (Instructor → Coder/Researcher sub-agents)
-- [ ] Claude Code CLI integration as a specialized coding tool
+- [ ] Media display in chat (images, videos inline)
 - [ ] Backup & restore (ZIP of memory + chat history)
 - [ ] Plugin system (load external Swift plugins)
