@@ -698,14 +698,22 @@ struct SidebarView: View {
                     .fontWeight(selectedTab == tab ? .semibold : .regular)
                     .foregroundColor(selectedTab == tab ? .koboldEmerald : .white)
                 Spacer()
-                // Beta badge for Team tab
-                if tab == .workflows {
+                // Beta / Coming Soon badges
+                if tab == .workflows || tab == .teams {
                     Text("Beta")
                         .font(.system(size: 11.5, weight: .bold))
                         .foregroundColor(.koboldGold)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 2)
                         .background(Capsule().fill(Color.koboldGold.opacity(0.2)))
+                }
+                if tab == .marketplace {
+                    Text("Coming Soon")
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundColor(.secondary)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Color.secondary.opacity(0.15)))
                 }
             }
             .padding(.horizontal, 16)
