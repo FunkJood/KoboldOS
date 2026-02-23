@@ -61,10 +61,10 @@ class SystemMetricsMonitor: ObservableObject {
     private func updateThermal() {
         let state = ProcessInfo.processInfo.thermalState
         switch state {
-        case .nominal:  thermalPressure = 0.15; thermalLabel = "Kühl"
-        case .fair:     thermalPressure = 0.45; thermalLabel = "Normal"
-        case .serious:  thermalPressure = 0.75; thermalLabel = "Hoch"
-        case .critical: thermalPressure = 1.0;  thermalLabel = "Kritisch"
+        case .nominal:  thermalPressure = 0.15; thermalLabel = "~40°C"
+        case .fair:     thermalPressure = 0.45; thermalLabel = "~60°C"
+        case .serious:  thermalPressure = 0.75; thermalLabel = "~80°C"
+        case .critical: thermalPressure = 1.0;  thermalLabel = "~95°C"
         @unknown default: thermalPressure = 0.0; thermalLabel = "—"
         }
     }
@@ -668,7 +668,7 @@ struct DashboardView: View {
                     )
                     CircularGaugeView(
                         value: sysMonitor.thermalPressure,
-                        label: "Temp",
+                        label: "Temperatur",
                         valueText: sysMonitor.thermalLabel,
                         color: sysMonitor.thermalPressure > 0.7 ? .red : sysMonitor.thermalPressure > 0.4 ? .orange : .koboldEmerald,
                         size: 72

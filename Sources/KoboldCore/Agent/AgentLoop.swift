@@ -187,6 +187,9 @@ public actor AgentLoop {
         // Apple Integration tools
         await registry.register(CalendarTool())
         await registry.register(ContactsTool())
+        // Browser automation (Playwright/Chrome) & Screen control
+        await registry.register(PlaywrightTool())
+        await registry.register(ScreenControlTool())
         #endif
 
         // Sub-agent delegation (AgentZero-style call_subordinate) — pass provider config + parent memory
@@ -945,6 +948,29 @@ public actor AgentLoop {
     public func getTraceJSON() async -> String { "{}" }
     public func getTimelineJSON() async -> String { "{}" }
 
+    private func buildGoalsSection() -> String {
+        guard let data = UserDefaults.standard.data(forKey: "kobold.proactive.goals"),
+              let goals = try? JSONDecoder().decode([[String: String]].self, from: data) else {
+            // Try parsing GoalEntry-style JSON
+            if let data = UserDefaults.standard.data(forKey: "kobold.proactive.goals") {
+                struct GoalEntry: Codable { var text: String; var isActive: Bool; var priority: String }
+                if let entries = try? JSONDecoder().decode([GoalEntry].self, from: data) {
+                    let active = entries.filter { $0.isActive }
+                    guard !active.isEmpty else { return "" }
+                    let list = active.map { "- [\($0.priority)] \($0.text)" }.joined(separator: "\n")
+                    return """
+
+        ## Langfristige Ziele (vom Nutzer definiert)
+        Arbeite proaktiv auf diese Ziele hin. Schlage relevante Aktionen vor wenn passend.
+        \(list)
+        """
+                }
+            }
+            return ""
+        }
+        return ""
+    }
+
     // MARK: - Tool Descriptions (AgentZero-style with JSON examples)
 
     private func buildConnectionsContext() -> String {
@@ -1340,7 +1366,7 @@ public actor AgentLoop {
         Dein Kommunikationsstil ist \(tone).
         Standard-Arbeitsverzeichnis: \(UserDefaults.standard.string(forKey: "kobold.defaultWorkDir") ?? "~/Documents/KoboldOS")
         Nutze dieses Verzeichnis wenn der Nutzer neue Projekte oder Dateien erstellt und keinen Pfad angibt.
-        \(personalitySection)\(memoryPolicySection)\(behaviorRulesSection)\(memoryRulesSection)
+        \(personalitySection)\(memoryPolicySection)\(behaviorRulesSection)\(memoryRulesSection)\(buildGoalsSection())
 
         ## Verbindungen
         \(buildConnectionsContext())

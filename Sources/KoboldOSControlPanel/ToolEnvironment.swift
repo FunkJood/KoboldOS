@@ -78,6 +78,7 @@ final class ToolEnvironment: ObservableObject {
             ("docker", "Docker", "docker", "--version"),
             ("ruby", "Ruby", "ruby", "--version"),
             ("swift", "Swift", "swift", "--version"),
+            ("playwright", "Playwright", "npx", "playwright --version"),
         ]
 
         var results: [ToolInfo] = []

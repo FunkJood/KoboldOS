@@ -167,6 +167,10 @@ class RuntimeViewModel: ObservableObject {
     @Published var notifications: [KoboldNotification] = []
     @Published var unreadNotificationCount: Int = 0
 
+    // Teams
+    @Published var teams: [AgentTeam] = AgentTeam.defaults
+    @Published var teamMessages: [UUID: [GroupMessage]] = [:]
+
     // Models
     @Published var loadedModels: [ModelInfo] = []
     @Published var selectedRole: ModelRole = .utility
@@ -1170,6 +1174,92 @@ class RuntimeViewModel: ObservableObject {
             if let data = try? JSONEncoder().encode(deduped) {
                 try? data.write(to: url)
             }
+        }
+    }
+
+    // MARK: - Team Persistence & Execution
+
+    private var teamsURL: URL {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        return appSupport.appendingPathComponent("KoboldOS/teams.json")
+    }
+
+    private var teamMessagesDir: URL {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        return appSupport.appendingPathComponent("KoboldOS/team_messages")
+    }
+
+    func loadTeams() {
+        guard let data = try? Data(contentsOf: teamsURL),
+              let loaded = try? JSONDecoder().decode([AgentTeam].self, from: data) else { return }
+        teams = loaded
+    }
+
+    func saveTeams() {
+        let snapshot = teams
+        let url = teamsURL
+        Task.detached(priority: .utility) {
+            let dir = url.deletingLastPathComponent()
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            if let data = try? JSONEncoder().encode(snapshot) {
+                try? data.write(to: url)
+            }
+        }
+    }
+
+    func loadTeamMessages(for teamId: UUID) {
+        let url = teamMessagesDir.appendingPathComponent("\(teamId.uuidString).json")
+        guard let data = try? Data(contentsOf: url),
+              let loaded = try? JSONDecoder().decode([GroupMessage].self, from: data) else { return }
+        teamMessages[teamId] = loaded
+    }
+
+    func saveTeamMessages(for teamId: UUID) {
+        guard let msgs = teamMessages[teamId] else { return }
+        let snapshot = msgs
+        let url = teamMessagesDir.appendingPathComponent("\(teamId.uuidString).json")
+        Task.detached(priority: .utility) {
+            let dir = url.deletingLastPathComponent()
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            if let data = try? JSONEncoder().encode(snapshot) {
+                try? data.write(to: url)
+            }
+        }
+    }
+
+    /// Send a single message to the daemon for one team agent (non-streaming, for parallel execution)
+    func sendTeamAgentMessage(prompt: String, profile: String) async -> String {
+        guard let url = URL(string: baseURL + "/agent") else { return "URL-Fehler" }
+
+        let provider = UserDefaults.standard.string(forKey: "kobold.provider") ?? "ollama"
+        let model = UserDefaults.standard.string(forKey: "kobold.model.\(profile)") ?? UserDefaults.standard.string(forKey: "kobold.model") ?? "llama3.2"
+        let apiKey = UserDefaults.standard.string(forKey: "kobold.provider.\(provider).key") ?? ""
+
+        let payload: [String: Any] = [
+            "message": prompt,
+            "agent_type": profile,
+            "provider": provider,
+            "model": model,
+            "api_key": apiKey,
+            "temperature": 0.7
+        ]
+
+        var req = authorizedRequest(url: url, method: "POST")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: payload)
+        req.timeoutInterval = 300
+
+        do {
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else {
+                return "HTTP-Fehler \((resp as? HTTPURLResponse)?.statusCode ?? 0)"
+            }
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                return json["output"] as? String ?? json["response"] as? String ?? String(data: data, encoding: .utf8) ?? "Keine Antwort"
+            }
+            return String(data: data, encoding: .utf8) ?? "Keine Antwort"
+        } catch {
+            return "Fehler: \(error.localizedDescription)"
         }
     }
 

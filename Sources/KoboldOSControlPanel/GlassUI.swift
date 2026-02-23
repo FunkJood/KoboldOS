@@ -211,7 +211,7 @@ struct GlassChatBubble: View {
                             .textSelection(.enabled)
                     } else {
                         // Assistant messages: rich text with markdown, code blocks, images, links
-                        RichTextView(text: message, isUser: false)
+                        RichTextView(text: message, isUser: false, fontSize: CGFloat(chatFontSize))
                     }
                 }
                 .padding(.horizontal, 14)
@@ -1488,22 +1488,22 @@ private func parseRichBlocks(_ text: String) -> [RichBlock] {
 
 /// Render a markdown text block as AttributedString (supports bold, italic, code, links)
 /// PERF: Skips expensive markdown parsing for strings >4KB to prevent Main Thread freeze.
-private func markdownAttributedString(_ text: String, isUser: Bool) -> AttributedString {
+private func markdownAttributedString(_ text: String, isUser: Bool, fontSize: CGFloat = 16.5) -> AttributedString {
     // Skip markdown parsing for large strings — it's O(n²) and blocks Main Thread
     if text.count > 4000 {
         var attr = AttributedString(text)
-        attr.font = .system(size: 16.5)
+        attr.font = .system(size: fontSize)
         attr.foregroundColor = isUser ? .white : .primary
         return attr
     }
     do {
         var attr = try AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))
-        attr.font = .system(size: 16.5)
+        attr.font = .system(size: fontSize)
         attr.foregroundColor = isUser ? .white : .primary
         return attr
     } catch {
         var attr = AttributedString(text)
-        attr.font = .system(size: 16.5)
+        attr.font = .system(size: fontSize)
         attr.foregroundColor = isUser ? .white : .primary
         return attr
     }
@@ -1514,6 +1514,7 @@ private func markdownAttributedString(_ text: String, isUser: Bool) -> Attribute
 struct RichTextView: View {
     let text: String
     let isUser: Bool
+    var fontSize: CGFloat = 16.5
     @State private var cachedBlocks: [RichBlock] = []
     @State private var cachedText: String = ""
 
@@ -1524,7 +1525,7 @@ struct RichTextView: View {
                 switch block {
                 case .text(let t):
                     if !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        Text(markdownAttributedString(t, isUser: isUser))
+                        Text(markdownAttributedString(t, isUser: isUser, fontSize: fontSize))
                             .textSelection(.enabled)
                             .environment(\.openURL, OpenURLAction { url in
                                 NSWorkspace.shared.open(url)

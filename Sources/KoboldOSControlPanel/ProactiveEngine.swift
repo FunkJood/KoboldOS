@@ -52,6 +52,33 @@ struct ProactiveRule: Identifiable, Codable {
     ]
 }
 
+// MARK: - GoalEntry (user-defined long-term goals influencing agent autonomy)
+
+struct GoalEntry: Identifiable, Codable {
+    var id: String
+    var text: String
+    var isActive: Bool
+    var priority: GoalPriority
+    var category: GoalCategory
+
+    init(id: String = UUID().uuidString, text: String, isActive: Bool = true, priority: GoalPriority = .medium, category: GoalCategory = .custom) {
+        self.id = id; self.text = text; self.isActive = isActive; self.priority = priority; self.category = category
+    }
+
+    enum GoalPriority: String, Codable, CaseIterable {
+        case high = "Hoch"
+        case medium = "Mittel"
+        case low = "Niedrig"
+    }
+
+    enum GoalCategory: String, Codable, CaseIterable {
+        case system = "System"
+        case productivity = "Produktivität"
+        case personal = "Persönlich"
+        case custom = "Benutzerdefiniert"
+    }
+}
+
 // MARK: - ProactiveEngine
 
 @MainActor
@@ -60,6 +87,7 @@ class ProactiveEngine: ObservableObject {
 
     @Published var suggestions: [ProactiveSuggestion] = []
     @Published var rules: [ProactiveRule] = []
+    @Published var goals: [GoalEntry] = []
     @Published var isChecking = false
     @Published var heartbeatStatus: String = "Idle"
     @Published var lastHeartbeat: Date? = nil
@@ -75,9 +103,11 @@ class ProactiveEngine: ObservableObject {
     private var checkTimer: Timer?
     private var heartbeatTimer: Timer?
     private let rulesKey = "kobold.proactive.rules"
+    private let goalsKey = "kobold.proactive.goals"
 
     private init() {
         loadRules()
+        loadGoals()
     }
 
     /// Call on app termination to prevent timer leak
@@ -129,6 +159,44 @@ class ProactiveEngine: ObservableObject {
     func deleteRule(_ id: String) {
         rules.removeAll { $0.id == id }
         saveRules()
+    }
+
+    // MARK: - Goals Persistence
+
+    func loadGoals() {
+        if let data = UserDefaults.standard.data(forKey: goalsKey),
+           let saved = try? JSONDecoder().decode([GoalEntry].self, from: data) {
+            goals = saved
+        }
+    }
+
+    func saveGoals() {
+        if let data = try? JSONEncoder().encode(goals) {
+            UserDefaults.standard.set(data, forKey: goalsKey)
+        }
+    }
+
+    func addGoal(_ goal: GoalEntry) {
+        goals.append(goal)
+        saveGoals()
+    }
+
+    func deleteGoal(_ id: String) {
+        goals.removeAll { $0.id == id }
+        saveGoals()
+    }
+
+    /// Active goals formatted for agent system prompt injection
+    var activeGoalsPromptSection: String {
+        let active = goals.filter { $0.isActive }
+        guard !active.isEmpty else { return "" }
+        let list = active.map { "- [\($0.priority.rawValue)] \($0.text)" }.joined(separator: "\n")
+        return """
+
+        ## Langfristige Ziele (vom Nutzer definiert)
+        Arbeite proaktiv auf diese Ziele hin. Schlage relevante Aktionen vor wenn passend.
+        \(list)
+        """
     }
 
     // MARK: - Timer Control

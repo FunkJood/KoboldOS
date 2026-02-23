@@ -1,25 +1,25 @@
 import SwiftUI
 
 // MARK: - TeamsGroupView
-// Parallele AI Agents in Gruppenchats, Organigramm mit Anweisungen
+// Beratungsgremium: Mehrere AI-Agenten diskutieren parallel, widersprechen sich, und der Koordinator fasst zusammen.
+// Rundenbasiertes Diskussionsprotokoll: R1 Einzelanalyse → R2 Diskussion → R3 Synthese
 
 struct TeamsGroupView: View {
     @ObservedObject var viewModel: RuntimeViewModel
 
-    @State private var teams: [AgentTeam] = AgentTeam.defaults
     @State private var selectedTeamId: UUID? = nil
     @State private var showAddTeam = false
     @State private var showOrgChart = false
     @State private var groupChatInput: String = ""
-    @State private var groupMessages: [GroupMessage] = []
+    @State private var isTeamWorking = false
+    @State private var editingAgent: TeamAgent? = nil
+    @State private var editingTeamGoals = false
 
     var body: some View {
         HSplitView {
-            // Left: Team list
             teamListPanel
                 .frame(minWidth: 240, maxWidth: 300)
 
-            // Right: Team detail or org chart
             if let team = selectedTeam {
                 if showOrgChart {
                     orgChartView(team: team)
@@ -30,10 +30,11 @@ struct TeamsGroupView: View {
                 emptyState
             }
         }
+        .onAppear { viewModel.loadTeams() }
     }
 
     private var selectedTeam: AgentTeam? {
-        teams.first { $0.id == selectedTeamId }
+        viewModel.teams.first { $0.id == selectedTeamId }
     }
 
     // MARK: - Team List
@@ -57,7 +58,7 @@ struct TeamsGroupView: View {
 
             ScrollView {
                 VStack(spacing: 4) {
-                    ForEach(teams) { team in
+                    ForEach(viewModel.teams) { team in
                         teamRow(team)
                     }
                 }
@@ -67,7 +68,8 @@ struct TeamsGroupView: View {
         .background(Color.koboldPanel.opacity(0.5))
         .sheet(isPresented: $showAddTeam) {
             AddTeamSheet { newTeam in
-                teams.append(newTeam)
+                viewModel.teams.append(newTeam)
+                viewModel.saveTeams()
                 selectedTeamId = newTeam.id
             }
         }
@@ -97,6 +99,13 @@ struct TeamsGroupView: View {
             )
         }
         .buttonStyle(.plain)
+        .contextMenu {
+            Button("Löschen", role: .destructive) {
+                viewModel.teams.removeAll { $0.id == team.id }
+                viewModel.saveTeams()
+                if selectedTeamId == team.id { selectedTeamId = nil }
+            }
+        }
     }
 
     // MARK: - Group Chat
@@ -108,6 +117,12 @@ struct TeamsGroupView: View {
                 Image(systemName: team.icon).font(.system(size: 18)).foregroundColor(.koboldEmerald)
                 Text(team.name).font(.system(size: 18.5, weight: .bold))
                 Spacer()
+                if isTeamWorking {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text("Team berät...").font(.system(size: 13.5)).foregroundColor(.koboldGold)
+                    }
+                }
                 Button(action: { showOrgChart = true }) {
                     HStack(spacing: 4) {
                         Image(systemName: "chart.dots.scatter").font(.system(size: 13.5))
@@ -126,7 +141,7 @@ struct TeamsGroupView: View {
 
             GlassDivider()
 
-            // Agent badges
+            // Agent badges with status
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     ForEach(team.agents) { agent in
@@ -137,6 +152,7 @@ struct TeamsGroupView: View {
                             Text(agent.name).font(.system(size: 13.5, weight: .medium))
                             Text("·").foregroundColor(.secondary)
                             Text(agent.role).font(.system(size: 12.5)).foregroundColor(.secondary)
+                            Text("(\(agent.profile))").font(.system(size: 11.5)).foregroundColor(.secondary.opacity(0.6))
                         }
                         .padding(.horizontal, 10)
                         .padding(.vertical, 5)
@@ -151,27 +167,36 @@ struct TeamsGroupView: View {
             GlassDivider()
 
             // Messages
-            ScrollView {
-                LazyVStack(spacing: 8) {
-                    ForEach(groupMessages) { msg in
-                        groupMessageBubble(msg)
-                    }
-                    if groupMessages.isEmpty {
-                        VStack(spacing: 12) {
-                            Image(systemName: "bubble.left.and.bubble.right").font(.system(size: 40)).foregroundColor(.secondary.opacity(0.4))
-                            Text("Sende eine Nachricht an das Team").font(.system(size: 15.5)).foregroundColor(.secondary)
-                            Text("Alle Agenten arbeiten parallel an deiner Anfrage.").font(.caption).foregroundColor(.secondary.opacity(0.7))
+            let messages = viewModel.teamMessages[team.id] ?? []
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(spacing: 8) {
+                        ForEach(messages) { msg in
+                            groupMessageBubble(msg)
+                                .id(msg.id)
                         }
-                        .frame(maxWidth: .infinity)
-                        .padding(.top, 60)
+                        if messages.isEmpty {
+                            VStack(spacing: 12) {
+                                Image(systemName: "bubble.left.and.bubble.right").font(.system(size: 40)).foregroundColor(.secondary.opacity(0.4))
+                                Text("Stelle eine Frage an das Team").font(.system(size: 15.5)).foregroundColor(.secondary)
+                                Text("Die Agenten analysieren parallel, diskutieren untereinander und der Koordinator fasst zusammen.").font(.caption).foregroundColor(.secondary.opacity(0.7)).multilineTextAlignment(.center)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, 60)
+                        }
+                    }
+                    .padding(16)
+                }
+                .onChange(of: messages.count) { _ in
+                    if let last = messages.last {
+                        withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
                     }
                 }
-                .padding(16)
             }
 
             // Input
             HStack(spacing: 10) {
-                TextField("Nachricht an das Team...", text: $groupChatInput)
+                TextField("Frage an das Team...", text: $groupChatInput)
                     .textFieldStyle(.plain)
                     .font(.system(size: 15.5))
                     .padding(.horizontal, 12)
@@ -179,14 +204,15 @@ struct TeamsGroupView: View {
                     .background(Color.black.opacity(0.2))
                     .cornerRadius(10)
                     .onSubmit { sendGroupMessage(team: team) }
+                    .disabled(isTeamWorking)
 
                 Button(action: { sendGroupMessage(team: team) }) {
                     Image(systemName: "paperplane.fill")
                         .font(.system(size: 16))
-                        .foregroundColor(.koboldEmerald)
+                        .foregroundColor(isTeamWorking ? .secondary : .koboldEmerald)
                 }
                 .buttonStyle(.plain)
-                .disabled(groupChatInput.trimmingCharacters(in: .whitespaces).isEmpty)
+                .disabled(groupChatInput.trimmingCharacters(in: .whitespaces).isEmpty || isTeamWorking)
             }
             .padding(12)
         }
@@ -207,17 +233,36 @@ struct TeamsGroupView: View {
                 }
             } else {
                 ZStack {
-                    Circle().fill(Color.koboldGold.opacity(0.15)).frame(width: 28, height: 28)
-                    Text(String(msg.agentName.prefix(1))).font(.system(size: 12.5, weight: .bold)).foregroundColor(.koboldGold)
+                    let isCoord = msg.agentName == "Koordinator" || msg.round == 3
+                    Circle().fill((isCoord ? Color.koboldGold : Color.koboldEmerald).opacity(0.15))
+                        .frame(width: 28, height: 28)
+                    Text(String(msg.agentName.prefix(1)))
+                        .font(.system(size: 12.5, weight: .bold))
+                        .foregroundColor(isCoord ? .koboldGold : .koboldEmerald)
                 }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(msg.agentName).font(.system(size: 12.5, weight: .semibold)).foregroundColor(.koboldGold)
-                    Text(msg.content)
-                        .font(.system(size: 15.5))
+                    HStack(spacing: 6) {
+                        Text(msg.agentName).font(.system(size: 12.5, weight: .semibold)).foregroundColor(.koboldGold)
+                        roundBadge(msg.round)
+                    }
+                    if msg.isStreaming {
+                        HStack(spacing: 4) {
+                            ProgressView().controlSize(.mini)
+                            Text("Analysiert...").font(.system(size: 14.5)).foregroundColor(.secondary)
+                        }
                         .padding(.horizontal, 12)
                         .padding(.vertical, 8)
                         .background(Color.white.opacity(0.04))
                         .cornerRadius(12)
+                    } else {
+                        Text(msg.content)
+                            .font(.system(size: 15.5))
+                            .textSelection(.enabled)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(msg.round == 3 ? Color.koboldGold.opacity(0.06) : Color.white.opacity(0.04))
+                            .cornerRadius(12)
+                    }
                     Text(msg.timestamp, style: .time).font(.system(size: 11)).foregroundColor(.secondary)
                 }
                 Spacer(minLength: 60)
@@ -225,26 +270,164 @@ struct TeamsGroupView: View {
         }
     }
 
+    @ViewBuilder
+    private func roundBadge(_ round: Int) -> some View {
+        let (label, color): (String, Color) = {
+            switch round {
+            case 1: return ("Analyse", .koboldEmerald)
+            case 2: return ("Diskussion", .orange)
+            case 3: return ("Synthese", .koboldGold)
+            default: return ("", .clear)
+            }
+        }()
+        if !label.isEmpty {
+            Text(label)
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundColor(color)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 1)
+                .background(Capsule().fill(color.opacity(0.15)))
+        }
+    }
+
+    // MARK: - Team Discourse Engine
+
     private func sendGroupMessage(team: AgentTeam) {
         let text = groupChatInput.trimmingCharacters(in: .whitespaces)
         guard !text.isEmpty else { return }
-        groupMessages.append(GroupMessage(content: text, isUser: true, agentName: "Du"))
-        groupChatInput = ""
 
-        // Simulate agent responses (Mock)
-        for agent in team.agents {
-            let delay = Double.random(in: 0.5...2.5)
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                groupMessages.append(GroupMessage(
-                    content: "[\(agent.role)] Arbeite an: \(text.prefix(50))...",
-                    isUser: false,
-                    agentName: agent.name
-                ))
+        let teamId = team.id
+        appendMessage(teamId: teamId, msg: GroupMessage(content: text, isUser: true, agentName: "Du", round: 0))
+        groupChatInput = ""
+        isTeamWorking = true
+
+        let activeAgents = team.agents.filter { $0.isActive }
+        guard !activeAgents.isEmpty else {
+            appendMessage(teamId: teamId, msg: GroupMessage(content: "Keine aktiven Agenten im Team.", isUser: false, agentName: "System", round: 0))
+            isTeamWorking = false
+            return
+        }
+
+        // Add streaming placeholders for Round 1
+        var placeholderIds: [UUID: UUID] = [:]
+        for agent in activeAgents {
+            let placeholder = GroupMessage(content: "", isUser: false, agentName: agent.name, round: 1, isStreaming: true)
+            placeholderIds[agent.id] = placeholder.id
+            appendMessage(teamId: teamId, msg: placeholder)
+        }
+
+        Task {
+            // === RUNDE 1: Einzelanalyse (parallel) ===
+            var round1Results: [(agentName: String, agentId: UUID, output: String)] = []
+            await withTaskGroup(of: (UUID, String, String).self) { group in
+                for agent in activeAgents {
+                    group.addTask {
+                        let prompt = """
+                        Du bist \(agent.name) (\(agent.role)) in einem Beratungsteam.
+                        Deine Anweisungen: \(agent.instructions)
+
+                        Der Nutzer fragt: \(text)
+
+                        Analysiere die Frage aus deiner Perspektive. Sei konkret und präzise. Antworte auf Deutsch.
+                        """
+                        let result = await viewModel.sendTeamAgentMessage(prompt: prompt, profile: agent.profile)
+                        return (agent.id, agent.name, result)
+                    }
+                }
+                for await (agentId, agentName, output) in group {
+                    round1Results.append((agentName: agentName, agentId: agentId, output: output))
+                    // Replace placeholder with real result
+                    if let phId = placeholderIds[agentId] {
+                        await MainActor.run {
+                            replacePlaceholder(teamId: teamId, placeholderId: phId, content: output, round: 1)
+                        }
+                    }
+                }
+            }
+
+            // === RUNDE 2: Diskussion (sequentiell — jeder sieht Runde 1) ===
+            let r1Summary = round1Results.map { "[\($0.agentName)]: \($0.output)" }.joined(separator: "\n\n---\n\n")
+
+            for agent in activeAgents {
+                let myR1 = round1Results.first { $0.agentId == agent.id }?.output ?? ""
+                let othersR1 = round1Results.filter { $0.agentId != agent.id }
+                    .map { "[\($0.agentName)]: \($0.output)" }.joined(separator: "\n\n")
+
+                guard !othersR1.isEmpty else { continue }
+
+                let prompt = """
+                Du bist \(agent.name) (\(agent.role)).
+
+                Die Frage war: \(text)
+
+                Deine erste Analyse: \(myR1)
+
+                Die anderen Teammitglieder haben Folgendes gesagt:
+                \(othersR1)
+
+                Reagiere kurz: Stimmst du zu? Widersprichst du? Was fehlt? Sei direkt und konstruktiv. Antworte auf Deutsch.
+                """
+                let discussionResult = await viewModel.sendTeamAgentMessage(prompt: prompt, profile: agent.profile)
+                await MainActor.run {
+                    appendMessage(teamId: teamId, msg: GroupMessage(content: discussionResult, isUser: false, agentName: agent.name, round: 2))
+                }
+            }
+
+            // === RUNDE 3: Koordinator-Synthese ===
+            let coordinator = activeAgents.first ?? activeAgents[0]
+            let r2Messages = (viewModel.teamMessages[teamId] ?? []).filter { $0.round == 2 }
+            let r2Summary = r2Messages.map { "[\($0.agentName)]: \($0.content)" }.joined(separator: "\n\n")
+
+            let synthesisPrompt = """
+            Du bist \(coordinator.name) und fasst die Team-Beratung zusammen.
+
+            Ursprüngliche Frage: \(text)
+
+            Runde 1 — Einzelanalysen:
+            \(r1Summary)
+
+            Runde 2 — Diskussion:
+            \(r2Summary)
+
+            Fasse zusammen:
+            1. Konsens: Worüber sind sich alle einig?
+            2. Offene Punkte: Wo gibt es Widersprüche oder Unsicherheit?
+            3. Empfehlung: Was ist die beste Handlungsempfehlung?
+
+            Sei strukturiert und klar. Antworte auf Deutsch.
+            """
+            let synthesis = await viewModel.sendTeamAgentMessage(prompt: synthesisPrompt, profile: coordinator.profile)
+            await MainActor.run {
+                appendMessage(teamId: teamId, msg: GroupMessage(content: synthesis, isUser: false, agentName: "Koordinator", round: 3))
+                isTeamWorking = false
+                viewModel.saveTeamMessages(for: teamId)
             }
         }
     }
 
-    // MARK: - Org Chart
+    private func appendMessage(teamId: UUID, msg: GroupMessage) {
+        if viewModel.teamMessages[teamId] == nil {
+            viewModel.teamMessages[teamId] = []
+        }
+        viewModel.teamMessages[teamId]?.append(msg)
+    }
+
+    private func replacePlaceholder(teamId: UUID, placeholderId: UUID, content: String, round: Int) {
+        guard var msgs = viewModel.teamMessages[teamId],
+              let idx = msgs.firstIndex(where: { $0.id == placeholderId }) else { return }
+        msgs[idx] = GroupMessage(
+            id: placeholderId,
+            content: content,
+            isUser: false,
+            agentName: msgs[idx].agentName,
+            timestamp: msgs[idx].timestamp,
+            round: round,
+            isStreaming: false
+        )
+        viewModel.teamMessages[teamId] = msgs
+    }
+
+    // MARK: - Org Chart (erweitert: Ziele, Aufgaben, Status, Workflow-Flow)
 
     private func orgChartView(team: AgentTeam) -> some View {
         VStack(spacing: 0) {
@@ -261,6 +444,18 @@ struct TeamsGroupView: View {
                 Text("Organigramm — \(team.name)")
                     .font(.system(size: 18.5, weight: .bold))
                 Spacer()
+                Button(action: { editingTeamGoals = true }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "target").font(.system(size: 13.5))
+                        Text("Ziele").font(.system(size: 13.5))
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Color.koboldEmerald.opacity(0.15))
+                    .foregroundColor(.koboldEmerald)
+                    .cornerRadius(6)
+                }
+                .buttonStyle(.plain)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
@@ -268,10 +463,38 @@ struct TeamsGroupView: View {
             GlassDivider()
 
             ScrollView {
-                VStack(spacing: 24) {
+                VStack(spacing: 16) {
+                    // Team goals
+                    if !team.goals.isEmpty {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Team-Ziele").font(.system(size: 13.5, weight: .semibold)).foregroundColor(.koboldGold)
+                            ForEach(team.goals, id: \.self) { goal in
+                                HStack(spacing: 6) {
+                                    Image(systemName: "target").font(.system(size: 12)).foregroundColor(.koboldEmerald)
+                                    Text(goal).font(.system(size: 13.5)).foregroundColor(.secondary)
+                                }
+                            }
+                        }
+                        .padding(12)
+                        .background(RoundedRectangle(cornerRadius: 10).fill(Color.koboldGold.opacity(0.05)))
+                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.koboldGold.opacity(0.15), lineWidth: 0.5))
+                        .padding(.horizontal, 20)
+                    }
+
+                    // Team description
+                    if !team.description.isEmpty {
+                        Text(team.description)
+                            .font(.system(size: 13.5))
+                            .foregroundColor(.secondary)
+                            .padding(.horizontal, 20)
+                    }
+
+                    // Workflow flow indicator
+                    flowIndicator(team: team)
+
                     // Leader
                     if let leader = team.agents.first {
-                        orgNode(agent: leader, isLeader: true)
+                        orgNode(agent: leader, isLeader: true, team: team)
                     }
 
                     // Connection lines
@@ -283,12 +506,12 @@ struct TeamsGroupView: View {
 
                     // Members
                     HStack(alignment: .top, spacing: 24) {
-                        ForEach(team.agents.dropFirst()) { agent in
+                        ForEach(Array(team.agents.dropFirst())) { agent in
                             VStack(spacing: 8) {
                                 Rectangle()
                                     .fill(Color.koboldEmerald.opacity(0.3))
                                     .frame(width: 2, height: 20)
-                                orgNode(agent: agent, isLeader: false)
+                                orgNode(agent: agent, isLeader: false, team: team)
                             }
                         }
                     }
@@ -297,39 +520,101 @@ struct TeamsGroupView: View {
                 .padding(30)
             }
         }
+        .sheet(isPresented: $editingTeamGoals) {
+            if let idx = viewModel.teams.firstIndex(where: { $0.id == team.id }) {
+                TeamGoalsSheet(team: $viewModel.teams[idx]) {
+                    viewModel.saveTeams()
+                }
+            }
+        }
+        .sheet(item: $editingAgent) { agent in
+            if let teamIdx = viewModel.teams.firstIndex(where: { $0.id == team.id }),
+               let agentIdx = viewModel.teams[teamIdx].agents.firstIndex(where: { $0.id == agent.id }) {
+                AgentEditSheet(agent: $viewModel.teams[teamIdx].agents[agentIdx]) {
+                    viewModel.saveTeams()
+                }
+            }
+        }
     }
 
-    private func orgNode(agent: TeamAgent, isLeader: Bool) -> some View {
-        VStack(spacing: 8) {
-            ZStack {
-                Circle()
-                    .fill(isLeader ? Color.koboldGold.opacity(0.2) : Color.koboldEmerald.opacity(0.15))
-                    .frame(width: isLeader ? 60 : 48, height: isLeader ? 60 : 48)
-                Image(systemName: isLeader ? "crown.fill" : "person.fill")
-                    .font(.system(size: isLeader ? 22 : 17))
-                    .foregroundColor(isLeader ? .koboldGold : .koboldEmerald)
+    private func flowIndicator(team: AgentTeam) -> some View {
+        VStack(spacing: 4) {
+            Text("Diskurs-Ablauf").font(.system(size: 12.5, weight: .semibold)).foregroundColor(.secondary.opacity(0.7))
+            HStack(spacing: 4) {
+                flowStep("Frage", icon: "questionmark.circle", color: .koboldEmerald)
+                Image(systemName: "arrow.right").font(.system(size: 10)).foregroundColor(.secondary)
+                flowStep("R1: Analyse", icon: "brain", color: .koboldEmerald)
+                Image(systemName: "arrow.right").font(.system(size: 10)).foregroundColor(.secondary)
+                flowStep("R2: Diskurs", icon: "bubble.left.and.bubble.right", color: .orange)
+                Image(systemName: "arrow.right").font(.system(size: 10)).foregroundColor(.secondary)
+                flowStep("R3: Synthese", icon: "checkmark.seal", color: .koboldGold)
             }
-            Text(agent.name)
-                .font(.system(size: 15.5, weight: .bold))
-            Text(agent.role)
-                .font(.system(size: 13.5))
-                .foregroundColor(.koboldGold)
-            Text(agent.instructions)
-                .font(.system(size: 12.5))
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 160)
         }
-        .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: 14)
-                .fill(.ultraThinMaterial)
-                .overlay(RoundedRectangle(cornerRadius: 14).fill(Color.white.opacity(0.03)))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14)
-                .stroke(isLeader ? Color.koboldGold.opacity(0.3) : Color.koboldEmerald.opacity(0.2), lineWidth: 1)
-        )
+        .padding(.vertical, 8)
+    }
+
+    private func flowStep(_ label: String, icon: String, color: Color) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: icon).font(.system(size: 11)).foregroundColor(color)
+            Text(label).font(.system(size: 11.5, weight: .medium)).foregroundColor(color)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(color.opacity(0.1))
+        .cornerRadius(6)
+    }
+
+    private func orgNode(agent: TeamAgent, isLeader: Bool, team: AgentTeam) -> some View {
+        Button(action: { editingAgent = agent }) {
+            VStack(spacing: 8) {
+                ZStack {
+                    Circle()
+                        .fill(isLeader ? Color.koboldGold.opacity(0.2) : Color.koboldEmerald.opacity(0.15))
+                        .frame(width: isLeader ? 60 : 48, height: isLeader ? 60 : 48)
+                    Image(systemName: isLeader ? "crown.fill" : "person.fill")
+                        .font(.system(size: isLeader ? 22 : 17))
+                        .foregroundColor(isLeader ? .koboldGold : .koboldEmerald)
+                }
+                Text(agent.name)
+                    .font(.system(size: 15.5, weight: .bold))
+                Text(agent.role)
+                    .font(.system(size: 13.5))
+                    .foregroundColor(.koboldGold)
+
+                // Profile badge
+                Text(agent.profile)
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundColor(.koboldEmerald)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Color.koboldEmerald.opacity(0.15)))
+
+                Text(agent.instructions)
+                    .font(.system(size: 12.5))
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 180)
+                    .lineLimit(3)
+
+                // Status
+                HStack(spacing: 4) {
+                    Circle().fill(agent.isActive ? Color.koboldEmerald : Color.gray).frame(width: 6, height: 6)
+                    Text(agent.isActive ? "Aktiv" : "Inaktiv")
+                        .font(.system(size: 11)).foregroundColor(.secondary)
+                }
+            }
+            .padding(14)
+            .background(
+                RoundedRectangle(cornerRadius: 14)
+                    .fill(.ultraThinMaterial)
+                    .overlay(RoundedRectangle(cornerRadius: 14).fill(Color.white.opacity(0.03)))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 14)
+                    .stroke(isLeader ? Color.koboldGold.opacity(0.3) : Color.koboldEmerald.opacity(0.2), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Empty State
@@ -342,9 +627,11 @@ struct TeamsGroupView: View {
             Text("Wähle ein Team aus")
                 .font(.system(size: 18.5, weight: .semibold))
                 .foregroundColor(.secondary)
-            Text("Oder erstelle ein neues Team mit parallelen AI-Agenten.")
+            Text("Teams sind Beratungsgremien — sie diskutieren, widersprechen sich und liefern qualitative Entscheidungen.")
                 .font(.system(size: 14.5))
                 .foregroundColor(.secondary.opacity(0.7))
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 400)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -352,62 +639,86 @@ struct TeamsGroupView: View {
 
 // MARK: - Data Models
 
-struct AgentTeam: Identifiable {
-    let id = UUID()
+struct AgentTeam: Identifiable, Codable {
+    var id: UUID
     var name: String
     var icon: String
     var agents: [TeamAgent]
     var description: String
+    var goals: [String]
+    var createdAt: Date
+
+    init(id: UUID = UUID(), name: String, icon: String, agents: [TeamAgent], description: String, goals: [String] = [], createdAt: Date = Date()) {
+        self.id = id; self.name = name; self.icon = icon; self.agents = agents
+        self.description = description; self.goals = goals; self.createdAt = createdAt
+    }
 
     static let defaults: [AgentTeam] = [
         AgentTeam(
             name: "Recherche-Team",
             icon: "magnifyingglass.circle.fill",
             agents: [
-                TeamAgent(name: "Koordinator", role: "Teamleiter", instructions: "Plant und delegiert Aufgaben, fasst Ergebnisse zusammen."),
-                TeamAgent(name: "Web-Analyst", role: "Researcher", instructions: "Durchsucht das Web nach relevanten Informationen."),
-                TeamAgent(name: "Fakten-Checker", role: "Validator", instructions: "Prüft Quellen und verifiziert Behauptungen."),
+                TeamAgent(name: "Koordinator", role: "Teamleiter", instructions: "Plant und delegiert Aufgaben, fasst Ergebnisse zusammen.", profile: "planner"),
+                TeamAgent(name: "Web-Analyst", role: "Researcher", instructions: "Durchsucht das Web nach relevanten Informationen.", profile: "researcher"),
+                TeamAgent(name: "Fakten-Checker", role: "Validator", instructions: "Prüft Quellen und verifiziert Behauptungen.", profile: "researcher"),
             ],
-            description: "Parallele Web-Recherche mit Validierung"
+            description: "Parallele Web-Recherche mit Validierung",
+            goals: ["Gründliche Quellenprüfung", "Faktenbasierte Ergebnisse"]
         ),
         AgentTeam(
             name: "Code-Team",
             icon: "chevron.left.forwardslash.chevron.right",
             agents: [
-                TeamAgent(name: "Architekt", role: "Lead Developer", instructions: "Entwirft die Architektur und verteilt Coding-Tasks."),
-                TeamAgent(name: "Frontend", role: "UI/UX Dev", instructions: "Implementiert die Benutzeroberfläche."),
-                TeamAgent(name: "Backend", role: "API Dev", instructions: "Implementiert Server-Logik und Datenbank."),
-                TeamAgent(name: "Tester", role: "QA", instructions: "Schreibt Tests und prüft auf Bugs."),
+                TeamAgent(name: "Architekt", role: "Lead Developer", instructions: "Entwirft die Architektur und verteilt Coding-Tasks.", profile: "planner"),
+                TeamAgent(name: "Frontend", role: "UI/UX Dev", instructions: "Implementiert die Benutzeroberfläche.", profile: "coder"),
+                TeamAgent(name: "Backend", role: "API Dev", instructions: "Implementiert Server-Logik und Datenbank.", profile: "coder"),
+                TeamAgent(name: "Tester", role: "QA", instructions: "Schreibt Tests und prüft auf Bugs.", profile: "coder"),
             ],
-            description: "Full-Stack-Entwicklung mit parallelen Agents"
+            description: "Full-Stack-Entwicklung mit parallelen Agents",
+            goals: ["Saubere Architektur", "Testabdeckung > 80%"]
         ),
         AgentTeam(
             name: "Content-Team",
             icon: "doc.richtext.fill",
             agents: [
-                TeamAgent(name: "Editor", role: "Chefredakteur", instructions: "Koordiniert und redigiert alle Inhalte."),
-                TeamAgent(name: "Texter", role: "Autor", instructions: "Schreibt Texte, Artikel und Blogposts."),
-                TeamAgent(name: "Designer", role: "Grafiker", instructions: "Erstellt Bilder und Illustrationen."),
+                TeamAgent(name: "Editor", role: "Chefredakteur", instructions: "Koordiniert und redigiert alle Inhalte.", profile: "planner"),
+                TeamAgent(name: "Texter", role: "Autor", instructions: "Schreibt Texte, Artikel und Blogposts.", profile: "general"),
+                TeamAgent(name: "Designer", role: "Grafiker", instructions: "Erstellt Bilder und Illustrationen.", profile: "general"),
             ],
-            description: "Content-Erstellung mit Text und Bild"
+            description: "Content-Erstellung mit Text und Bild",
+            goals: ["Konsistenter Tonfall", "SEO-optimiert"]
         ),
     ]
 }
 
-struct TeamAgent: Identifiable {
-    let id = UUID()
+struct TeamAgent: Identifiable, Codable {
+    var id: UUID
     var name: String
     var role: String
     var instructions: String
-    var isActive: Bool = true
+    var profile: String
+    var isActive: Bool
+
+    init(id: UUID = UUID(), name: String, role: String, instructions: String, profile: String = "general", isActive: Bool = true) {
+        self.id = id; self.name = name; self.role = role
+        self.instructions = instructions; self.profile = profile; self.isActive = isActive
+    }
 }
 
-struct GroupMessage: Identifiable {
-    let id = UUID()
+struct GroupMessage: Identifiable, Codable {
+    var id: UUID
     let content: String
     let isUser: Bool
     let agentName: String
-    let timestamp: Date = Date()
+    let timestamp: Date
+    var round: Int
+    var isStreaming: Bool
+
+    init(id: UUID = UUID(), content: String, isUser: Bool, agentName: String, timestamp: Date = Date(), round: Int = 0, isStreaming: Bool = false) {
+        self.id = id; self.content = content; self.isUser = isUser
+        self.agentName = agentName; self.timestamp = timestamp
+        self.round = round; self.isStreaming = isStreaming
+    }
 }
 
 // MARK: - AddTeamSheet
@@ -417,9 +728,12 @@ struct AddTeamSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var name = ""
+    @State private var description = ""
     @State private var agents: [TeamAgent] = [
-        TeamAgent(name: "Agent 1", role: "Teamleiter", instructions: "Koordiniert das Team.")
+        TeamAgent(name: "Koordinator", role: "Teamleiter", instructions: "Koordiniert das Team und fasst Ergebnisse zusammen.", profile: "planner")
     ]
+
+    private let profiles = ["general", "researcher", "coder", "planner"]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -429,12 +743,24 @@ struct AddTeamSheet: View {
                 .textFieldStyle(.roundedBorder)
                 .font(.system(size: 15.5))
 
+            TextField("Beschreibung (optional)", text: $description)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 14.5))
+
             Text("Agenten").font(.system(size: 15.5, weight: .semibold))
 
             ForEach($agents) { $agent in
                 HStack(spacing: 8) {
                     TextField("Name", text: $agent.name).textFieldStyle(.roundedBorder).frame(width: 100)
                     TextField("Rolle", text: $agent.role).textFieldStyle(.roundedBorder).frame(width: 100)
+                    Picker("", selection: $agent.profile) {
+                        Text("Allgemein").tag("general")
+                        Text("Researcher").tag("researcher")
+                        Text("Coder").tag("coder")
+                        Text("Planner").tag("planner")
+                    }
+                    .pickerStyle(.menu)
+                    .frame(width: 110)
                     TextField("Anweisung", text: $agent.instructions).textFieldStyle(.roundedBorder)
                 }
                 .font(.system(size: 14.5))
@@ -451,7 +777,7 @@ struct AddTeamSheet: View {
                 Spacer()
                 Button("Abbrechen") { dismiss() }.buttonStyle(.bordered)
                 Button("Erstellen") {
-                    let team = AgentTeam(name: name.isEmpty ? "Neues Team" : name, icon: "person.3.fill", agents: agents, description: "")
+                    let team = AgentTeam(name: name.isEmpty ? "Neues Team" : name, icon: "person.3.fill", agents: agents, description: description)
                     onSave(team)
                     dismiss()
                 }
@@ -461,6 +787,118 @@ struct AddTeamSheet: View {
             }
         }
         .padding(20)
-        .frame(width: 550)
+        .frame(width: 650)
+    }
+}
+
+// MARK: - Team Goals Sheet
+
+struct TeamGoalsSheet: View {
+    @Binding var team: AgentTeam
+    let onSave: () -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var newGoal = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Team-Ziele — \(team.name)").font(.system(size: 19, weight: .bold))
+            Text("Ziele steuern die Perspektive und Prioritäten der Agenten im Diskurs.")
+                .font(.caption).foregroundColor(.secondary)
+
+            ForEach(Array(team.goals.enumerated()), id: \.offset) { idx, goal in
+                HStack {
+                    Image(systemName: "target").foregroundColor(.koboldEmerald)
+                    Text(goal).font(.system(size: 14.5))
+                    Spacer()
+                    Button(action: { team.goals.remove(at: idx); onSave() }) {
+                        Image(systemName: "trash").font(.system(size: 13)).foregroundColor(.red.opacity(0.7))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            HStack {
+                TextField("Neues Ziel...", text: $newGoal)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit { addGoal() }
+                Button("Hinzufügen") { addGoal() }
+                    .buttonStyle(.bordered)
+                    .disabled(newGoal.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+
+            HStack {
+                Spacer()
+                Button("Fertig") { dismiss() }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.koboldEmerald)
+            }
+        }
+        .padding(20)
+        .frame(width: 450)
+    }
+
+    private func addGoal() {
+        let g = newGoal.trimmingCharacters(in: .whitespaces)
+        guard !g.isEmpty else { return }
+        team.goals.append(g)
+        newGoal = ""
+        onSave()
+    }
+}
+
+// MARK: - Agent Edit Sheet
+
+struct AgentEditSheet: View {
+    @Binding var agent: TeamAgent
+    let onSave: () -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Agent bearbeiten").font(.system(size: 19, weight: .bold))
+
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Name").font(.caption.bold()).foregroundColor(.secondary)
+                    TextField("Name", text: $agent.name).textFieldStyle(.roundedBorder)
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Rolle").font(.caption.bold()).foregroundColor(.secondary)
+                    TextField("Rolle", text: $agent.role).textFieldStyle(.roundedBorder)
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Profil").font(.caption.bold()).foregroundColor(.secondary)
+                    Picker("", selection: $agent.profile) {
+                        Text("Allgemein").tag("general")
+                        Text("Researcher").tag("researcher")
+                        Text("Coder").tag("coder")
+                        Text("Planner").tag("planner")
+                    }
+                    .pickerStyle(.menu)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Anweisungen").font(.caption.bold()).foregroundColor(.secondary)
+                TextEditor(text: $agent.instructions)
+                    .font(.system(size: 14.5))
+                    .frame(height: 100)
+                    .scrollContentBackground(.hidden)
+                    .background(Color.black.opacity(0.1))
+                    .cornerRadius(8)
+            }
+
+            Toggle("Aktiv", isOn: $agent.isActive)
+                .toggleStyle(.switch)
+
+            HStack {
+                Spacer()
+                Button("Fertig") { onSave(); dismiss() }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.koboldEmerald)
+            }
+        }
+        .padding(20)
+        .frame(width: 500)
     }
 }

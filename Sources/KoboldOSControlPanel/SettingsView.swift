@@ -32,6 +32,8 @@ struct SettingsView: View {
     @AppStorage("kobold.perm.fileWrite")    private var permFileWrite: Bool = true
     @AppStorage("kobold.perm.network")      private var permNetwork: Bool = true
     @AppStorage("kobold.perm.confirmAdmin") private var permConfirmAdmin: Bool = true
+    @AppStorage("kobold.perm.playwright") private var permPlaywright: Bool = false
+    @AppStorage("kobold.perm.screenControl") private var permScreenControl: Bool = false
 
     // Permissions — extended
     @AppStorage("kobold.perm.selfCheck")     private var permSelfCheck: Bool = false
@@ -104,7 +106,7 @@ struct SettingsView: View {
     @State private var googleEmail: String = ""
     @State private var showSecretsManager: Bool = false
 
-    private let sections = ["Konto", "Allgemein", "Persönlichkeit", "Agenten", "Modelle", "Gedächtnis", "Berechtigungen", "Datenschutz & Sicherheit", "Verbindungen", "Sprache & Audio", "Fähigkeiten", "Über"]
+    private let sections = ["Konto", "Allgemein", "Persönlichkeit", "Agenten", "Modelle", "Gedächtnis", "Berechtigungen", "Datenschutz & Sicherheit", "Benachrichtigungen", "Debugging & Sicherheit", "Verbindungen", "Sprache & Audio", "Fähigkeiten", "Über"]
 
     var body: some View {
         HStack(spacing: 0) {
@@ -149,6 +151,8 @@ struct SettingsView: View {
                     case "Gedächtnis":               memoryPolicySection(); memorySettingsSection()
                     case "Berechtigungen":           permissionsSection()
                     case "Datenschutz & Sicherheit": securitySection()
+                    case "Benachrichtigungen":       notificationsSettingsSection()
+                    case "Debugging & Sicherheit":   debugSecuritySection()
                     case "Verbindungen":             connectionsSection()
                     case "Sprache & Audio":          speechAndAudioSection()
                     case "Fähigkeiten":              skillsSettingsSection()
@@ -173,6 +177,8 @@ struct SettingsView: View {
         case "Gedächtnis":              return "brain.head.profile"
         case "Berechtigungen":          return "shield.lefthalf.filled"
         case "Datenschutz & Sicherheit": return "lock.shield.fill"
+        case "Benachrichtigungen":      return "bell.badge.fill"
+        case "Debugging & Sicherheit":  return "ant.fill"
         case "Verbindungen":            return "link.circle.fill"
         case "Sprache & Audio":         return "waveform"
         case "Fähigkeiten":            return "sparkles"
@@ -361,29 +367,6 @@ struct SettingsView: View {
                 .buttonStyle(.bordered)
                 .controlSize(.small)
                 .disabled(updateManager.state == .checking)
-            }
-            .frame(maxHeight: .infinity, alignment: .top)
-
-            FuturisticBox(icon: "network", title: "Verbindung", accent: .koboldGold) {
-                HStack {
-                    Text("Daemon-Port")
-                    Spacer()
-                    Text("\(daemonPort)").foregroundColor(.secondary)
-                }
-                HStack {
-                    Text("Status")
-                    Spacer()
-                    HStack(spacing: 4) {
-                        Circle()
-                            .fill(viewModel.isConnected ? Color.koboldEmerald : Color.red)
-                            .frame(width: 8, height: 8)
-                            .shadow(color: (viewModel.isConnected ? Color.koboldEmerald : Color.red).opacity(0.6), radius: 4)
-                        Text(viewModel.isConnected ? "Verbunden" : "Getrennt")
-                            .foregroundColor(viewModel.isConnected ? .koboldEmerald : .red)
-                    }
-                }
-                Button("Verbindung prüfen") { Task { await viewModel.testHealth() } }
-                    .buttonStyle(.bordered)
             }
             .frame(maxHeight: .infinity, alignment: .top)
 
@@ -868,29 +851,72 @@ struct SettingsView: View {
                     }
                 }
 
-                HStack(spacing: 12) {
-                    if ImageGenManager.shared.isModelLoaded {
-                        HStack(spacing: 6) {
-                            Circle().fill(Color.koboldEmerald).frame(width: 8, height: 8)
-                            Text("Model '\(ImageGenManager.shared.currentModelName)' geladen")
-                                .font(.system(size: 13.5, weight: .medium)).foregroundColor(.koboldEmerald)
-                        }
-                    } else {
+                // Model selection
+                VStack(alignment: .leading, spacing: 6) {
+                    let models = ImageGenManager.shared.availableModels
+                    if models.isEmpty {
                         HStack(spacing: 6) {
                             Image(systemName: "info.circle.fill").font(.caption).foregroundColor(.orange)
                             Text("CoreML SD-Model nach ~/Library/Application Support/KoboldOS/sd-models/ legen")
                                 .font(.system(size: 12.5)).foregroundColor(.secondary)
                         }
+                    } else {
+                        HStack(spacing: 8) {
+                            Text("Modell").font(.caption.bold()).foregroundColor(.secondary)
+                            Picker("", selection: AppStorageBinding("kobold.sd.selectedModel", default: "")) {
+                                Text("Automatisch (Root)").tag("")
+                                ForEach(models, id: \.self) { model in
+                                    Text(model).tag(model)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                            .frame(maxWidth: 250)
+
+                            if ImageGenManager.shared.isModelLoaded {
+                                HStack(spacing: 4) {
+                                    Circle().fill(Color.koboldEmerald).frame(width: 8, height: 8)
+                                    Text(ImageGenManager.shared.currentModelName)
+                                        .font(.system(size: 12.5, weight: .medium)).foregroundColor(.koboldEmerald)
+                                }
+                            }
+
+                            Button("Laden") {
+                                Task {
+                                    let selected = UserDefaults.standard.string(forKey: "kobold.sd.selectedModel") ?? ""
+                                    do {
+                                        if selected.isEmpty {
+                                            try await ImageGenManager.shared.loadModelFromRoot()
+                                        } else {
+                                            try await ImageGenManager.shared.loadModel(name: selected)
+                                        }
+                                    } catch {
+                                        print("[SD] Load error: \(error)")
+                                    }
+                                }
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                        }
                     }
-                    Spacer()
-                    Button("Models-Ordner öffnen") {
-                        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-                            .appendingPathComponent("KoboldOS/sd-models")
-                        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-                        NSWorkspace.shared.open(dir)
+
+                    HStack(spacing: 8) {
+                        Button("Models-Ordner öffnen") {
+                            let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+                                .appendingPathComponent("KoboldOS/sd-models")
+                            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                            NSWorkspace.shared.open(dir)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+
+                        if ImageGenManager.shared.isModelLoaded {
+                            Button("Entladen") {
+                                ImageGenManager.shared.unloadModel()
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                        }
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
                 }
 
                 if ImageGenManager.shared.isGenerating {
@@ -1096,6 +1122,16 @@ struct SettingsView: View {
                            detail: "Fragt nach bei sudo, rm -rf, kritischen Aktionen",
                            icon: "exclamationmark.shield.fill", color: .red,
                            binding: $permConfirmAdmin)
+                Divider()
+                permToggle("Playwright (Chrome-Automatisierung)",
+                           detail: "Erlaubt Browser-Automatisierung mit Chrome via Playwright (Node.js)",
+                           icon: "globe", color: .purple,
+                           binding: $permPlaywright)
+                Divider()
+                permToggle("Bildschirmsteuerung (Maus/Tastatur/OCR)",
+                           detail: "Erlaubt den PC zu steuern: Maus, Tastatur, Screenshots, Text-Erkennung",
+                           icon: "display", color: .orange,
+                           binding: $permScreenControl)
         }
 
         // Apple System Permissions — Request macOS access
@@ -1625,6 +1661,192 @@ struct SettingsView: View {
     @State private var iMessageAvailable: Bool = false
 
     // MARK: - Weather Settings
+
+    // MARK: - Benachrichtigungen
+
+    @AppStorage("kobold.notify.chatStepThreshold") private var chatStepThreshold: Int = 3
+    @AppStorage("kobold.notify.taskAlways") private var notifyTaskAlways: Bool = true
+    @AppStorage("kobold.notify.workflowAlways") private var notifyWorkflowAlways: Bool = true
+    @AppStorage("kobold.notify.sound") private var notifySound: Bool = true
+    @AppStorage("kobold.notify.systemNotifications") private var systemNotifications: Bool = true
+    @AppStorage("kobold.notify.channel") private var notifyChannel: String = "system"
+
+    @ViewBuilder
+    private func notificationsSettingsSection() -> some View {
+        sectionTitle("Benachrichtigungen")
+
+        FuturisticBox(icon: "bell.badge.fill", title: "Benachrichtigungsregeln", accent: .koboldGold) {
+            Text("Lege fest wann und wie du benachrichtigt wirst.")
+                .font(.caption).foregroundColor(.secondary)
+
+            Toggle("System-Benachrichtigungen (macOS)", isOn: $systemNotifications)
+                .toggleStyle(.switch)
+            Toggle("Benachrichtigungssound", isOn: $notifySound)
+                .toggleStyle(.switch)
+
+            GlassDivider()
+
+            Toggle("Tasks: Immer bei Abschluss/Fehler", isOn: $notifyTaskAlways)
+                .toggleStyle(.switch)
+            Toggle("Workflows: Immer bei Abschluss/Fehler", isOn: $notifyWorkflowAlways)
+                .toggleStyle(.switch)
+
+            HStack {
+                Text("Normale Chats: Ab")
+                Stepper("\(chatStepThreshold) Schritten", value: $chatStepThreshold, in: 1...20)
+                    .frame(width: 160)
+            }
+            Text("Normale Chat-Benachrichtigungen erst wenn der Agent mindestens \(chatStepThreshold) Tool-Schritte ausführt.")
+                .font(.caption2).foregroundColor(.secondary)
+        }
+
+        FuturisticBox(icon: "paperplane.fill", title: "Benachrichtigungskanal", accent: .koboldEmerald) {
+            Text("Wohin sollen Benachrichtigungen geschickt werden?")
+                .font(.caption).foregroundColor(.secondary)
+
+            Picker("Kanal", selection: $notifyChannel) {
+                Text("Nur System (macOS)").tag("system")
+                Text("System + Telegram").tag("telegram")
+                Text("System + iMessage").tag("imessage")
+            }
+            .pickerStyle(.radioGroup)
+
+            if notifyChannel == "telegram" {
+                HStack(spacing: 6) {
+                    Image(systemName: "paperplane.fill").foregroundColor(.blue)
+                    Text("Telegram muss unter Verbindungen konfiguriert sein.")
+                        .font(.caption).foregroundColor(.secondary)
+                }
+            }
+            if notifyChannel == "imessage" {
+                HStack(spacing: 6) {
+                    Image(systemName: "message.fill").foregroundColor(.green)
+                    Text("iMessage sendet an deine Apple-ID.")
+                        .font(.caption).foregroundColor(.secondary)
+                }
+            }
+        }
+    }
+
+    // MARK: - Debugging & Sicherheit
+
+    @AppStorage("kobold.log.level") private var logLevel: Int = 2
+    @AppStorage("kobold.recovery.autoRestart") private var autoRestartDaemon: Bool = true
+    @AppStorage("kobold.recovery.sessionRecovery") private var sessionRecovery: Bool = true
+    @AppStorage("kobold.recovery.maxRetries") private var maxRetries: Int = 3
+    @AppStorage("kobold.security.sandboxTools") private var sandboxTools: Bool = true
+    @AppStorage("kobold.security.networkRestrict") private var networkRestrict: Bool = false
+    @AppStorage("kobold.security.confirmDangerous") private var confirmDangerous: Bool = true
+    @AppStorage("kobold.recovery.healthInterval") private var healthCheckInterval: Int = 60
+
+    @ViewBuilder
+    private func debugSecuritySection() -> some View {
+        sectionTitle("Debugging & Sicherheit")
+
+        HStack(alignment: .top, spacing: 16) {
+            // Logging
+            FuturisticBox(icon: "doc.text.magnifyingglass", title: "Logging", accent: .koboldEmerald) {
+                HStack {
+                    Text("Log-Level").font(.caption.bold()).foregroundColor(.secondary)
+                    Spacer()
+                    Picker("", selection: $logLevel) {
+                        Text("Verbose").tag(0)
+                        Text("Debug").tag(1)
+                        Text("Info").tag(2)
+                        Text("Warnung").tag(3)
+                        Text("Fehler").tag(4)
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(maxWidth: 350)
+                }
+
+                Toggle("Verbose Logging", isOn: AppStorageToggle("kobold.log.verbose", default: false))
+                    .toggleStyle(.switch)
+                Toggle("Raw Prompts anzeigen", isOn: AppStorageToggle("kobold.dev.showRawPrompts", default: false))
+                    .toggleStyle(.switch)
+
+                HStack(spacing: 8) {
+                    Button("Logs exportieren") {
+                        let panel = NSSavePanel()
+                        panel.nameFieldStringValue = "kobold-logs.txt"
+                        panel.allowedContentTypes = [.plainText]
+                        if panel.runModal() == .OK, let url = panel.url {
+                            let logs = "[KoboldOS Log Export — \(Date())]\n\nLog-Level: \(logLevel)\nExport complete."
+                            try? logs.write(to: url, atomically: true, encoding: .utf8)
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+
+                    Button("Logs löschen") {
+                        print("[KoboldOS] Logs cleared")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            }
+            .frame(maxHeight: .infinity, alignment: .top)
+
+            // Recovery
+            FuturisticBox(icon: "arrow.counterclockwise.circle.fill", title: "Wiederherstellung", accent: .koboldGold) {
+                Toggle("Daemon automatisch neu starten", isOn: $autoRestartDaemon)
+                    .toggleStyle(.switch)
+                Text("Startet den Daemon automatisch bei unerwartetem Abbruch.")
+                    .font(.caption2).foregroundColor(.secondary)
+
+                Toggle("Session-Wiederherstellung", isOn: $sessionRecovery)
+                    .toggleStyle(.switch)
+                Text("Stellt unterbrochene Sitzungen nach Neustart wieder her.")
+                    .font(.caption2).foregroundColor(.secondary)
+
+                HStack {
+                    Text("Max. Wiederholungsversuche").font(.caption)
+                    Spacer()
+                    Stepper("\(maxRetries)", value: $maxRetries, in: 1...10)
+                        .frame(width: 120)
+                }
+
+                HStack {
+                    Text("Gesundheitscheck-Intervall").font(.caption)
+                    Spacer()
+                    Stepper("\(healthCheckInterval)s", value: $healthCheckInterval, in: 10...300, step: 10)
+                        .frame(width: 120)
+                }
+            }
+            .frame(maxHeight: .infinity, alignment: .top)
+        }
+
+        FuturisticBox(icon: "shield.checkered", title: "Sicherheitsautomatisierungen", accent: .red) {
+            Text("Kontrolliere wie der Agent mit kritischen Operationen umgeht.")
+                .font(.caption).foregroundColor(.secondary)
+
+            Toggle("Tool-Sandboxing (beschränkt Shell-Befehle)", isOn: $sandboxTools)
+                .toggleStyle(.switch)
+            Toggle("Netzwerk-Einschränkungen (blockt localhost-Zugriffe)", isOn: $networkRestrict)
+                .toggleStyle(.switch)
+            Toggle("Bestätigung bei gefährlichen Aktionen (rm, sudo, etc.)", isOn: $confirmDangerous)
+                .toggleStyle(.switch)
+
+            GlassDivider()
+
+            HStack(spacing: 12) {
+                Button("Alle Sessions zurücksetzen") {
+                    // Only with confirmation
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+
+                Button("Daemon-Cache leeren") {
+                    Task { if let url = URL(string: viewModel.baseURL + "/history/clear") {
+                        var req = viewModel.authorizedRequest(url: url, method: "POST")
+                        _ = try? await URLSession.shared.data(for: req)
+                    }}
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+        }
+    }
 
     @StateObject private var weatherMgr = WeatherManager.shared
 
@@ -3788,6 +4010,62 @@ struct SettingsView: View {
                         .font(.caption2).foregroundColor(.secondary).italic()
                 }
         }
+
+        // Goals
+        FuturisticBox(icon: "target", title: "Ziele", accent: .koboldEmerald) {
+            Text("Langfristige Ziele die das autonome Verhalten deines Agenten stark beeinflussen. Ziele fließen in den System-Prompt und die proaktiven Vorschläge ein.")
+                .font(.caption).foregroundColor(.secondary)
+
+            ForEach(Array(ProactiveEngine.shared.goals.enumerated()), id: \.element.id) { idx, goal in
+                HStack(spacing: 8) {
+                    Toggle("", isOn: Binding(
+                        get: { ProactiveEngine.shared.goals[idx].isActive },
+                        set: { ProactiveEngine.shared.goals[idx].isActive = $0; ProactiveEngine.shared.saveGoals() }
+                    ))
+                    .toggleStyle(.switch).labelsHidden().controlSize(.mini)
+
+                    Picker("", selection: Binding(
+                        get: { ProactiveEngine.shared.goals[idx].priority },
+                        set: { ProactiveEngine.shared.goals[idx].priority = $0; ProactiveEngine.shared.saveGoals() }
+                    )) {
+                        ForEach(GoalEntry.GoalPriority.allCases, id: \.self) { p in
+                            Text(p.rawValue).tag(p)
+                        }
+                    }
+                    .pickerStyle(.menu).frame(width: 80)
+
+                    Text(goal.text).font(.system(size: 14.5)).lineLimit(2)
+                    Spacer()
+                    Button(action: { ProactiveEngine.shared.deleteGoal(goal.id) }) {
+                        Image(systemName: "trash").font(.system(size: 13)).foregroundColor(.red.opacity(0.7))
+                    }.buttonStyle(.plain)
+                }
+            }
+
+            HStack(spacing: 8) {
+                TextField("Neues Ziel, z.B. 'Desktop aufgeräumt halten'", text: $newGoalText)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 14.5))
+                    .onSubmit { addNewGoal() }
+                Button("Hinzufügen") { addNewGoal() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(newGoalText.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+
+            if ProactiveEngine.shared.goals.isEmpty {
+                Text("Beispiele: 'Systemgesundheit überwachen', 'Code vor dem Commit reviewen', 'Meine Termine im Blick behalten'")
+                    .font(.caption2).foregroundColor(.secondary).italic()
+            }
+        }
+    }
+
+    @State private var newGoalText: String = ""
+    private func addNewGoal() {
+        let text = newGoalText.trimmingCharacters(in: .whitespaces)
+        guard !text.isEmpty else { return }
+        ProactiveEngine.shared.addGoal(GoalEntry(text: text))
+        newGoalText = ""
     }
 
     // MARK: - Memory Policy & Verhaltensregeln

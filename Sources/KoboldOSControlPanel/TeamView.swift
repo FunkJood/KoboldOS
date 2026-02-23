@@ -805,6 +805,21 @@ struct TeamView: View {
         case .merger:
             updateNode(id: nodeId) { $0.statusMessage = "Zusammenführen..." }
             return upstreamOutput
+
+        case .team:
+            updateNode(id: nodeId) { $0.statusMessage = "Team berät..." }
+            guard let teamIdStr = node.teamId,
+                  let team = viewModel.teams.first(where: { $0.id.uuidString == teamIdStr }) else {
+                return "Kein Team konfiguriert"
+            }
+            let activeAgents = team.agents.filter { $0.isActive }
+            var results: [(String, String)] = []
+            for agent in activeAgents {
+                let prompt = "Du bist \(agent.name) (\(agent.role)). \(agent.instructions)\n\nWorkflow-Input: \(upstreamOutput.isEmpty ? node.prompt : upstreamOutput)"
+                let result = await viewModel.sendTeamAgentMessage(prompt: prompt, profile: agent.profile)
+                results.append((agent.name, result))
+            }
+            return results.map { "[\($0.0)]: \($0.1)" }.joined(separator: "\n\n---\n\n")
         }
     }
 
@@ -984,6 +999,7 @@ struct WorkflowNode: Identifiable, Codable {
     var delaySeconds: Int = 0             // For delay nodes
     var modelOverride: String?            // Per-node model (e.g. "llama3.2", "gpt-4o")
     var agentType: String?                // Per-node agent type (e.g. "coder", "researcher")
+    var teamId: String?                   // For team nodes: which team to consult
 
     // Execution state (not persisted)
     var executionStatus: NodeExecutionStatus = .idle
@@ -993,7 +1009,7 @@ struct WorkflowNode: Identifiable, Codable {
 
     enum CodingKeys: String, CodingKey {
         case id, type, title, prompt, x, y, triggerConfig, conditionExpression, delaySeconds
-        case modelOverride, agentType
+        case modelOverride, agentType, teamId
     }
 
     init(id: UUID = UUID(), type: NodeType, title: String, prompt: String = "", x: CGFloat, y: CGFloat) {
@@ -1064,6 +1080,7 @@ struct WorkflowNode: Identifiable, Codable {
         case delay     = "Delay"
         case webhook   = "Webhook"
         case formula   = "Formula"
+        case team      = "Team"
 
         var color: Color {
             switch self {
@@ -1077,6 +1094,7 @@ struct WorkflowNode: Identifiable, Codable {
             case .delay:     return .gray
             case .webhook:   return .koboldGold
             case .formula:   return .koboldEmerald
+            case .team:      return .purple
             }
         }
         var icon: String {
@@ -1091,6 +1109,7 @@ struct WorkflowNode: Identifiable, Codable {
             case .delay:     return "clock.fill"
             case .webhook:   return "antenna.radiowaves.left.and.right"
             case .formula:   return "function"
+            case .team:      return "person.3.fill"
             }
         }
     }
@@ -1472,6 +1491,37 @@ struct NodeInspector: View {
 
                 GlassButton(title: "Chat öffnen", icon: "message.fill", isPrimary: true) {
                     onOpenChat()
+                }
+            }
+
+            // Team-specific: team selection
+            if node.type == .team {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Team auswählen").font(.caption).foregroundColor(.secondary)
+                    Picker("", selection: Binding(
+                        get: { node.teamId ?? "" },
+                        set: { node.teamId = $0.isEmpty ? nil : $0 }
+                    )) {
+                        Text("Kein Team").tag("")
+                        ForEach(viewModel.teams) { team in
+                            Text("\(team.name) (\(team.agents.count) Agenten)").tag(team.id.uuidString)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                }
+
+                if let teamIdStr = node.teamId,
+                   let team = viewModel.teams.first(where: { $0.id.uuidString == teamIdStr }) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Agenten:").font(.caption.bold()).foregroundColor(.secondary)
+                        ForEach(team.agents) { agent in
+                            HStack(spacing: 4) {
+                                Circle().fill(agent.isActive ? Color.koboldEmerald : .gray).frame(width: 6, height: 6)
+                                Text(agent.name).font(.system(size: 12.5))
+                                Text("(\(agent.role))").font(.system(size: 11.5)).foregroundColor(.secondary)
+                            }
+                        }
+                    }
                 }
             }
 
