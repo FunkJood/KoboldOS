@@ -77,21 +77,70 @@ struct DashboardView: View {
     @AppStorage("kobold.showAdvancedStats") private var showAdvancedStats: Bool = false
     @StateObject private var weatherManager = WeatherManager.shared
     @State private var showErrorPopover: Bool = false
+    @State private var showProcessManager: Bool = false
+    @State private var showWidgetPicker: Bool = false
+    @AppStorage("kobold.dashboard.widgets") private var enabledWidgetsJSON: String = ""
+
+    // Widget System
+    enum DashboardWidgetId: String, CaseIterable, Identifiable {
+        case systemStatus = "system_status"
+        case shortcuts = "shortcuts"
+        case metrics = "metrics"
+        case recentActivity = "recent_activity"
+        case activeSessions = "active_sessions"
+        var id: String { rawValue }
+        var displayName: String {
+            switch self {
+            case .systemStatus: return "System & Status"
+            case .shortcuts: return "Schnellzugriff"
+            case .metrics: return "Metriken"
+            case .recentActivity: return "Letzte Aktivitäten"
+            case .activeSessions: return "Aktive Sessions"
+            }
+        }
+        var icon: String {
+            switch self {
+            case .systemStatus: return "memorychip"
+            case .shortcuts: return "square.grid.2x2.fill"
+            case .metrics: return "chart.bar.fill"
+            case .recentActivity: return "list.bullet.clipboard"
+            case .activeSessions: return "person.3.fill"
+            }
+        }
+    }
+
+    private var enabledWidgets: [DashboardWidgetId] {
+        guard !enabledWidgetsJSON.isEmpty,
+              let data = enabledWidgetsJSON.data(using: .utf8),
+              let ids = try? JSONDecoder().decode([String].self, from: data) else {
+            return [.systemStatus, .shortcuts, .metrics, .recentActivity]
+        }
+        return ids.compactMap { DashboardWidgetId(rawValue: $0) }
+    }
+
+    private func saveEnabledWidgets(_ widgets: [DashboardWidgetId]) {
+        if let data = try? JSONEncoder().encode(widgets.map { $0.rawValue }),
+           let str = String(data: data, encoding: .utf8) { enabledWidgetsJSON = str }
+    }
 
     var body: some View {
         ScrollView {
             VStack(spacing: 20) {
                 welcomeSection
-                dashboardToolbar
+                HStack {
+                    dashboardToolbar
+                    Button(action: { showWidgetPicker = true }) {
+                        Image(systemName: "plus.circle.fill").font(.system(size: 18.5)).foregroundColor(.koboldEmerald)
+                    }
+                    .buttonStyle(.plain).help("Widgets verwalten")
+                }
                 ProactiveSuggestionsBar(engine: proactiveEngine) { action in
                     viewModel.sendMessage(action)
                     NotificationCenter.default.post(name: .koboldNavigate, object: SidebarTab.chat)
                 }
-                systemResourcesSection
-                shortcutTilesSection
-                statusSection
-                metricsGrid
-                recentActivitySection
+                ForEach(enabledWidgets) { wid in
+                    widgetView(for: wid)
+                }
             }
             .padding(24)
             .frame(maxWidth: .infinity)
@@ -125,37 +174,38 @@ struct DashboardView: View {
     private var dailyGreeting: String {
         let dayOfYear = Calendar.current.ordinality(of: .day, in: .year, for: Date()) ?? 1
         let greetings = [
-            "Schön, dass du da bist!",
-            "Bereit für einen produktiven Tag?",
-            "Was darf es heute sein?",
-            "Lass uns gemeinsam etwas Großartiges bauen.",
-            "Dein digitaler Assistent wartet auf dich.",
-            "Heute ist ein guter Tag für Fortschritt.",
-            "Auf geht's — die Welt wartet nicht!",
-            "Kreativität kennt keine Grenzen.",
-            "Jede große Reise beginnt mit einem Schritt.",
-            "Lass uns die Dinge ins Rollen bringen!",
-            "Innovation beginnt mit einer Idee.",
-            "Zusammen sind wir unschlagbar.",
-            "Heute wird ein guter Tag.",
-            "Was wäre, wenn alles möglich ist?",
-            "Die besten Ideen entstehen jetzt.",
-            "Volle Kraft voraus!",
-            "Bereit, Neues zu entdecken?",
-            "Machen wir das Beste draus!",
-            "Deine Vision, meine Tools.",
-            "Let's build something amazing.",
-            "Der Weg ist das Ziel — und wir sind unterwegs.",
-            "Heute schreiben wir Geschichte.",
-            "Ein neuer Tag, neue Möglichkeiten.",
-            "Think different. Build better.",
-            "Perfektion ist nicht das Ziel — Fortschritt schon.",
-            "Keep calm and code on.",
-            "Vom Gedanken zur Realität — lass uns loslegen.",
-            "Die Zukunft wird heute gebaut.",
-            "Neugier ist der Motor des Fortschritts.",
-            "Jede Zeile Code zählt.",
-            "Heute passiert etwas Besonderes.",
+            "Dein Kobold hat Kaffee gekocht. Na ja, fast.",
+            "Der Kobold wartet schon ungeduldig auf Befehle.",
+            "Heute hat dein Kobold 0 Fehler gemacht. Noch.",
+            "Psst... dein Kobold hat heimlich aufgeräumt.",
+            "Dein Kobold ist bereit. Die Welt noch nicht.",
+            "Ein Kobold, unendliche Möglichkeiten.",
+            "Dein Kobold läuft auf Hochtouren.",
+            "Dein Kobold hat heute Nacht 3 Sachen gelernt. Frag lieber nicht welche.",
+            "Lass uns was Cooles bauen. Oder wenigstens was Nützliches.",
+            "Dein Kobold hat den Desktop aufgeräumt. Spaß — aber er könnte!",
+            "Bereit für Chaos? Dein Kobold ist es.",
+            "Dein digitaler Mitbewohner grüßt.",
+            "Kobold-Status: Motiviert und einsatzbereit.",
+            "Heute wird automatisiert, was das Zeug hält!",
+            "Dein Kobold hat schon mal vorgearbeitet. Oder so getan.",
+            "Noch kein Kaffee? Dein Kobold läuft auch ohne.",
+            "Spoiler: Heute wird ein guter Tag.",
+            "Dein Kobold hat 42 Ideen. Die meisten sind sogar gut.",
+            "Willkommen zurück! Dein Kobold hat dich vermisst.",
+            "Die KI ist wach, der Mensch hoffentlich auch.",
+            "Plot Twist: Dein Kobold hat nichts kaputtgemacht. Diesmal.",
+            "Fehlerrate heute: 0%. Noch ist der Tag jung.",
+            "Dein Kobold denkt mit. Manchmal sogar voraus.",
+            "Automatisierung ist die beste Art von Faulheit.",
+            "Dein Kobold ist geladen und bereit zum Feuern.",
+            "Was steht an? Dein Kobold hat Zeit. Unendlich viel sogar.",
+            "System läuft. Kobold läuft. Du auch?",
+            "Dein Kobold hat die Nacht durchgearbeitet. OK, er hat nur gewartet.",
+            "Lass uns den Tag rocken! Oder zumindest organisieren.",
+            "Alles unter Kontrolle. Wahrscheinlich.",
+            "Dein Kobold ist so bereit, er vibriert fast.",
+            "Heute im Angebot: Produktivität zum Bestpreis.",
         ]
         return greetings[dayOfYear % greetings.count]
     }
@@ -551,6 +601,224 @@ struct DashboardView: View {
         viewModel.metrics = RuntimeMetrics()
         viewModel.recentTraces = []
         await viewModel.loadMetrics()
+    }
+
+    // MARK: - Widget System
+
+    @ViewBuilder
+    func widgetView(for id: DashboardWidgetId) -> some View {
+        switch id {
+        case .systemStatus:  combinedSystemSection
+        case .shortcuts:     shortcutTilesSection
+        case .metrics:       metricsGrid
+        case .recentActivity: recentActivitySection
+        case .activeSessions: activeSessionsWidget
+        }
+    }
+
+    // Combined Resources + Status
+    var combinedSystemSection: some View {
+        GlassCard {
+            VStack(alignment: .leading, spacing: 16) {
+                GlassSectionHeader(title: "System", icon: "memorychip")
+
+                // CPU + RAM circular gauges
+                HStack(spacing: 32) {
+                    Spacer()
+                    CircularGaugeView(
+                        value: sysMonitor.cpuUsage / 100,
+                        label: "CPU",
+                        valueText: String(format: "%.0f%%", sysMonitor.cpuUsage),
+                        color: sysMonitor.cpuUsage > 80 ? .red : sysMonitor.cpuUsage > 60 ? .orange : .koboldEmerald
+                    )
+                    CircularGaugeView(
+                        value: sysMonitor.ramTotalGB > 0 ? sysMonitor.ramUsedGB / sysMonitor.ramTotalGB : 0,
+                        label: "RAM",
+                        valueText: String(format: "%.1fGB", sysMonitor.ramUsedGB),
+                        color: sysMonitor.ramUsedGB / max(1, sysMonitor.ramTotalGB) > 0.85 ? .red :
+                               sysMonitor.ramUsedGB / max(1, sysMonitor.ramTotalGB) > 0.65 ? .orange : .koboldEmerald
+                    )
+                    Spacer()
+                }
+
+                // Disk bar
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Image(systemName: "internaldrive.fill").font(.caption).foregroundColor(.koboldGold)
+                        Text("Speicher").font(.caption.bold())
+                        Spacer()
+                        Text(String(format: "%.0f / %.0f GB", sysMonitor.diskTotalGB - sysMonitor.diskFreeGB, sysMonitor.diskTotalGB))
+                            .font(.system(size: 14.5, weight: .bold, design: .monospaced))
+                            .foregroundColor(sysMonitor.diskFreeGB < 20 ? .red : .primary)
+                    }
+                    GlassProgressBar(
+                        value: sysMonitor.diskTotalGB > 0 ? (sysMonitor.diskTotalGB - sysMonitor.diskFreeGB) / sysMonitor.diskTotalGB : 0,
+                        color: sysMonitor.diskFreeGB < 20 ? .red : sysMonitor.diskFreeGB < 50 ? .orange : .koboldGold
+                    )
+                }
+
+                GlassDivider()
+
+                // Status columns
+                HStack(spacing: 0) {
+                    statusColumn("Daemon", value: viewModel.daemonStatus, color: viewModel.isConnected ? .koboldEmerald : .orange)
+                    Divider().frame(width: 1, height: 40).padding(.horizontal, 12)
+                    statusColumn("Ollama", value: viewModel.ollamaStatus, color: viewModel.ollamaStatus == "Running" ? .koboldEmerald : .red)
+                    Divider().frame(width: 1, height: 40).padding(.horizontal, 12)
+                    statusColumn("Modell", value: viewModel.activeOllamaModel.isEmpty ? "—" : viewModel.activeOllamaModel, color: .koboldGold)
+                    Divider().frame(width: 1, height: 40).padding(.horizontal, 12)
+                    statusColumn("Latenz", value: String(format: "%.0f ms", viewModel.metrics.avgLatencyMs), color: viewModel.metrics.avgLatencyMs > 5000 ? .red : .koboldEmerald)
+                    Divider().frame(width: 1, height: 40).padding(.horizontal, 12)
+                    statusColumn("Tokens", value: formatTokens(viewModel.metrics.tokensTotal), color: .koboldGold)
+                }
+
+                if viewModel.metrics.tokensTotal > 0 {
+                    GlassDivider()
+                    GlassProgressBar(value: min(1.0, Double(viewModel.metrics.tokensTotal) / 100_000.0), label: "Token-Verbrauch (\(selectedPeriod.rawValue))", color: .koboldEmerald)
+                }
+
+                GlassDivider()
+
+                // Process Manager button
+                Button(action: { showProcessManager = true }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "list.bullet.rectangle.portrait").font(.system(size: 14.5)).foregroundColor(.koboldEmerald)
+                        Text("Prozessmanager").font(.system(size: 14.5, weight: .medium)).foregroundColor(.koboldEmerald)
+                        Spacer()
+                        Image(systemName: "chevron.right").font(.system(size: 12.5)).foregroundColor(.secondary)
+                    }.padding(.vertical, 4)
+                }.buttonStyle(.plain)
+            }
+        }
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(LinearGradient(colors: [Color.koboldEmerald.opacity(0.12), Color.koboldGold.opacity(0.08)], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 0.5))
+        .sheet(isPresented: $showProcessManager) { ProcessManagerSheet(viewModel: viewModel) }
+        .sheet(isPresented: $showWidgetPicker) {
+            WidgetPickerSheet(enabledWidgets: enabledWidgets) { newWidgets in saveEnabledWidgets(newWidgets) }
+        }
+    }
+
+    // Active Sessions Widget
+    var activeSessionsWidget: some View {
+        GlassCard {
+            VStack(alignment: .leading, spacing: 12) {
+                GlassSectionHeader(title: "Aktive Sessions", icon: "person.3.fill")
+                if viewModel.activeSessions.isEmpty {
+                    Text("Keine aktiven Sessions.").font(.caption).foregroundColor(.secondary)
+                } else {
+                    ForEach(viewModel.activeSessions.prefix(5)) { session in
+                        HStack(spacing: 8) {
+                            Circle().fill(session.status == .running ? Color.koboldEmerald : .secondary).frame(width: 6, height: 6)
+                            Text(session.agentType.capitalized).font(.system(size: 14.5, weight: .medium))
+                            Spacer()
+                            Text(session.elapsed).font(.system(size: 12.5, design: .monospaced)).foregroundColor(.secondary)
+                            if session.status == .running {
+                                Button(action: { viewModel.killSession(session.id) }) {
+                                    Image(systemName: "xmark.circle.fill").font(.system(size: 14.5)).foregroundColor(.red)
+                                }.buttonStyle(.plain)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(LinearGradient(colors: [Color.koboldEmerald.opacity(0.12), Color.koboldGold.opacity(0.08)], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 0.5))
+    }
+}
+
+// MARK: - ProcessManagerSheet
+
+struct ProcessManagerSheet: View {
+    @ObservedObject var viewModel: RuntimeViewModel
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Image(systemName: "list.bullet.rectangle.portrait").font(.system(size: 17.5)).foregroundColor(.koboldEmerald)
+                Text("Prozessmanager").font(.system(size: 17.5, weight: .bold))
+                Spacer()
+                Button(action: { dismiss() }) {
+                    Image(systemName: "xmark.circle.fill").font(.system(size: 19)).foregroundColor(.secondary)
+                }.buttonStyle(.plain)
+            }.padding(16)
+            Divider()
+            if viewModel.activeSessions.isEmpty {
+                VStack(spacing: 12) {
+                    Image(systemName: "checkmark.seal.fill").font(.system(size: 35)).foregroundColor(.koboldEmerald.opacity(0.5))
+                    Text("Keine aktiven Prozesse").font(.system(size: 15.5, weight: .medium)).foregroundColor(.secondary)
+                }.frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    VStack(spacing: 0) {
+                        ForEach(viewModel.activeSessions) { session in
+                            HStack(spacing: 12) {
+                                Circle().fill(session.status == .running ? Color.koboldEmerald : .secondary).frame(width: 8, height: 8)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(session.agentType.capitalized).font(.system(size: 14.5, weight: .semibold))
+                                    Text(session.prompt).font(.system(size: 12.5)).foregroundColor(.secondary).lineLimit(1)
+                                }
+                                Spacer()
+                                VStack(alignment: .trailing, spacing: 2) {
+                                    Text(session.status.rawValue).font(.system(size: 12.5, weight: .medium)).foregroundColor(session.status == .running ? .koboldEmerald : .secondary)
+                                    Text(session.elapsed).font(.system(size: 11.5, design: .monospaced)).foregroundColor(.secondary)
+                                    if session.stepCount > 0 { Text("\(session.stepCount) Schritte").font(.system(size: 11.5)).foregroundColor(.secondary) }
+                                }
+                                if session.status == .running {
+                                    Button(action: { viewModel.killSession(session.id) }) {
+                                        Image(systemName: "xmark.circle.fill").font(.system(size: 17.5)).foregroundColor(.red)
+                                    }.buttonStyle(.plain).help("Prozess beenden")
+                                }
+                            }.padding(.horizontal, 16).padding(.vertical, 10)
+                            Divider().opacity(0.3).padding(.horizontal, 16)
+                        }
+                    }
+                }
+            }
+        }
+        .frame(width: 500, height: 400)
+        .background(Color.koboldPanel)
+    }
+}
+
+// MARK: - WidgetPickerSheet
+
+struct WidgetPickerSheet: View {
+    let enabledWidgets: [DashboardView.DashboardWidgetId]
+    let onSave: ([DashboardView.DashboardWidgetId]) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var selected: Set<DashboardView.DashboardWidgetId> = []
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("Dashboard-Widgets").font(.system(size: 17.5, weight: .bold))
+                Spacer()
+                Button("Fertig") {
+                    onSave(DashboardView.DashboardWidgetId.allCases.filter { selected.contains($0) })
+                    dismiss()
+                }.buttonStyle(.borderedProminent).tint(.koboldEmerald)
+            }.padding(16)
+            Divider()
+            ScrollView {
+                VStack(spacing: 0) {
+                    ForEach(DashboardView.DashboardWidgetId.allCases) { widget in
+                        HStack(spacing: 12) {
+                            Image(systemName: widget.icon).font(.system(size: 17.5)).foregroundColor(.koboldEmerald).frame(width: 24)
+                            Text(widget.displayName).font(.system(size: 15.5, weight: .medium))
+                            Spacer()
+                            Toggle("", isOn: Binding(
+                                get: { selected.contains(widget) },
+                                set: { isOn in if isOn { selected.insert(widget) } else { selected.remove(widget) } }
+                            )).toggleStyle(.switch).tint(.koboldEmerald)
+                        }.padding(.horizontal, 16).padding(.vertical, 10)
+                        Divider().opacity(0.3).padding(.horizontal, 16)
+                    }
+                }
+            }
+        }
+        .frame(width: 400, height: 380)
+        .background(Color.koboldPanel)
+        .onAppear { selected = Set(enabledWidgets) }
     }
 }
 

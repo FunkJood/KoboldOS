@@ -12,11 +12,10 @@ DerivedData/
 
 # Build artifacts
 *.app
-*.dmg
 *.dSYM.zip
 *.dSYM
 dist/*.app
-dist/*.dmg
+# dist/*.dmg — DMGs werden manuell getracked
 
 # macOS
 .DS_Store

@@ -174,8 +174,16 @@ class ModelDownloadManager: ObservableObject {
                 }
 
                 sdProgress = 1.0
-                sdStatus = "SD-Modell installiert!"
+                sdStatus = "SD-Modell installiert! Lade Engine..."
                 sdModelInstalled = true
+
+                // Load model directly into pipeline
+                do {
+                    try await ImageGenManager.shared.loadModelFromRoot()
+                    sdStatus = "SD-Modell geladen und bereit!"
+                } catch {
+                    sdStatus = "Installiert (Laden: \(error.localizedDescription))"
+                }
                 isDownloadingSD = false
             } catch {
                 lastError = error.localizedDescription

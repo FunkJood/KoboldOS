@@ -101,6 +101,7 @@ struct TasksView: View {
     @State private var newPrompt = ""
     @State private var newSchedulePreset: TaskSchedulePreset = .manual
     @State private var newCustomCron = ""
+    @State private var suggestionOffset: Int = 0
     @State private var errorMsg = ""
 
     // New schedule mode
@@ -262,7 +263,7 @@ struct TasksView: View {
     private var currentSuggestions: [AutomationSuggestion] {
         let hour = Calendar.current.component(.hour, from: Date())
         let dayOfYear = Calendar.current.ordinality(of: .day, in: .year, for: Date()) ?? 0
-        let index = (dayOfYear * 6 + hour / 4) % Self.automationSuggestions.count
+        let index = (dayOfYear * 6 + hour / 4 + suggestionOffset) % Self.automationSuggestions.count
         return Self.automationSuggestions[index]
     }
 
@@ -283,7 +284,13 @@ struct TasksView: View {
             // Automation suggestions
             GlassCard(padding: 12, cornerRadius: 12) {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("Automatisierungsideen").font(.system(size: 15.5, weight: .semibold)).foregroundColor(.koboldGold)
+                    HStack {
+                        Text("Automatisierungsideen").font(.system(size: 15.5, weight: .semibold)).foregroundColor(.koboldGold)
+                        Spacer()
+                        Button(action: { withAnimation(.easeInOut(duration: 0.2)) { suggestionOffset += 1 } }) {
+                            Image(systemName: "arrow.clockwise").font(.system(size: 13.5)).foregroundColor(.koboldGold)
+                        }.buttonStyle(.plain).help("Neue Vorschläge laden")
+                    }
                     ForEach(currentSuggestions, id: \.name) { suggestion in
                         Button(action: {
                             newName = suggestion.name

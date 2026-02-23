@@ -22,6 +22,7 @@ struct TeamView: View {
     @State private var isAgentBuilding: Bool = false
     @State private var agentBuildStatus: String = ""
     @State private var showImportPicker: Bool = false
+    @State private var workflowSuggestionOffset: Int = 0
     // Canvas zoom & pan
     @State private var canvasScale: CGFloat = 1.0
     @State private var canvasOffset: CGSize = .zero
@@ -61,7 +62,13 @@ struct TeamView: View {
                     // Workflow ideas
                     GlassCard(padding: 12, cornerRadius: 12) {
                         VStack(alignment: .leading, spacing: 10) {
-                            Text("Workflow-Ideen").font(.system(size: 15.5, weight: .semibold)).foregroundColor(.koboldGold)
+                            HStack {
+                                Text("Workflow-Ideen").font(.system(size: 15.5, weight: .semibold)).foregroundColor(.koboldGold)
+                                Spacer()
+                                Button(action: { withAnimation(.easeInOut(duration: 0.2)) { workflowSuggestionOffset += 1 } }) {
+                                    Image(systemName: "arrow.clockwise").font(.system(size: 13.5)).foregroundColor(.koboldGold)
+                                }.buttonStyle(.plain).help("Neue Vorschläge laden")
+                            }
                             ForEach(currentWorkflowSuggestions, id: \.name) { suggestion in
                                 Button(action: {
                                     viewModel.newProject()
@@ -407,18 +414,20 @@ struct TeamView: View {
     var nodeInspectorPanel: some View {
         Group {
             if let id = selectedNodeId, let idx = nodes.firstIndex(where: { $0.id == id }) {
+                let nodeTitle = nodes[idx].title
                 NodeInspector(
                     node: $nodes[idx],
                     onClose: { selectedNodeId = nil },
                     onDelete: {
-                        connections.removeAll { $0.sourceNodeId == id || $0.targetNodeId == id }
-                        nodes.remove(at: idx)
                         selectedNodeId = nil
+                        connections.removeAll { $0.sourceNodeId == id || $0.targetNodeId == id }
+                        if let removeIdx = nodes.firstIndex(where: { $0.id == id }) {
+                            nodes.remove(at: removeIdx)
+                        }
                         saveWorkflowState()
                     },
                     onOpenChat: {
-                        let nodeName = nodes[idx].title
-                        viewModel.openWorkflowChat(nodeName: nodeName)
+                        viewModel.openWorkflowChat(nodeName: nodeTitle)
                     },
                     incomingConnections: connections.filter { $0.targetNodeId == id },
                     outgoingConnections: connections.filter { $0.sourceNodeId == id },
@@ -517,7 +526,7 @@ struct TeamView: View {
     private var currentWorkflowSuggestions: [WorkflowSuggestion] {
         let hour = Calendar.current.component(.hour, from: Date())
         let dayOfYear = Calendar.current.ordinality(of: .day, in: .year, for: Date()) ?? 0
-        let index = (dayOfYear * 6 + hour / 4) % Self.workflowSuggestionSets.count
+        let index = (dayOfYear * 6 + hour / 4 + workflowSuggestionOffset) % Self.workflowSuggestionSets.count
         return Self.workflowSuggestionSets[index]
     }
 
@@ -639,11 +648,10 @@ struct TeamView: View {
             guard !visited.contains(currentId) else { continue }
             visited.insert(currentId)
 
-            guard let nodeIdx = nodes.firstIndex(where: { $0.id == currentId }) else { continue }
+            guard nodes.contains(where: { $0.id == currentId }) else { continue }
 
             // 2a. Set to waiting
-            nodes[nodeIdx].executionStatus = .waiting
-            nodes[nodeIdx].statusMessage = "Wartet..."
+            updateNode(id: currentId) { $0.executionStatus = .waiting; $0.statusMessage = "Wartet..." }
 
             // Gather context from upstream nodes
             let sourceIds = connections.filter { $0.targetNodeId == currentId }.map { $0.sourceNodeId }
@@ -652,34 +660,37 @@ struct TeamView: View {
             }.filter { !$0.isEmpty }.joined(separator: "\n\n")
 
             // 2b. Set to running
-            nodes[nodeIdx].executionStatus = .running
-            nodes[nodeIdx].statusMessage = "Verarbeite..."
+            updateNode(id: currentId) { $0.executionStatus = .running; $0.statusMessage = "Verarbeite..." }
 
             do {
-                // 2c. Execute based on node type
-                let result = try await executeNode(nodeIdx: nodeIdx, upstreamOutput: upstreamOutput)
+                // 2c. Execute based on node type — use ID-based lookup for safety
+                guard let safeIdx = nodes.firstIndex(where: { $0.id == currentId }) else { continue }
+                let result = try await executeNode(nodeIdx: safeIdx, upstreamOutput: upstreamOutput)
 
                 // 2d. Set to success
-                nodes[nodeIdx].executionStatus = .success
-                nodes[nodeIdx].statusMessage = String(result.prefix(60))
-                nodes[nodeIdx].lastOutput = result
-                nodes[nodeIdx].executionProgress = 1.0
-
+                updateNode(id: currentId) {
+                    $0.executionStatus = .success
+                    $0.statusMessage = String(result.prefix(60))
+                    $0.lastOutput = result
+                    $0.executionProgress = 1.0
+                }
             } catch {
                 // 2d. Set to error
-                nodes[nodeIdx].executionStatus = .error
-                nodes[nodeIdx].statusMessage = error.localizedDescription
-                nodes[nodeIdx].errorMessage = error.localizedDescription
-                // Continue with other branches despite error
+                updateNode(id: currentId) {
+                    $0.executionStatus = .error
+                    $0.statusMessage = error.localizedDescription
+                    $0.errorMessage = error.localizedDescription
+                }
             }
 
             // Small delay for visual feedback
             try? await Task.sleep(nanoseconds: 200_000_000)
 
             // 2e. Queue downstream nodes — for condition nodes, handle branching
-            if nodes[nodeIdx].type == .condition {
+            let nodeType = nodes.first(where: { $0.id == currentId })?.type
+            if nodeType == .condition {
                 let outConns = connections.filter { $0.sourceNodeId == currentId }
-                let conditionResult = nodes[nodeIdx].lastOutput
+                let conditionResult = nodes.first(where: { $0.id == currentId })?.lastOutput ?? ""
                 if conditionResult == "true", let firstConn = outConns.first {
                     queue.append(firstConn.targetNodeId)
                 } else if conditionResult == "false", outConns.count > 1 {
@@ -694,41 +705,48 @@ struct TeamView: View {
         }
     }
 
+    /// Safely update a node by ID (avoids index-out-of-bounds during async operations)
+    private func updateNode(id: UUID, _ update: (inout WorkflowNode) -> Void) {
+        guard let idx = nodes.firstIndex(where: { $0.id == id }) else { return }
+        update(&nodes[idx])
+    }
+
     /// Execute a single node and return its output
     private func executeNode(nodeIdx: Int, upstreamOutput: String) async throws -> String {
+        guard nodeIdx < nodes.count else { return "Node nicht mehr verfügbar" }
         let node = nodes[nodeIdx]
+        let nodeId = node.id
 
         switch node.type {
         case .trigger:
-            nodes[nodeIdx].statusMessage = "Gestartet"
+            updateNode(id: nodeId) { $0.statusMessage = "Gestartet" }
             return "workflow_started"
 
         case .input:
             return upstreamOutput
 
         case .output:
-            nodes[nodeIdx].statusMessage = "Abgeschlossen"
+            updateNode(id: nodeId) { $0.statusMessage = "Abgeschlossen" }
             lastRunOutput = upstreamOutput
             showRunOutput = true
             return upstreamOutput
 
         case .agent:
-            nodes[nodeIdx].statusMessage = "Agent arbeitet..."
+            updateNode(id: nodeId) { $0.statusMessage = "Agent arbeitet..." }
             let prompt = node.prompt.isEmpty
                 ? "Aufgabe: \(node.title)\n\nKontext:\n\(String(upstreamOutput.prefix(1000)))"
                 : "\(node.prompt)\n\nKontext:\n\(String(upstreamOutput.prefix(1000)))"
 
             viewModel.sendWorkflowMessage(prompt, modelOverride: node.modelOverride, agentOverride: node.agentType)
 
-            // Wait for agent response (poll for up to 60s)
             var waitCount = 0
             while waitCount < 120 {
                 try? await Task.sleep(nanoseconds: 500_000_000)
                 waitCount += 1
-                nodes[nodeIdx].executionProgress = min(0.9, Double(waitCount) / 120.0)
-                nodes[nodeIdx].statusMessage = "Agent arbeitet... (\(waitCount/2)s)"
-
-                // Check if we got a response in the workflow session
+                updateNode(id: nodeId) {
+                    $0.executionProgress = min(0.9, Double(waitCount) / 120.0)
+                    $0.statusMessage = "Agent arbeitet... (\(waitCount/2)s)"
+                }
                 if let lastMsg = viewModel.workflowLastResponse, !lastMsg.isEmpty {
                     viewModel.workflowLastResponse = nil
                     return lastMsg
@@ -737,7 +755,7 @@ struct TeamView: View {
             return "Agent-Timeout nach 60s"
 
         case .tool:
-            nodes[nodeIdx].statusMessage = "Tool ausführen..."
+            updateNode(id: nodeId) { $0.statusMessage = "Tool ausführen..." }
             let toolType = node.agentType ?? "shell"
             let toolPrompt = node.prompt.isEmpty ? upstreamOutput : node.prompt
             viewModel.sendWorkflowMessage(
@@ -745,13 +763,14 @@ struct TeamView: View {
                 modelOverride: node.modelOverride,
                 agentOverride: nil
             )
-            // Poll for response (same pattern as agent nodes, up to 30s)
             var toolWait = 0
             while toolWait < 60 {
                 try? await Task.sleep(nanoseconds: 500_000_000)
                 toolWait += 1
-                nodes[nodeIdx].executionProgress = min(0.9, Double(toolWait) / 60.0)
-                nodes[nodeIdx].statusMessage = "Tool arbeitet... (\(toolWait / 2)s)"
+                updateNode(id: nodeId) {
+                    $0.executionProgress = min(0.9, Double(toolWait) / 60.0)
+                    $0.statusMessage = "Tool arbeitet... (\(toolWait / 2)s)"
+                }
                 if let resp = viewModel.workflowLastResponse, !resp.isEmpty {
                     viewModel.workflowLastResponse = nil
                     return resp
@@ -760,29 +779,31 @@ struct TeamView: View {
             return "Tool-Timeout nach 30s"
 
         case .condition:
-            nodes[nodeIdx].statusMessage = "Prüfe Bedingung..."
+            updateNode(id: nodeId) { $0.statusMessage = "Prüfe Bedingung..." }
             return evaluateCondition(expression: node.conditionExpression, output: upstreamOutput)
 
         case .delay:
             let seconds = max(1, node.delaySeconds)
             for remaining in stride(from: seconds, through: 1, by: -1) {
-                nodes[nodeIdx].statusMessage = "Warte... \(remaining)s"
-                nodes[nodeIdx].executionProgress = 1.0 - (Double(remaining) / Double(seconds))
+                updateNode(id: nodeId) {
+                    $0.statusMessage = "Warte... \(remaining)s"
+                    $0.executionProgress = 1.0 - (Double(remaining) / Double(seconds))
+                }
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
             }
-            nodes[nodeIdx].statusMessage = "Fertig"
+            updateNode(id: nodeId) { $0.statusMessage = "Fertig" }
             return upstreamOutput
 
         case .webhook:
-            nodes[nodeIdx].statusMessage = "Sende Webhook..."
+            updateNode(id: nodeId) { $0.statusMessage = "Sende Webhook..." }
             return await executeWebhook(node: node, input: upstreamOutput)
 
         case .formula:
-            nodes[nodeIdx].statusMessage = "Berechne..."
+            updateNode(id: nodeId) { $0.statusMessage = "Berechne..." }
             return evaluateFormula(expression: node.prompt, input: upstreamOutput)
 
         case .merger:
-            nodes[nodeIdx].statusMessage = "Zusammenführen..."
+            updateNode(id: nodeId) { $0.statusMessage = "Zusammenführen..." }
             return upstreamOutput
         }
     }

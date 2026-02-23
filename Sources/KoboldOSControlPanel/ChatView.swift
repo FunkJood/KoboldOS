@@ -70,6 +70,11 @@ struct ChatView: View {
                 }
             }
 
+            // Sticky Checklist
+            if !viewModel.agentChecklist.isEmpty {
+                AgentChecklistOverlay(items: viewModel.agentChecklist)
+            }
+
             GlassDivider()
             inputBar
         }
@@ -124,7 +129,8 @@ struct ChatView: View {
         case .subAgentResult(let profile, let output, let success):
             SubAgentResultBubble(profile: profile, output: output, success: success)
         case .thinking(let entries):
-            ThinkingPanelBubble(entries: entries, isLive: false)
+            let isNewest = (msg.id == viewModel.messages.last(where: { if case .thinking = $0.kind { return true }; return false })?.id)
+            ThinkingPanelBubble(entries: entries, isLive: false, isNewest: isNewest)
         }
     }
 
@@ -180,32 +186,32 @@ struct ChatView: View {
 
             // Context Usage Bar (shows when agent is active)
             if viewModel.contextPromptTokens > 0 || viewModel.agentLoading {
-                HStack(spacing: 6) {
+                HStack(spacing: 8) {
                     Image(systemName: "text.line.last.and.arrowtriangle.forward")
-                        .font(.system(size: 10))
+                        .font(.system(size: 12.5))
                         .foregroundColor(viewModel.contextUsagePercent > 0.8 ? .orange : .secondary)
                     GeometryReader { geo in
                         ZStack(alignment: .leading) {
-                            RoundedRectangle(cornerRadius: 2)
-                                .fill(Color.white.opacity(0.08))
-                            RoundedRectangle(cornerRadius: 2)
+                            RoundedRectangle(cornerRadius: 3)
+                                .fill(Color.white.opacity(0.1))
+                            RoundedRectangle(cornerRadius: 3)
                                 .fill(viewModel.contextUsagePercent > 0.8
                                       ? Color.orange.opacity(0.7)
                                       : Color.green.opacity(0.5))
                                 .frame(width: geo.size.width * min(1.0, viewModel.contextUsagePercent))
                         }
                     }
-                    .frame(height: 4)
+                    .frame(height: 6)
                     Text("\(Int(viewModel.contextUsagePercent * 100))%")
-                        .font(.system(size: 10, design: .monospaced))
+                        .font(.system(size: 12.5, weight: .medium, design: .monospaced))
                         .foregroundColor(viewModel.contextUsagePercent > 0.8 ? .orange : .secondary)
-                        .frame(width: 30)
+                        .frame(width: 36)
                     Text("\(viewModel.contextPromptTokens)/\(viewModel.contextWindowSize)")
-                        .font(.system(size: 9, design: .monospaced))
+                        .font(.system(size: 11.5, design: .monospaced))
                         .foregroundColor(.secondary)
                 }
                 .padding(.horizontal, 16)
-                .padding(.vertical, 3)
+                .padding(.vertical, 5)
                 .background(Color.black.opacity(0.15))
             }
 

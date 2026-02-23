@@ -28,6 +28,14 @@ struct ThinkingEntry: Identifiable, Sendable {
     }
 }
 
+// MARK: - AgentChecklistItem
+
+struct AgentChecklistItem: Identifiable {
+    let id: String
+    let label: String
+    var isCompleted: Bool = false
+}
+
 // MARK: - MessageKind
 
 enum MessageKind: Sendable {
@@ -116,6 +124,7 @@ class RuntimeViewModel: ObservableObject {
     @Published var messages: [ChatMessage] = []
     @Published var agentLoading: Bool = false
     @Published var activeThinkingSteps: [ThinkingEntry] = []
+    @Published var agentChecklist: [AgentChecklistItem] = []
     /// Which chat session the agent is currently working for (nil = idle)
     @Published var activeAgentOriginSession: UUID?
     /// True only when the agent is loading AND the user is viewing the origin chat
@@ -715,6 +724,13 @@ class RuntimeViewModel: ObservableObject {
         defer {
             agentLoading = false
             activeAgentOriginSession = nil
+            // Auto-clear checklist after 2s if all completed
+            if !agentChecklist.isEmpty && agentChecklist.allSatisfy(\.isCompleted) {
+                Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                    withAnimation(.easeInOut(duration: 0.3)) { agentChecklist = [] }
+                }
+            }
             if let idx = activeSessions.firstIndex(where: { $0.id == sessionId }) {
                 if activeSessions[idx].status == .running {
                     activeSessions[idx].status = .completed
@@ -836,6 +852,18 @@ class RuntimeViewModel: ObservableObject {
                     } else {
                         addNotification(title: "Fehler", message: content, type: .error)
                     }
+                case "checklist_set":
+                    if let items = json["items"] as? [String] {
+                        agentChecklist = items.enumerated().map { (i, label) in
+                            AgentChecklistItem(id: "step_\(i)", label: label)
+                        }
+                    }
+                case "checklist_check":
+                    if let index = json["index"] as? Int, index < agentChecklist.count {
+                        agentChecklist[index].isCompleted = true
+                    }
+                case "checklist_clear":
+                    agentChecklist = []
                 default:
                     break
                 }

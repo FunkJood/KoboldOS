@@ -306,12 +306,10 @@ struct GlassStatusBadge: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            Circle()
-                .fill(color)
-                .frame(width: 6, height: 6)
             if let icon { Image(systemName: icon).font(.caption2) }
             Text(label)
                 .font(.caption.weight(.medium))
+            if let icon { Image(systemName: icon).font(.caption2) }
         }
         .foregroundColor(.primary)
         .padding(.horizontal, 8)
@@ -350,6 +348,38 @@ struct GlassProgressBar: View {
                 }
             }
             .frame(height: 6)
+        }
+    }
+}
+
+// MARK: - CircularGaugeView (animated ring gauge for CPU/RAM)
+
+struct CircularGaugeView: View {
+    let value: Double
+    let label: String
+    let valueText: String
+    var color: Color = .koboldEmerald
+    var lineWidth: CGFloat = 8
+    var size: CGFloat = 80
+
+    var body: some View {
+        VStack(spacing: 6) {
+            ZStack {
+                Circle().stroke(color.opacity(0.15), lineWidth: lineWidth)
+                Circle()
+                    .trim(from: 0, to: min(value, 1.0))
+                    .stroke(
+                        AngularGradient(gradient: Gradient(colors: [color.opacity(0.6), color]), center: .center),
+                        style: StrokeStyle(lineWidth: lineWidth, lineCap: .round)
+                    )
+                    .rotationEffect(.degrees(-90))
+                    .animation(.easeInOut(duration: 0.6), value: value)
+                Text(valueText)
+                    .font(.system(size: size * 0.18, weight: .bold, design: .monospaced))
+                    .foregroundColor(color)
+            }
+            .frame(width: size, height: size)
+            Text(label).font(.system(size: 12.5, weight: .medium)).foregroundColor(.secondary)
         }
     }
 }
@@ -882,13 +912,14 @@ struct SubAgentResultBubble: View {
 struct ThinkingPanelBubble: View {
     let entries: [ThinkingEntry]
     let isLive: Bool
+    var isNewest: Bool = false
     @State private var expanded: Bool
 
-    init(entries: [ThinkingEntry], isLive: Bool) {
+    init(entries: [ThinkingEntry], isLive: Bool, isNewest: Bool = false) {
         self.entries = entries
         self.isLive = isLive
-        // Live panels are ALWAYS expanded; old messages start collapsed
-        self._expanded = State(initialValue: isLive)
+        self.isNewest = isNewest
+        self._expanded = State(initialValue: isLive || isNewest)
     }
 
     private var hasSubAgentActivity: Bool {
@@ -912,7 +943,7 @@ struct ThinkingPanelBubble: View {
                         Image(systemName: "brain")
                             .font(.system(size: 13.5))
                             .foregroundColor(.koboldGold)
-                        Text(isLive ? "Denkt... (\(entries.count) Schritte)" : "\(entries.count) Schritte")
+                        Text(isLive ? "\(ThinkingPlaceholderBubble.thinkingVerbs[abs(entries.count.hashValue) % ThinkingPlaceholderBubble.thinkingVerbs.count].dropLast(3))... (\(entries.count) Schritte)" : "\(entries.count) Schritte")
                             .font(.system(size: 14.5, weight: .semibold))
                             .foregroundColor(.koboldGold)
                         if isLive {
@@ -1186,6 +1217,20 @@ struct ToolStatusRow: View {
 struct ThinkingPlaceholderBubble: View {
     @State private var pulse = false
 
+    static let thinkingVerbs = [
+        "Denkt...", "Grübelt...", "Brütet...", "Fermentiert...", "Kocht...",
+        "Brainstormt...", "Meditiert...", "Philosophiert...", "Rechnet...",
+        "Kombiniert...", "Jongliert...", "Bastelt...", "Schmiedet...",
+        "Tüftelt...", "Analysiert...", "Puzzelt...", "Braut zusammen...",
+        "Destilliert...", "Spinnt Fäden...", "Zaubert...", "Berechnet...",
+        "Knobelt...", "Forscht...", "Träumt...", "Schraubt...",
+        "Entschlüsselt...", "Hexenwerk...", "Alchemie...",
+        "Betet zum Modell...", "Orakelt...", "Prophezeit...",
+    ]
+    private var verb: String {
+        Self.thinkingVerbs[abs(Int(Date().timeIntervalSince1970 * 3).hashValue) % Self.thinkingVerbs.count]
+    }
+
     var body: some View {
         HStack(alignment: .top) {
             HStack(spacing: 8) {
@@ -1194,7 +1239,7 @@ struct ThinkingPlaceholderBubble: View {
                     .foregroundColor(.koboldGold)
                     .scaleEffect(pulse ? 1.15 : 0.9)
                     .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: pulse)
-                Text("Denkt...")
+                Text(verb)
                     .font(.system(size: 14.5, weight: .semibold))
                     .foregroundColor(.koboldGold)
                 ProgressView()
@@ -1211,6 +1256,56 @@ struct ThinkingPlaceholderBubble: View {
             Spacer(minLength: 80)
         }
         .onAppear { pulse = true }
+    }
+}
+
+// MARK: - AgentChecklistOverlay (sticky checklist at bottom of chat)
+
+struct AgentChecklistOverlay: View {
+    let items: [AgentChecklistItem]
+    private var completedCount: Int { items.filter(\.isCompleted).count }
+    private var progress: Double { items.isEmpty ? 0 : Double(completedCount) / Double(items.count) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "checklist").font(.system(size: 14.5, weight: .semibold)).foregroundColor(.koboldEmerald)
+                Text("Fortschritt").font(.system(size: 14.5, weight: .semibold))
+                Spacer()
+                Text("\(completedCount)/\(items.count)")
+                    .font(.system(size: 13.5, weight: .bold, design: .monospaced))
+                    .foregroundColor(.koboldEmerald)
+            }
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 3).fill(Color.white.opacity(0.08))
+                    RoundedRectangle(cornerRadius: 3).fill(Color.koboldEmerald)
+                        .frame(width: geo.size.width * progress)
+                        .animation(.easeInOut(duration: 0.3), value: progress)
+                }
+            }.frame(height: 4)
+            ForEach(items) { item in
+                HStack(spacing: 8) {
+                    Image(systemName: item.isCompleted ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 14.5))
+                        .foregroundColor(item.isCompleted ? .koboldEmerald : .secondary)
+                    Text(item.label)
+                        .font(.system(size: 13.5))
+                        .foregroundColor(item.isCompleted ? .secondary : .primary)
+                        .strikethrough(item.isCompleted, color: .secondary)
+                    Spacer()
+                }
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.koboldPanel.opacity(0.95))
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.koboldEmerald.opacity(0.3), lineWidth: 1))
+        )
+        .shadow(color: .black.opacity(0.2), radius: 8, x: 0, y: -2)
+        .padding(.horizontal, 16).padding(.bottom, 4)
+        .transition(.move(edge: .bottom).combined(with: .opacity))
     }
 }
 
