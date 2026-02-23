@@ -192,6 +192,7 @@ struct GlassChatBubble: View {
     var isLoading: Bool = false
     @State private var showCopy = false
     @State private var copied = false
+    @AppStorage("kobold.chat.fontSize") private var chatFontSize: Double = 16.5
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 8) {
@@ -205,7 +206,7 @@ struct GlassChatBubble: View {
                     } else if isUser {
                         // User messages: plain text (no markdown rendering needed)
                         Text(message)
-                            .font(.system(size: 16.5))
+                            .font(.system(size: CGFloat(chatFontSize)))
                             .foregroundColor(.white)
                             .textSelection(.enabled)
                     } else {
@@ -622,6 +623,65 @@ struct ToolResultBubble: View {
                 .overlay(RoundedRectangle(cornerRadius: 12).stroke(color.opacity(0.25), lineWidth: 0.5)))
             .onHover { h in withAnimation(.easeInOut(duration: 0.15)) { showCopy = h } }
             Spacer(minLength: 80)
+        }
+    }
+}
+
+// MARK: - InteractiveBubble (Yes/No or multi-choice buttons from agent)
+
+struct InteractiveBubble: View {
+    let text: String
+    let options: [InteractiveOption]
+    let isAnswered: Bool
+    let selectedOptionId: String?
+    let onSelect: (InteractiveOption) -> Void
+
+    var body: some View {
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(text)
+                    .font(.system(size: 16.5))
+                    .foregroundColor(.primary)
+                HStack(spacing: 10) {
+                    ForEach(options) { option in
+                        Button(action: { if !isAnswered { onSelect(option) } }) {
+                            HStack(spacing: 6) {
+                                if let icon = option.icon {
+                                    Image(systemName: icon).font(.system(size: 14.5))
+                                }
+                                Text(option.label).font(.system(size: 15.5, weight: .semibold))
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .fill(isAnswered && selectedOptionId == option.id
+                                          ? Color.koboldEmerald.opacity(0.25)
+                                          : Color.koboldEmerald.opacity(0.1))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .stroke(isAnswered && selectedOptionId == option.id
+                                            ? Color.koboldEmerald.opacity(0.6)
+                                            : Color.koboldEmerald.opacity(0.3), lineWidth: 1)
+                            )
+                            .foregroundColor(isAnswered && selectedOptionId == option.id ? .koboldEmerald : .primary)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(isAnswered)
+                        .opacity(isAnswered && selectedOptionId != option.id ? 0.4 : 1.0)
+                    }
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(.ultraThinMaterial)
+                    .overlay(RoundedRectangle(cornerRadius: 16).fill(Color.koboldEmerald.opacity(0.06)))
+            )
+            .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.koboldEmerald.opacity(0.2), lineWidth: 0.5))
+            Spacer(minLength: 60)
         }
     }
 }

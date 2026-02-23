@@ -154,7 +154,10 @@ class ModelDownloadManager: ObservableObject {
 
                 sdStatus = "Lade SD-Modell (\(files.count) Dateien)..."
                 for (index, file) in files.enumerated() {
-                    let url = URL(string: "\(baseURL)/\(file)")!
+                    guard let url = URL(string: "\(baseURL)/\(file.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? file)") else {
+                        sdStatus = "Fehler: Ungültige URL für \(file)"
+                        continue
+                    }
                     let destFile = destDir.appendingPathComponent(file)
 
                     // Create subdirectories
@@ -176,15 +179,15 @@ class ModelDownloadManager: ObservableObject {
                 sdProgress = 1.0
                 sdStatus = "SD-Modell installiert! Lade Engine..."
                 sdModelInstalled = true
+                isDownloadingSD = false  // UI sofort freigeben
 
-                // Load model directly into pipeline
+                // Load model in background to avoid blocking UI / watchdog kill
                 do {
                     try await ImageGenManager.shared.loadModelFromRoot()
                     sdStatus = "SD-Modell geladen und bereit!"
                 } catch {
                     sdStatus = "Installiert (Laden: \(error.localizedDescription))"
                 }
-                isDownloadingSD = false
             } catch {
                 lastError = error.localizedDescription
                 sdStatus = "Fehler beim Download"

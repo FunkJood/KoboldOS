@@ -11,6 +11,7 @@ struct ChatView: View {
     @AppStorage("kobold.agent.type") private var agentType: String = "general"
     @AppStorage("kobold.koboldName") private var koboldName: String = "KoboldOS"
     @AppStorage("kobold.showAgentSteps") private var showAgentSteps: Bool = true
+    @AppStorage("kobold.chat.fontSize") private var chatFontSize: Double = 16.5
     // Notifications moved to GlobalHeaderBar
     @State private var scrollDebounceTask: Task<Void, Never>?
 
@@ -75,6 +76,18 @@ struct ChatView: View {
                 AgentChecklistOverlay(items: viewModel.agentChecklist)
             }
 
+            // Message queue indicator
+            if !viewModel.messageQueue.isEmpty && viewModel.agentLoading {
+                HStack(spacing: 6) {
+                    Image(systemName: "tray.full.fill").font(.system(size: 12.5)).foregroundColor(.koboldGold)
+                    Text("\(viewModel.messageQueue.count) Nachricht\(viewModel.messageQueue.count > 1 ? "en" : "") in Warteschlange")
+                        .font(.system(size: 12.5, weight: .medium)).foregroundColor(.koboldGold)
+                    Spacer()
+                }
+                .padding(.horizontal, 16).padding(.vertical, 4)
+                .background(Color.koboldGold.opacity(0.08))
+            }
+
             GlassDivider()
             inputBar
         }
@@ -131,6 +144,15 @@ struct ChatView: View {
         case .thinking(let entries):
             let isNewest = (msg.id == viewModel.messages.last(where: { if case .thinking = $0.kind { return true }; return false })?.id)
             ThinkingPanelBubble(entries: entries, isLive: false, isNewest: isNewest)
+        case .interactive(let text, let options):
+            InteractiveBubble(
+                text: text, options: options,
+                isAnswered: msg.interactiveAnswered,
+                selectedOptionId: msg.selectedOptionId,
+                onSelect: { option in
+                    viewModel.answerInteractive(messageId: msg.id, optionId: option.id, optionLabel: option.label)
+                }
+            )
         }
     }
 
@@ -308,8 +330,13 @@ struct ChatView: View {
     @State private var tipRotation: Double = 0
 
     private func loadRandomTips() {
-        let allTips = Self.exampleSets.flatMap { $0 }
-        activeTips = Array(allTips.shuffled().prefix(4))
+        let aiTips = SuggestionService.shared.chatSuggestions
+        if !aiTips.isEmpty {
+            activeTips = Array(aiTips.shuffled().prefix(4))
+        } else {
+            let allTips = Self.exampleSets.flatMap { $0 }
+            activeTips = Array(allTips.shuffled().prefix(4))
+        }
         withAnimation(.easeInOut(duration: 0.3)) {
             tipRotation += 360
         }
@@ -423,6 +450,27 @@ struct ChatView: View {
                 }
                 .buttonStyle(.plain)
                 .help(showAgentSteps ? "Agent-Schritte ausblenden" : "Agent-Schritte einblenden")
+
+                // Font size controls
+                Button(action: { chatFontSize = max(12, chatFontSize - 1) }) {
+                    Text("a").font(.system(size: 13, weight: .bold))
+                        .foregroundColor(.secondary)
+                        .frame(width: 26, height: 32)
+                        .background(Color.koboldSurface.opacity(0.4))
+                        .cornerRadius(8)
+                }
+                .buttonStyle(.plain)
+                .help("Text kleiner")
+
+                Button(action: { chatFontSize = min(24, chatFontSize + 1) }) {
+                    Text("A").font(.system(size: 17, weight: .bold))
+                        .foregroundColor(.secondary)
+                        .frame(width: 26, height: 32)
+                        .background(Color.koboldSurface.opacity(0.4))
+                        .cornerRadius(8)
+                }
+                .buttonStyle(.plain)
+                .help("Text größer")
 
                 GlassTextField(
                     text: $inputText,

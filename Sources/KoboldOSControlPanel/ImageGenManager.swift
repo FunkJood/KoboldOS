@@ -1,5 +1,5 @@
 import Foundation
-import StableDiffusion
+@preconcurrency import StableDiffusion
 import CoreML
 import AppKit
 import CoreImage
@@ -83,24 +83,31 @@ final class ImageGenManager: ObservableObject {
     }
 
     /// Load model directly from modelsDir root (used after download where files are placed directly)
+    /// Heavy pipeline work runs off MainActor to prevent UI freeze / watchdog kill.
     func loadModelFromRoot() async throws {
         let dir = modelsDir
         guard FileManager.default.fileExists(atPath: dir.appendingPathComponent("TextEncoder.mlmodelc").path) else {
             throw ImageGenError.modelNotFound("root")
         }
-        var config = MLModelConfiguration()
-        switch computeUnits {
-        case "cpuOnly": config.computeUnits = .cpuOnly
-        case "all": config.computeUnits = .all
-        default: config.computeUnits = .cpuAndGPU
-        }
-        pipeline = try StableDiffusionPipeline(
-            resourcesAt: dir, controlNet: [], configuration: config, reduceMemory: true
-        )
-        try pipeline?.loadResources()
+        let cu = computeUnits
+        // Heavy work on background thread
+        let newPipeline: StableDiffusionPipeline = try await Task.detached(priority: .userInitiated) {
+            var config = MLModelConfiguration()
+            switch cu {
+            case "cpuOnly": config.computeUnits = .cpuOnly
+            case "all":     config.computeUnits = .all
+            default:        config.computeUnits = .cpuAndGPU
+            }
+            let p = try StableDiffusionPipeline(
+                resourcesAt: dir, controlNet: [], configuration: config, reduceMemory: true
+            )
+            try p.loadResources()
+            return p
+        }.value
+        pipeline = newPipeline
         isModelLoaded = true
         currentModelName = "stable-diffusion-2.1-base"
-        print("[ImageGen] Model loaded from root directory")
+        print("[ImageGen] Model loaded from root directory (background)")
     }
 
     func unloadModel() {

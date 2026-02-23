@@ -733,23 +733,27 @@ struct SidebarView: View {
 
     func labelForTab(_ tab: SidebarTab) -> String {
         switch tab {
-        case .chat:       return l10n.language.chat
-        case .dashboard:  return l10n.language.dashboard
-        case .memory:     return "Gedächtnis"
-        case .tasks:      return l10n.language.tasks
-        case .workflows:  return l10n.language.team
-        case .settings:   return l10n.language.settings
+        case .chat:        return l10n.language.chat
+        case .dashboard:   return l10n.language.dashboard
+        case .memory:      return "Gedächtnis"
+        case .tasks:       return l10n.language.tasks
+        case .workflows:   return l10n.language.team
+        case .teams:       return "Teams"
+        case .marketplace: return "Marktplatz"
+        case .settings:    return l10n.language.settings
         }
     }
 
     func iconForTab(_ tab: SidebarTab) -> String {
         switch tab {
-        case .chat:       return "message.fill"
-        case .dashboard:  return "chart.bar.fill"
-        case .memory:     return "brain.filled.head.profile"
-        case .tasks:      return "checklist"
-        case .workflows:  return "point.3.connected.trianglepath.dotted"
-        case .settings:   return "gearshape.fill"
+        case .chat:        return "message.fill"
+        case .dashboard:   return "chart.bar.fill"
+        case .memory:      return "brain.filled.head.profile"
+        case .tasks:       return "checklist"
+        case .workflows:   return "point.3.connected.trianglepath.dotted"
+        case .teams:       return "person.3.fill"
+        case .marketplace: return "storefront.fill"
+        case .settings:    return "gearshape.fill"
         }
     }
 }
@@ -1376,7 +1380,9 @@ struct ContentAreaView: View {
                     } else {
                         TeamView(viewModel: viewModel)
                     }
-                case .settings:   SettingsView(viewModel: viewModel)
+                case .teams:       TeamsGroupView(viewModel: viewModel)
+                case .marketplace: MarketplaceView(viewModel: viewModel)
+                case .settings:    SettingsView(viewModel: viewModel)
                 }
             }
             } // VStack
@@ -1535,6 +1541,8 @@ enum SidebarTab: String, CaseIterable {
     case chat
     case tasks
     case workflows
+    case teams
+    case marketplace
     case memory
     case settings
 }

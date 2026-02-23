@@ -143,10 +143,10 @@ struct SettingsView: View {
                     switch selectedSection {
                     case "Konto":                   profileSection()
                     case "Allgemein":                generalSection()
-                    case "Persönlichkeit":           memoryPolicySection(); agentPersonalitySection()
+                    case "Persönlichkeit":           agentPersonalitySection()
                     case "Agenten":                  agentsSettingsSection()
                     case "Modelle":                  modelsSection()
-                    case "Gedächtnis":               memorySettingsSection()
+                    case "Gedächtnis":               memoryPolicySection(); memorySettingsSection()
                     case "Berechtigungen":           permissionsSection()
                     case "Datenschutz & Sicherheit": securitySection()
                     case "Verbindungen":             connectionsSection()
@@ -818,46 +818,6 @@ struct SettingsView: View {
                 }
         }
 
-        // Cloud API Provider
-        Text("Cloud API-Provider").font(.headline).padding(.top, 8)
-        Text("Cloud-LLM-Backends für Agenten. API-Keys werden lokal gespeichert.")
-            .font(.caption).foregroundColor(.secondary)
-
-        // OpenAI
-        providerCard(
-            name: "OpenAI",
-            icon: "brain.head.profile",
-            color: .koboldEmerald,
-            keyBinding: $openaiKey,
-            baseURLBinding: $openaiBaseURL,
-            defaultURL: "https://api.openai.com",
-            models: ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "o1"],
-            provider: "openai"
-        )
-
-        // Anthropic
-        providerCard(
-            name: "Anthropic",
-            icon: "sparkles",
-            color: .koboldGold,
-            keyBinding: $anthropicKey,
-            baseURLBinding: $anthropicBaseURL,
-            defaultURL: "https://api.anthropic.com",
-            models: ["claude-sonnet-4-20250514", "claude-haiku-4-5-20251001", "claude-opus-4-20250514"],
-            provider: "anthropic"
-        )
-
-        // Groq
-        providerCard(
-            name: "Groq",
-            icon: "bolt.fill",
-            color: .koboldEmerald,
-            keyBinding: $groqKey,
-            baseURLBinding: $groqBaseURL,
-            defaultURL: "https://api.groq.com",
-            models: ["llama-3.3-70b-versatile", "mixtral-8x7b-32768", "gemma2-9b-it"],
-            provider: "groq"
-        )
         // Bildgenerierung (Stable Diffusion)
         Text("Bildgenerierung").font(.headline).padding(.top, 8)
         FuturisticBox(icon: "photo.artframe", title: "Stable Diffusion (CoreML)", accent: .koboldEmerald) {
@@ -1461,8 +1421,35 @@ struct SettingsView: View {
                 }
         }
 
-        // Cloud API Keys (quick access — also editable under Modelle)
-        FuturisticBox(icon: "cloud.fill", title: "Cloud API-Keys", accent: .red) {
+        // Cloud API Provider & Keys
+        Text("Cloud API-Provider").font(.headline).padding(.top, 8)
+
+        // OpenAI
+        providerCard(
+            name: "OpenAI", icon: "brain.head.profile", color: .koboldEmerald,
+            keyBinding: $openaiKey, baseURLBinding: $openaiBaseURL,
+            defaultURL: "https://api.openai.com",
+            models: ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "o1"],
+            provider: "openai"
+        )
+        // Anthropic
+        providerCard(
+            name: "Anthropic", icon: "sparkles", color: .koboldGold,
+            keyBinding: $anthropicKey, baseURLBinding: $anthropicBaseURL,
+            defaultURL: "https://api.anthropic.com",
+            models: ["claude-sonnet-4-20250514", "claude-haiku-4-5-20251001", "claude-opus-4-20250514"],
+            provider: "anthropic"
+        )
+        // Groq
+        providerCard(
+            name: "Groq", icon: "bolt.fill", color: .koboldEmerald,
+            keyBinding: $groqKey, baseURLBinding: $groqBaseURL,
+            defaultURL: "https://api.groq.com",
+            models: ["llama-3.3-70b-versatile", "mixtral-8x7b-32768", "gemma2-9b-it"],
+            provider: "groq"
+        )
+
+        FuturisticBox(icon: "cloud.fill", title: "Cloud API-Keys (Schnellzugriff)", accent: .red) {
                 Text("API-Keys für Cloud-Provider. Werden lokal in UserDefaults gespeichert.")
                     .font(.caption).foregroundColor(.secondary)
 
@@ -2278,9 +2265,36 @@ struct SettingsView: View {
         // Core Memory blocks
         HStack(alignment: .top, spacing: 16) {
             FuturisticBox(icon: "ruler.fill", title: "Speicherlimits", accent: .koboldGold) {
-                    HStack { Text("Persona-Block"); Spacer(); Text("2000 Zeichen").foregroundColor(.secondary) }.font(.system(size: 15.5))
-                    HStack { Text("Human-Block"); Spacer(); Text("2000 Zeichen").foregroundColor(.secondary) }.font(.system(size: 15.5))
-                    HStack { Text("Knowledge-Block"); Spacer(); Text("3000 Zeichen").foregroundColor(.secondary) }.font(.system(size: 15.5))
+                    HStack {
+                        Text("Persona-Block").font(.system(size: 15.5))
+                        Spacer()
+                        Picker("", selection: Binding(
+                            get: { UserDefaults.standard.integer(forKey: "kobold.memory.personaLimit").nonZero ?? 2000 },
+                            set: { UserDefaults.standard.set($0, forKey: "kobold.memory.personaLimit") }
+                        )) {
+                            Text("1000").tag(1000); Text("2000").tag(2000); Text("4000").tag(4000); Text("8000").tag(8000)
+                        }.pickerStyle(.menu).frame(width: 90)
+                    }
+                    HStack {
+                        Text("Human-Block").font(.system(size: 15.5))
+                        Spacer()
+                        Picker("", selection: Binding(
+                            get: { UserDefaults.standard.integer(forKey: "kobold.memory.humanLimit").nonZero ?? 2000 },
+                            set: { UserDefaults.standard.set($0, forKey: "kobold.memory.humanLimit") }
+                        )) {
+                            Text("1000").tag(1000); Text("2000").tag(2000); Text("4000").tag(4000); Text("8000").tag(8000)
+                        }.pickerStyle(.menu).frame(width: 90)
+                    }
+                    HStack {
+                        Text("Knowledge-Block").font(.system(size: 15.5))
+                        Spacer()
+                        Picker("", selection: Binding(
+                            get: { UserDefaults.standard.integer(forKey: "kobold.memory.knowledgeLimit").nonZero ?? 3000 },
+                            set: { UserDefaults.standard.set($0, forKey: "kobold.memory.knowledgeLimit") }
+                        )) {
+                            Text("2000").tag(2000); Text("3000").tag(3000); Text("5000").tag(5000); Text("10000").tag(10000)
+                        }.pickerStyle(.menu).frame(width: 90)
+                    }
             }
             .frame(maxHeight: .infinity, alignment: .top)
             FuturisticBox(icon: "arrow.clockwise", title: "Auto-Speichern", accent: .koboldEmerald) {
@@ -3708,36 +3722,6 @@ struct SettingsView: View {
     private func agentPersonalitySection() -> some View {
         sectionTitle("Agent-Persönlichkeit")
 
-        FuturisticBox(icon: "heart.fill", title: "Soul.md — Kernidentität", accent: .koboldEmerald) {
-                Text("Definiert wer der Agent im Kern ist. Grundlegende Werte, Identität und Verhaltensmuster.")
-                    .font(.caption).foregroundColor(.secondary)
-                TextEditor(text: $agentSoul)
-                    .font(.system(size: 14.5, design: .monospaced))
-                    .frame(minHeight: 80, maxHeight: 150)
-                    .padding(6)
-                    .background(Color.black.opacity(0.2)).cornerRadius(8)
-                    .scrollContentBackground(.hidden)
-                if agentSoul.isEmpty {
-                    Text("Leer = Standard-Persönlichkeit (KoboldOS)")
-                        .font(.caption2).foregroundColor(.secondary).italic()
-                }
-        }
-
-        FuturisticBox(icon: "theatermasks.fill", title: "Personality.md — Verhaltensstil", accent: .koboldGold) {
-                Text("Beschreibt wie der Agent kommuniziert: Tonfall, Humor, Formalität, Eigenheiten.")
-                    .font(.caption).foregroundColor(.secondary)
-                TextEditor(text: $agentPersonality)
-                    .font(.system(size: 14.5, design: .monospaced))
-                    .frame(minHeight: 80, maxHeight: 150)
-                    .padding(6)
-                    .background(Color.black.opacity(0.2)).cornerRadius(8)
-                    .scrollContentBackground(.hidden)
-                if agentPersonality.isEmpty {
-                    Text("Leer = neutraler, hilfsbereiter Stil")
-                        .font(.caption2).foregroundColor(.secondary).italic()
-                }
-        }
-
         FuturisticBox(icon: "bubble.left.and.bubble.right.fill", title: "Kommunikation", accent: .koboldGold) {
 
                 HStack(spacing: 20) {
@@ -3772,6 +3756,36 @@ struct SettingsView: View {
                         Spacer()
                         Text("Ausführlich").font(.caption2).foregroundColor(.secondary)
                     }
+                }
+        }
+
+        FuturisticBox(icon: "heart.fill", title: "Soul.md — Kernidentität", accent: .koboldEmerald) {
+                Text("Definiert wer der Agent im Kern ist. Grundlegende Werte, Identität und Verhaltensmuster.")
+                    .font(.caption).foregroundColor(.secondary)
+                TextEditor(text: $agentSoul)
+                    .font(.system(size: 14.5, design: .monospaced))
+                    .frame(minHeight: 80, maxHeight: 150)
+                    .padding(6)
+                    .background(Color.black.opacity(0.2)).cornerRadius(8)
+                    .scrollContentBackground(.hidden)
+                if agentSoul.isEmpty {
+                    Text("Leer = Standard-Persönlichkeit (KoboldOS)")
+                        .font(.caption2).foregroundColor(.secondary).italic()
+                }
+        }
+
+        FuturisticBox(icon: "theatermasks.fill", title: "Personality.md — Verhaltensstil", accent: .koboldGold) {
+                Text("Beschreibt wie der Agent kommuniziert: Tonfall, Humor, Formalität, Eigenheiten.")
+                    .font(.caption).foregroundColor(.secondary)
+                TextEditor(text: $agentPersonality)
+                    .font(.system(size: 14.5, design: .monospaced))
+                    .frame(minHeight: 80, maxHeight: 150)
+                    .padding(6)
+                    .background(Color.black.opacity(0.2)).cornerRadius(8)
+                    .scrollContentBackground(.hidden)
+                if agentPersonality.isEmpty {
+                    Text("Leer = neutraler, hilfsbereiter Stil")
+                        .font(.caption2).foregroundColor(.secondary).italic()
                 }
         }
     }

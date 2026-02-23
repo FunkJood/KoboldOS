@@ -261,6 +261,16 @@ struct TasksView: View {
     ]
 
     private var currentSuggestions: [AutomationSuggestion] {
+        // Prefer AI-generated suggestions
+        let aiSuggestions = SuggestionService.shared.taskSuggestions
+        if !aiSuggestions.isEmpty {
+            return aiSuggestions.map { item in
+                AutomationSuggestion(
+                    icon: SuggestionService.shared.iconForTask(item.name),
+                    name: item.name, prompt: item.prompt, schedule: item.schedule
+                )
+            }
+        }
         let hour = Calendar.current.component(.hour, from: Date())
         let dayOfYear = Calendar.current.ordinality(of: .day, in: .year, for: Date()) ?? 0
         let index = (dayOfYear * 6 + hour / 4 + suggestionOffset) % Self.automationSuggestions.count

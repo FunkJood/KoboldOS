@@ -11,11 +11,14 @@ class SystemMetricsMonitor: ObservableObject {
     @Published var ramTotalGB: Double = 0
     @Published var diskFreeGB: Double = 0
     @Published var diskTotalGB: Double = 0
+    @Published var thermalPressure: Double = 0  // 0.0–1.0
+    @Published var thermalLabel: String = "Kühl"
 
     func update() {
         updateRAM()
         updateCPU()
         updateDisk()
+        updateThermal()
     }
 
     private func updateRAM() {
@@ -54,6 +57,17 @@ class SystemMetricsMonitor: ObservableObject {
             diskTotalGB = Double(totalBytes) / 1_073_741_824
         }
     }
+
+    private func updateThermal() {
+        let state = ProcessInfo.processInfo.thermalState
+        switch state {
+        case .nominal:  thermalPressure = 0.15; thermalLabel = "Kühl"
+        case .fair:     thermalPressure = 0.45; thermalLabel = "Normal"
+        case .serious:  thermalPressure = 0.75; thermalLabel = "Hoch"
+        case .critical: thermalPressure = 1.0;  thermalLabel = "Kritisch"
+        @unknown default: thermalPressure = 0.0; thermalLabel = "—"
+        }
+    }
 }
 
 // MARK: - DashboardView
@@ -71,6 +85,7 @@ struct DashboardView: View {
     @EnvironmentObject var l10n: LocalizationManager
     @StateObject private var sysMonitor = SystemMetricsMonitor()
     @StateObject private var proactiveEngine = ProactiveEngine.shared
+    @StateObject private var suggestionService = SuggestionService.shared
     @State private var refreshTimer: Timer? = nil
     @State private var selectedPeriod: MetricsPeriod = .session
     @AppStorage("kobold.koboldName") private var koboldName: String = "KoboldOS"
@@ -153,6 +168,7 @@ struct DashboardView: View {
         )
         .onAppear {
             Task { await viewModel.loadMetrics() }
+            Task { await suggestionService.generateSuggestions() }
             sysMonitor.update()
             proactiveEngine.startPeriodicCheck(viewModel: viewModel)
             refreshTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { _ in
@@ -172,6 +188,9 @@ struct DashboardView: View {
     // MARK: - Welcome Section
 
     private var dailyGreeting: String {
+        if !suggestionService.dashboardGreeting.isEmpty {
+            return suggestionService.dashboardGreeting
+        }
         let dayOfYear = Calendar.current.ordinality(of: .day, in: .year, for: Date()) ?? 1
         let greetings = [
             "Dein Kobold hat Kaffee gekocht. Na ja, fast.",
@@ -622,39 +641,39 @@ struct DashboardView: View {
             VStack(alignment: .leading, spacing: 16) {
                 GlassSectionHeader(title: "System", icon: "memorychip")
 
-                // CPU + RAM circular gauges
-                HStack(spacing: 32) {
+                // CPU + RAM + Disk + Temp circular gauges
+                HStack(spacing: 20) {
                     Spacer()
                     CircularGaugeView(
                         value: sysMonitor.cpuUsage / 100,
                         label: "CPU",
                         valueText: String(format: "%.0f%%", sysMonitor.cpuUsage),
-                        color: sysMonitor.cpuUsage > 80 ? .red : sysMonitor.cpuUsage > 60 ? .orange : .koboldEmerald
+                        color: sysMonitor.cpuUsage > 80 ? .red : sysMonitor.cpuUsage > 60 ? .orange : .koboldEmerald,
+                        size: 72
                     )
                     CircularGaugeView(
                         value: sysMonitor.ramTotalGB > 0 ? sysMonitor.ramUsedGB / sysMonitor.ramTotalGB : 0,
                         label: "RAM",
                         valueText: String(format: "%.1fGB", sysMonitor.ramUsedGB),
                         color: sysMonitor.ramUsedGB / max(1, sysMonitor.ramTotalGB) > 0.85 ? .red :
-                               sysMonitor.ramUsedGB / max(1, sysMonitor.ramTotalGB) > 0.65 ? .orange : .koboldEmerald
+                               sysMonitor.ramUsedGB / max(1, sysMonitor.ramTotalGB) > 0.65 ? .orange : .koboldEmerald,
+                        size: 72
+                    )
+                    CircularGaugeView(
+                        value: sysMonitor.diskTotalGB > 0 ? (sysMonitor.diskTotalGB - sysMonitor.diskFreeGB) / sysMonitor.diskTotalGB : 0,
+                        label: "Speicher",
+                        valueText: String(format: "%.0fGB", sysMonitor.diskTotalGB - sysMonitor.diskFreeGB),
+                        color: sysMonitor.diskFreeGB < 20 ? .red : sysMonitor.diskFreeGB < 50 ? .orange : .koboldGold,
+                        size: 72
+                    )
+                    CircularGaugeView(
+                        value: sysMonitor.thermalPressure,
+                        label: "Temp",
+                        valueText: sysMonitor.thermalLabel,
+                        color: sysMonitor.thermalPressure > 0.7 ? .red : sysMonitor.thermalPressure > 0.4 ? .orange : .koboldEmerald,
+                        size: 72
                     )
                     Spacer()
-                }
-
-                // Disk bar
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        Image(systemName: "internaldrive.fill").font(.caption).foregroundColor(.koboldGold)
-                        Text("Speicher").font(.caption.bold())
-                        Spacer()
-                        Text(String(format: "%.0f / %.0f GB", sysMonitor.diskTotalGB - sysMonitor.diskFreeGB, sysMonitor.diskTotalGB))
-                            .font(.system(size: 14.5, weight: .bold, design: .monospaced))
-                            .foregroundColor(sysMonitor.diskFreeGB < 20 ? .red : .primary)
-                    }
-                    GlassProgressBar(
-                        value: sysMonitor.diskTotalGB > 0 ? (sysMonitor.diskTotalGB - sysMonitor.diskFreeGB) / sysMonitor.diskTotalGB : 0,
-                        color: sysMonitor.diskFreeGB < 20 ? .red : sysMonitor.diskFreeGB < 50 ? .orange : .koboldGold
-                    )
                 }
 
                 GlassDivider()

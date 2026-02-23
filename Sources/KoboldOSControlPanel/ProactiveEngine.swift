@@ -61,14 +61,19 @@ class ProactiveEngine: ObservableObject {
     @Published var suggestions: [ProactiveSuggestion] = []
     @Published var rules: [ProactiveRule] = []
     @Published var isChecking = false
+    @Published var heartbeatStatus: String = "Idle"
+    @Published var lastHeartbeat: Date? = nil
+    @Published var idleTasksCompleted: Int = 0
     @AppStorage("kobold.proactive.enabled") var isEnabled: Bool = true
     @AppStorage("kobold.proactive.interval") var checkIntervalMinutes: Int = 10
     @AppStorage("kobold.proactive.morningBriefing") var morningBriefing: Bool = true
     @AppStorage("kobold.proactive.eveningSummary") var eveningSummary: Bool = true
     @AppStorage("kobold.proactive.errorAlerts") var errorAlerts: Bool = true
     @AppStorage("kobold.proactive.systemHealth") var systemHealth: Bool = true
+    @AppStorage("kobold.proactive.idleTasks") var idleTasksEnabled: Bool = false
 
     private var checkTimer: Timer?
+    private var heartbeatTimer: Timer?
     private let rulesKey = "kobold.proactive.rules"
 
     private init() {
@@ -79,6 +84,8 @@ class ProactiveEngine: ObservableObject {
     func cleanup() {
         checkTimer?.invalidate()
         checkTimer = nil
+        heartbeatTimer?.invalidate()
+        heartbeatTimer = nil
     }
 
     // MARK: - Rules Persistence
@@ -129,11 +136,19 @@ class ProactiveEngine: ObservableObject {
     func startPeriodicCheck(viewModel: RuntimeViewModel) {
         guard isEnabled else { return }
         checkTimer?.invalidate()
+        heartbeatTimer?.invalidate()
         let interval = TimeInterval(max(1, checkIntervalMinutes) * 60)
         checkTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self, weak viewModel] _ in
             Task { @MainActor in
                 guard let self, let viewModel else { return }
                 self.generateSuggestions(viewModel: viewModel)
+            }
+        }
+        // Heartbeat: check every 60s if agent is idle and can do proactive work
+        heartbeatTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self, weak viewModel] _ in
+            Task { @MainActor in
+                guard let self, let viewModel else { return }
+                self.heartbeat(viewModel: viewModel)
             }
         }
         // Initial check after 15 seconds
@@ -147,6 +162,32 @@ class ProactiveEngine: ObservableObject {
     func stopPeriodicCheck() {
         checkTimer?.invalidate()
         checkTimer = nil
+        heartbeatTimer?.invalidate()
+        heartbeatTimer = nil
+    }
+
+    // MARK: - Heartbeat (Proactive idle tasks)
+
+    private func heartbeat(viewModel: RuntimeViewModel) {
+        lastHeartbeat = Date()
+        guard idleTasksEnabled, !viewModel.agentLoading else {
+            heartbeatStatus = viewModel.agentLoading ? "Agent aktiv" : "Idle"
+            return
+        }
+        heartbeatStatus = "Beobachtet..."
+        // Agent is idle — check if there's proactive work to do
+        let idleTasks = getIdleTasks()
+        if let task = idleTasks.first {
+            heartbeatStatus = "Führt aus: \(task.title)"
+            // Execute idle task by sending it as a background message
+            viewModel.sendMessage(task.action)
+            idleTasksCompleted += 1
+        }
+    }
+
+    private func getIdleTasks() -> [ProactiveSuggestion] {
+        // Only return suggestions that are actionable and haven't been shown recently
+        return suggestions.filter { $0.priority == .high && $0.category == .systemHealth }
     }
 
     // MARK: - Generate Suggestions

@@ -38,6 +38,17 @@ struct AgentChecklistItem: Identifiable {
 
 // MARK: - MessageKind
 
+// MARK: - InteractiveOption (for yes/no or multi-choice buttons)
+
+struct InteractiveOption: Identifiable, Sendable {
+    let id: String
+    let label: String
+    let icon: String?
+    init(id: String, label: String, icon: String? = nil) {
+        self.id = id; self.label = label; self.icon = icon
+    }
+}
+
 enum MessageKind: Sendable {
     case user(text: String)
     case assistant(text: String)
@@ -48,6 +59,7 @@ enum MessageKind: Sendable {
     case subAgentSpawn(profile: String, task: String)
     case subAgentResult(profile: String, output: String, success: Bool)
     case thinking(entries: [ThinkingEntry])
+    case interactive(text: String, options: [InteractiveOption])
 }
 
 // MARK: - ChatMessage
@@ -59,6 +71,8 @@ struct ChatMessage: Identifiable {
     var isCollapsed: Bool = true
     var attachments: [MediaAttachment] = []
     var confidence: Double? = nil
+    var interactiveAnswered: Bool = false
+    var selectedOptionId: String? = nil
 }
 
 // MARK: - KoboldNotification
@@ -125,6 +139,7 @@ class RuntimeViewModel: ObservableObject {
     @Published var agentLoading: Bool = false
     @Published var activeThinkingSteps: [ThinkingEntry] = []
     @Published var agentChecklist: [AgentChecklistItem] = []
+    @Published var messageQueue: [String] = []
     /// Which chat session the agent is currently working for (nil = idle)
     @Published var activeAgentOriginSession: UUID?
     /// True only when the agent is loading AND the user is viewing the origin chat
@@ -440,6 +455,14 @@ class RuntimeViewModel: ObservableObject {
     ///   - text: Display text shown in the chat bubble (user's original input).
     ///   - agentText: Text actually sent to the agent (may include embedded file content). Defaults to `text`.
     ///   - attachments: All attachments (images shown in bubble; non-image content embedded by caller).
+    func answerInteractive(messageId: UUID, optionId: String, optionLabel: String) {
+        if let idx = messages.firstIndex(where: { $0.id == messageId }) {
+            messages[idx].interactiveAnswered = true
+            messages[idx].selectedOptionId = optionId
+        }
+        sendMessage(optionLabel)
+    }
+
     func sendMessage(_ text: String, agentText: String? = nil, attachments: [MediaAttachment] = []) {
         let trimmed = text.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty || !attachments.isEmpty else { return }
@@ -453,6 +476,13 @@ class RuntimeViewModel: ObservableObject {
         saveSessions()
         saveChatHistory()
         let textForAgent = (agentText ?? trimmed).trimmingCharacters(in: .whitespaces)
+
+        // Queue message if agent is busy instead of interrupting
+        if agentLoading {
+            messageQueue.append(textForAgent.isEmpty ? "Describe the attached media." : textForAgent)
+            return
+        }
+
         // Cancel any previous stream BEFORE creating new task (not inside sendWithAgent!)
         activeStreamTask?.cancel()
         activeStreamTask = nil
@@ -682,6 +712,14 @@ class RuntimeViewModel: ObservableObject {
         }
     }
 
+    /// Detect if a final answer is a simple yes/no question → show interactive buttons
+    static func isYesNoQuestion(_ text: String) -> Bool {
+        let lower = text.lowercased()
+        let triggers = ["soll ich", "möchtest du", "willst du", "darf ich", "shall i", "should i", "do you want", "ist das ok", "einverstanden"]
+        guard triggers.contains(where: { lower.contains($0) }) else { return false }
+        return lower.hasSuffix("?") || lower.contains("?")
+    }
+
     /// Extract file paths from text and create MediaAttachments for detected media files
     static func extractMediaAttachments(from text: String) -> [MediaAttachment] {
         var attachments: [MediaAttachment] = []
@@ -741,6 +779,14 @@ class RuntimeViewModel: ObservableObject {
             Task { @MainActor in
                 try? await Task.sleep(nanoseconds: 60_000_000_000)
                 activeSessions.removeAll { $0.id == sid && $0.status != .running }
+            }
+            // Process message queue
+            if !messageQueue.isEmpty {
+                let nextMsg = messageQueue.removeFirst()
+                Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 500_000_000) // 0.5s pause
+                    activeStreamTask = Task { await sendWithAgent(message: nextMsg) }
+                }
             }
         }
 
@@ -864,6 +910,34 @@ class RuntimeViewModel: ObservableObject {
                     }
                 case "checklist_clear":
                     agentChecklist = []
+                case "interactive":
+                    let options: [InteractiveOption]
+                    if let optArray = json["options"] as? [[String: Any]] {
+                        options = optArray.compactMap { opt in
+                            guard let id = opt["id"] as? String, let label = opt["label"] as? String else { return nil }
+                            return InteractiveOption(id: id, label: label, icon: opt["icon"] as? String)
+                        }
+                    } else {
+                        options = [
+                            InteractiveOption(id: "yes", label: "Ja", icon: "checkmark"),
+                            InteractiveOption(id: "no", label: "Nein", icon: "xmark")
+                        ]
+                    }
+                    if !pendingSteps.isEmpty {
+                        activeThinkingSteps.append(contentsOf: pendingSteps)
+                        pendingSteps.removeAll()
+                    }
+                    appendToSession(
+                        ChatMessage(kind: .interactive(text: content, options: options), timestamp: Date()),
+                        originSession: originChatSession
+                    )
+                case "embed":
+                    // Agent embeds media (image/file path) into chat
+                    if let path = json["path"] as? String, let fileUrl = URL(string: "file://\(path)") ?? URL(fileURLWithPath: path) as URL? {
+                        var embedMsg = ChatMessage(kind: .assistant(text: content.isEmpty ? "📎 \(fileUrl.lastPathComponent)" : content), timestamp: Date())
+                        embedMsg.attachments = [MediaAttachment(url: fileUrl)]
+                        appendToSession(embedMsg, originSession: originChatSession)
+                    }
                 default:
                     break
                 }
@@ -912,10 +986,21 @@ class RuntimeViewModel: ObservableObject {
 
             // Final answer
             if !lastFinalAnswer.isEmpty {
-                var msg = ChatMessage(kind: .assistant(text: lastFinalAnswer), timestamp: Date(), confidence: lastConfidence)
-                let autoEmbed = UserDefaults.standard.bool(forKey: "kobold.chat.autoEmbed")
-                if autoEmbed { msg.attachments = Self.extractMediaAttachments(from: lastFinalAnswer) }
-                appendToSession(msg, originSession: originChatSession)
+                // Auto-detect yes/no questions → show interactive buttons
+                if Self.isYesNoQuestion(lastFinalAnswer) {
+                    appendToSession(
+                        ChatMessage(kind: .interactive(text: lastFinalAnswer, options: [
+                            InteractiveOption(id: "yes", label: "Ja", icon: "checkmark"),
+                            InteractiveOption(id: "no", label: "Nein", icon: "xmark")
+                        ]), timestamp: Date(), confidence: lastConfidence),
+                        originSession: originChatSession
+                    )
+                } else {
+                    var msg = ChatMessage(kind: .assistant(text: lastFinalAnswer), timestamp: Date(), confidence: lastConfidence)
+                    let autoEmbed = UserDefaults.standard.bool(forKey: "kobold.chat.autoEmbed")
+                    if autoEmbed { msg.attachments = Self.extractMediaAttachments(from: lastFinalAnswer) }
+                    appendToSession(msg, originSession: originChatSession)
+                }
                 SoundManager.shared.play(chatMode == .workflow ? .workflowDone : .success)
                 let preview = lastFinalAnswer.count > 80 ? String(lastFinalAnswer.prefix(77)) + "..." : lastFinalAnswer
                 if chatMode == .workflow {
@@ -935,7 +1020,7 @@ class RuntimeViewModel: ObservableObject {
                 } else if toolStepCount >= 3 {
                     addNotification(title: "Aufgabe erledigt", message: preview, type: .success, target: .chat(sessionId: originChatSession))
                 }
-            }
+            } // end if !lastFinalAnswer.isEmpty
 
             // Persist once at end (NOT per-step!)
             if currentSessionId == originChatSession {
