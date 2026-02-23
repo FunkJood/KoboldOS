@@ -1,5 +1,26 @@
 import Foundation
 
+// MARK: - LLMResponse (with optional token usage)
+
+/// Response from LLM generation that includes content + optional token usage stats
+public struct LLMResponse: Sendable {
+    public let content: String
+    public let promptTokens: Int?
+    public let completionTokens: Int?
+
+    public init(content: String, promptTokens: Int? = nil, completionTokens: Int? = nil) {
+        self.content = content
+        self.promptTokens = promptTokens
+        self.completionTokens = completionTokens
+    }
+
+    /// Total tokens (prompt + completion) if both are available
+    public var totalTokens: Int? {
+        guard let p = promptTokens, let c = completionTokens else { return nil }
+        return p + c
+    }
+}
+
 // MARK: - LLMProviderConfig (per-agent provider override)
 
 /// Configuration for a specific LLM provider, passed per-request from GUI → DaemonListener → AgentLoop → LLMRunner
@@ -116,27 +137,17 @@ public actor LLMRunner {
     // MARK: - Generate (auto-select backend)
 
     public func generate(prompt: String) async throws -> String {
-        if case .error = state { await autoDetect() }
-        if case .unloaded = state { await autoDetect() }
-
-        switch activeBackend {
-        case .ollama:
-            return try await generateWithOllama(messages: [["role": "user", "content": prompt]])
-        case .llamaServer:
-            return try await generateWithLlamaServer(messages: [["role": "user", "content": prompt]])
-        case .openai, .anthropic, .groq:
-            // Cloud backends require explicit API key — fall through to Ollama attempt
-            return try await generateWithOllama(messages: [["role": "user", "content": prompt]])
-        case .none:
-            throw LLMError.generationFailed("""
-                No LLM backend available. Options:
-                1. Install Ollama: brew install ollama && ollama serve && ollama pull llama3.2
-                2. Run llama-server: llama-server -m model.gguf --port 8081
-                """)
-        }
+        let resp = try await generateWithTokens(messages: [["role": "user", "content": prompt]])
+        return resp.content
     }
 
     public func generate(messages: [[String: String]]) async throws -> String {
+        let resp = try await generateWithTokens(messages: messages)
+        return resp.content
+    }
+
+    /// Generate and return full LLMResponse including token usage
+    public func generateWithTokens(messages: [[String: String]]) async throws -> LLMResponse {
         if case .error = state { await autoDetect() }
         if case .unloaded = state { await autoDetect() }
 
@@ -148,13 +159,17 @@ public actor LLMRunner {
         case .openai, .anthropic, .groq:
             return try await generateWithOllama(messages: messages)
         case .none:
-            throw LLMError.generationFailed("No LLM backend available")
+            throw LLMError.generationFailed("""
+                No LLM backend available. Options:
+                1. Install Ollama: brew install ollama && ollama serve && ollama pull llama3.2
+                2. Run llama-server: llama-server -m model.gguf --port 8081
+                """)
         }
     }
 
     // MARK: - Ollama /api/chat
 
-    private func generateWithOllama(messages: [[String: String]]) async throws -> String {
+    private func generateWithOllama(messages: [[String: String]]) async throws -> LLMResponse {
         guard let url = URL(string: "http://localhost:11434/api/chat") else {
             throw LLMError.generationFailed("Invalid Ollama URL")
         }
@@ -207,12 +222,15 @@ public actor LLMRunner {
             print("[LLMRunner] Unexpected Ollama response structure: \(json.keys)")
             throw LLMError.generationFailed("Invalid Ollama response (missing message.content)")
         }
-        return content
+        // Extract Ollama token usage: prompt_eval_count, eval_count
+        let promptTokens = json["prompt_eval_count"] as? Int
+        let completionTokens = json["eval_count"] as? Int
+        return LLMResponse(content: content, promptTokens: promptTokens, completionTokens: completionTokens)
     }
 
     // MARK: - llama-server /v1/chat/completions (OpenAI-compatible)
 
-    private func generateWithLlamaServer(messages: [[String: String]]) async throws -> String {
+    private func generateWithLlamaServer(messages: [[String: String]]) async throws -> LLMResponse {
         guard let url = URL(string: llamaServerURL + "/v1/chat/completions") else {
             throw LLMError.generationFailed("Invalid llama-server URL: \(llamaServerURL)")
         }
@@ -237,20 +255,36 @@ public actor LLMRunner {
               let content = msg["content"] as? String else {
             throw LLMError.generationFailed("Invalid llama-server response")
         }
-        return content
+        // Extract OpenAI-compatible usage from llama-server
+        let usage = json["usage"] as? [String: Any]
+        let promptTokens = usage?["prompt_tokens"] as? Int
+        let completionTokens = usage?["completion_tokens"] as? Int
+        return LLMResponse(content: content, promptTokens: promptTokens, completionTokens: completionTokens)
     }
 
     // MARK: - Generate with Provider Config
 
     /// Generate using a provider config (used by AgentLoop for per-agent backends)
     public func generate(messages: [[String: String]], config: LLMProviderConfig) async throws -> String {
-        return try await generate(messages: messages, provider: config.provider, model: config.model, apiKey: config.apiKey)
+        let resp = try await generateWithTokens(messages: messages, config: config)
+        return resp.content
+    }
+
+    /// Generate with tokens using a provider config
+    public func generateWithTokens(messages: [[String: String]], config: LLMProviderConfig) async throws -> LLMResponse {
+        return try await generateWithTokens(messages: messages, provider: config.provider, model: config.model, apiKey: config.apiKey)
     }
 
     // MARK: - Multi-Provider Generate
 
     /// Generate with explicit provider, model, and API key (for per-agent cloud backends)
     public func generate(messages: [[String: String]], provider: String, model: String, apiKey: String) async throws -> String {
+        let resp = try await generateWithTokens(messages: messages, provider: provider, model: model, apiKey: apiKey)
+        return resp.content
+    }
+
+    /// Generate with tokens from explicit provider
+    public func generateWithTokens(messages: [[String: String]], provider: String, model: String, apiKey: String) async throws -> LLMResponse {
         switch provider.lowercased() {
         case "openai":
             return try await generateWithOpenAI(messages: messages, model: model, apiKey: apiKey)
@@ -259,14 +293,13 @@ public actor LLMRunner {
         case "groq":
             return try await generateWithGroq(messages: messages, model: model, apiKey: apiKey)
         default:
-            // Fall back to default generate (ollama/llama-server)
-            return try await generate(messages: messages)
+            return try await generateWithTokens(messages: messages)
         }
     }
 
     // MARK: - OpenAI /v1/chat/completions
 
-    private func generateWithOpenAI(messages: [[String: String]], model: String, apiKey: String) async throws -> String {
+    private func generateWithOpenAI(messages: [[String: String]], model: String, apiKey: String) async throws -> LLMResponse {
         guard let url = URL(string: "https://api.openai.com/v1/chat/completions") else {
             throw LLMError.generationFailed("Invalid OpenAI URL")
         }
@@ -295,12 +328,16 @@ public actor LLMRunner {
               let content = msg["content"] as? String else {
             throw LLMError.generationFailed("Invalid OpenAI response")
         }
-        return content
+        // Extract OpenAI usage: usage.prompt_tokens, usage.completion_tokens
+        let usage = json["usage"] as? [String: Any]
+        let promptTokens = usage?["prompt_tokens"] as? Int
+        let completionTokens = usage?["completion_tokens"] as? Int
+        return LLMResponse(content: content, promptTokens: promptTokens, completionTokens: completionTokens)
     }
 
     // MARK: - Anthropic /v1/messages
 
-    private func generateWithAnthropic(messages: [[String: String]], model: String, apiKey: String) async throws -> String {
+    private func generateWithAnthropic(messages: [[String: String]], model: String, apiKey: String) async throws -> LLMResponse {
         guard let url = URL(string: "https://api.anthropic.com/v1/messages") else {
             throw LLMError.generationFailed("Invalid Anthropic URL")
         }
@@ -341,12 +378,16 @@ public actor LLMRunner {
               let text = first["text"] as? String else {
             throw LLMError.generationFailed("Invalid Anthropic response")
         }
-        return text
+        // Extract Anthropic usage: usage.input_tokens, usage.output_tokens
+        let usage = json["usage"] as? [String: Any]
+        let promptTokens = usage?["input_tokens"] as? Int
+        let completionTokens = usage?["output_tokens"] as? Int
+        return LLMResponse(content: text, promptTokens: promptTokens, completionTokens: completionTokens)
     }
 
     // MARK: - Groq /v1/chat/completions (OpenAI-compatible)
 
-    private func generateWithGroq(messages: [[String: String]], model: String, apiKey: String) async throws -> String {
+    private func generateWithGroq(messages: [[String: String]], model: String, apiKey: String) async throws -> LLMResponse {
         guard let url = URL(string: "https://api.groq.com/openai/v1/chat/completions") else {
             throw LLMError.generationFailed("Invalid Groq URL")
         }
@@ -375,7 +416,11 @@ public actor LLMRunner {
               let content = msg["content"] as? String else {
             throw LLMError.generationFailed("Invalid Groq response")
         }
-        return content
+        // Extract Groq usage (OpenAI-compatible)
+        let usage = json["usage"] as? [String: Any]
+        let promptTokens = usage?["prompt_tokens"] as? Int
+        let completionTokens = usage?["completion_tokens"] as? Int
+        return LLMResponse(content: content, promptTokens: promptTokens, completionTokens: completionTokens)
     }
 
     // MARK: - Model management

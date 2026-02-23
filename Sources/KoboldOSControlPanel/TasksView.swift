@@ -174,7 +174,7 @@ struct TasksView: View {
             }
             .padding(24)
         }
-        .background(Color.koboldBackground)
+        .background(ZStack { Color.koboldBackground; LinearGradient(colors: [Color.koboldEmerald.opacity(0.015), .clear, Color.koboldGold.opacity(0.01)], startPoint: .topLeading, endPoint: .bottomTrailing) })
         .task { await loadTasks() }
         .sheet(isPresented: $showAddTask) { addTaskSheet }
         .sheet(isPresented: $showEditTask) { editTaskSheet }
@@ -206,7 +206,7 @@ struct TasksView: View {
     var statsRow: some View {
         HStack(spacing: 12) {
             metaStat(icon: "checklist", label: "Gesamt", value: "\(tasks.count)", color: .koboldEmerald)
-            metaStat(icon: "play.circle.fill", label: "Aktiv", value: "\(tasks.filter(\.enabled).count)", color: .blue)
+            metaStat(icon: "play.circle.fill", label: "Aktiv", value: "\(tasks.filter(\.enabled).count)", color: .koboldGold)
             metaStat(icon: "pause.circle.fill", label: "Pausiert", value: "\(tasks.filter { !$0.enabled }.count)", color: .secondary)
         }
     }
@@ -214,9 +214,9 @@ struct TasksView: View {
     func metaStat(icon: String, label: String, value: String, color: Color) -> some View {
         GlassCard(padding: 10, cornerRadius: 10) {
             HStack(spacing: 8) {
-                Image(systemName: icon).foregroundColor(color).font(.system(size: 14))
+                Image(systemName: icon).foregroundColor(color).font(.system(size: 16.5))
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(value).font(.system(size: 16, weight: .bold, design: .monospaced))
+                    Text(value).font(.system(size: 18.5, weight: .bold, design: .monospaced))
                     Text(label).font(.caption2).foregroundColor(.secondary)
                 }
             }
@@ -283,7 +283,7 @@ struct TasksView: View {
             // Automation suggestions
             GlassCard(padding: 12, cornerRadius: 12) {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("Automatisierungsideen").font(.system(size: 13, weight: .semibold)).foregroundColor(.koboldGold)
+                    Text("Automatisierungsideen").font(.system(size: 15.5, weight: .semibold)).foregroundColor(.koboldGold)
                     ForEach(currentSuggestions, id: \.name) { suggestion in
                         Button(action: {
                             newName = suggestion.name
@@ -292,21 +292,21 @@ struct TasksView: View {
                         }) {
                             HStack(spacing: 10) {
                                 Image(systemName: suggestion.icon)
-                                    .font(.system(size: 12))
+                                    .font(.system(size: 14.5))
                                     .foregroundColor(.koboldEmerald)
                                     .frame(width: 20)
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(suggestion.name)
-                                        .font(.system(size: 12, weight: .medium))
+                                        .font(.system(size: 14.5, weight: .medium))
                                         .foregroundColor(.primary)
                                     Text(suggestion.prompt)
-                                        .font(.system(size: 10))
+                                        .font(.system(size: 12.5))
                                         .foregroundColor(.secondary)
                                         .lineLimit(1)
                                 }
                                 Spacer()
                                 Text(suggestion.schedule)
-                                    .font(.system(size: 9))
+                                    .font(.system(size: 11.5))
                                     .foregroundColor(.secondary)
                                     .padding(.horizontal, 6).padding(.vertical, 2)
                                     .background(Color.koboldSurface)
@@ -352,7 +352,7 @@ struct TasksView: View {
                     hint: "Was soll der Agent tun? Beschreibe die Aufgabe so genau wie möglich."
                 ) {
                     TextEditor(text: $newPrompt)
-                        .font(.system(size: 13))
+                        .font(.system(size: 15.5))
                         .frame(minHeight: 80, maxHeight: 160)
                         .padding(8)
                         .background(Color.black.opacity(0.2)).cornerRadius(8)
@@ -381,15 +381,15 @@ struct TasksView: View {
             .padding(24)
         }
         .frame(minWidth: 500, minHeight: 480)
-        .background(Color.koboldBackground)
+        .background(ZStack { Color.koboldBackground; LinearGradient(colors: [Color.koboldEmerald.opacity(0.015), .clear, Color.koboldGold.opacity(0.01)], startPoint: .topLeading, endPoint: .bottomTrailing) })
     }
 
     func schedulePresetButton(_ preset: TaskSchedulePreset) -> some View {
         let isSelected = newSchedulePreset == preset
         return Button(action: { newSchedulePreset = preset }) {
             HStack(spacing: 6) {
-                Image(systemName: preset.icon).font(.system(size: 11))
-                Text(preset.rawValue).font(.system(size: 11, weight: isSelected ? .semibold : .regular))
+                Image(systemName: preset.icon).font(.system(size: 13.5))
+                Text(preset.rawValue).font(.system(size: 13.5, weight: isSelected ? .semibold : .regular))
                     .lineLimit(1).minimumScaleFactor(0.7)
             }
             .foregroundColor(isSelected ? .koboldEmerald : .secondary)
@@ -407,7 +407,7 @@ struct TasksView: View {
     func formField<Content: View>(title: String, hint: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.system(size: 12, weight: .semibold)).foregroundColor(.primary)
+                Text(title).font(.system(size: 14.5, weight: .semibold)).foregroundColor(.primary)
                 Text(hint).font(.caption).foregroundColor(.secondary)
             }
             content()
@@ -466,7 +466,7 @@ struct TasksView: View {
             if scheduleMode == .once {
                 // Datum + Uhrzeit
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Datum und Uhrzeit").font(.system(size: 11, weight: .medium)).foregroundColor(.secondary)
+                    Text("Datum und Uhrzeit").font(.system(size: 13.5, weight: .medium)).foregroundColor(.secondary)
                     DatePicker("", selection: $onceDate, in: Date()..., displayedComponents: [.date, .hourAndMinute])
                         .datePickerStyle(.graphical)
                         .labelsHidden()
@@ -477,12 +477,12 @@ struct TasksView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     Toggle("An bestimmten Wochentagen", isOn: $useWeekdays)
                         .toggleStyle(.switch).tint(.koboldEmerald)
-                        .font(.system(size: 12))
+                        .font(.system(size: 14.5))
 
                     if useWeekdays {
                         // Wochentag-Checkboxen
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("Wochentage").font(.system(size: 11, weight: .medium)).foregroundColor(.secondary)
+                            Text("Wochentage").font(.system(size: 13.5, weight: .medium)).foregroundColor(.secondary)
                             HStack(spacing: 6) {
                                 weekdayCheckbox("Mo", isOn: $weekdayMon)
                                 weekdayCheckbox("Di", isOn: $weekdayTue)
@@ -494,13 +494,13 @@ struct TasksView: View {
                             }
                             // Uhrzeit
                             HStack(spacing: 8) {
-                                Text("Uhrzeit:").font(.system(size: 11)).foregroundColor(.secondary)
+                                Text("Uhrzeit:").font(.system(size: 13.5)).foregroundColor(.secondary)
                                 Picker("", selection: $repeatAtHour) {
                                     ForEach(0..<24, id: \.self) { h in
                                         Text(String(format: "%02d", h)).tag(h)
                                     }
                                 }.pickerStyle(.menu).frame(width: 60)
-                                Text(":").font(.system(size: 13, weight: .bold))
+                                Text(":").font(.system(size: 15.5, weight: .bold))
                                 Picker("", selection: $repeatAtMinute) {
                                     ForEach([0, 15, 30, 45], id: \.self) { m in
                                         Text(String(format: "%02d", m)).tag(m)
@@ -511,7 +511,7 @@ struct TasksView: View {
                     } else {
                         // Intervall-Eingabe: WW / TT / SS / MM
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("Wiederholung alle:").font(.system(size: 11, weight: .medium)).foregroundColor(.secondary)
+                            Text("Wiederholung alle:").font(.system(size: 13.5, weight: .medium)).foregroundColor(.secondary)
                             HStack(spacing: 10) {
                                 intervalField("WW", value: $repeatWeeks, hint: "Wochen")
                                 intervalField("TT", value: $repeatDays, hint: "Tage")
@@ -520,13 +520,13 @@ struct TasksView: View {
                             }
                             if repeatHours > 0 || repeatDays > 0 || repeatWeeks > 0 {
                                 HStack(spacing: 8) {
-                                    Text("Startzeit:").font(.system(size: 11)).foregroundColor(.secondary)
+                                    Text("Startzeit:").font(.system(size: 13.5)).foregroundColor(.secondary)
                                     Picker("", selection: $repeatAtHour) {
                                         ForEach(0..<24, id: \.self) { h in
                                             Text(String(format: "%02d", h)).tag(h)
                                         }
                                     }.pickerStyle(.menu).frame(width: 60)
-                                    Text(":").font(.system(size: 13, weight: .bold))
+                                    Text(":").font(.system(size: 15.5, weight: .bold))
                                     Picker("", selection: $repeatAtMinute) {
                                         ForEach([0, 15, 30, 45], id: \.self) { m in
                                             Text(String(format: "%02d", m)).tag(m)
@@ -543,7 +543,7 @@ struct TasksView: View {
                     HStack(spacing: 6) {
                         Image(systemName: "info.circle").font(.caption2)
                         Text("Cron: \(effectiveCron)")
-                            .font(.system(size: 10, design: .monospaced))
+                            .font(.system(size: 12.5, design: .monospaced))
                     }
                     .foregroundColor(.secondary)
                 }
@@ -554,8 +554,8 @@ struct TasksView: View {
     private func scheduleModeButton(_ label: String, icon: String, mode: ScheduleMode) -> some View {
         Button(action: { scheduleMode = mode }) {
             HStack(spacing: 6) {
-                Image(systemName: icon).font(.system(size: 11))
-                Text(label).font(.system(size: 12, weight: scheduleMode == mode ? .semibold : .regular))
+                Image(systemName: icon).font(.system(size: 13.5))
+                Text(label).font(.system(size: 14.5, weight: scheduleMode == mode ? .semibold : .regular))
             }
             .foregroundColor(scheduleMode == mode ? .white : .secondary)
             .padding(.horizontal, 14).padding(.vertical, 8)
@@ -569,7 +569,7 @@ struct TasksView: View {
     private func weekdayCheckbox(_ label: String, isOn: Binding<Bool>) -> some View {
         Button(action: { isOn.wrappedValue.toggle() }) {
             Text(label)
-                .font(.system(size: 11, weight: isOn.wrappedValue ? .bold : .regular))
+                .font(.system(size: 13.5, weight: isOn.wrappedValue ? .bold : .regular))
                 .foregroundColor(isOn.wrappedValue ? .white : .secondary)
                 .frame(width: 36, height: 32)
                 .background(RoundedRectangle(cornerRadius: 6)
@@ -582,13 +582,13 @@ struct TasksView: View {
 
     private func intervalField(_ label: String, value: Binding<Int>, hint: String) -> some View {
         VStack(spacing: 3) {
-            Text(label).font(.system(size: 10, weight: .bold)).foregroundColor(.koboldEmerald)
+            Text(label).font(.system(size: 12.5, weight: .bold)).foregroundColor(.koboldEmerald)
             TextField("0", value: value, format: .number)
                 .textFieldStyle(.roundedBorder)
-                .font(.system(size: 13, weight: .medium, design: .monospaced))
+                .font(.system(size: 15.5, weight: .medium, design: .monospaced))
                 .frame(width: 50)
                 .multilineTextAlignment(.center)
-            Text(hint).font(.system(size: 8)).foregroundColor(.secondary)
+            Text(hint).font(.system(size: 9)).foregroundColor(.secondary)
         }
     }
 
@@ -612,7 +612,7 @@ struct TasksView: View {
 
                 formField(title: "Prompt", hint: "Was soll der Agent tun?") {
                     TextEditor(text: $newPrompt)
-                        .font(.system(size: 13))
+                        .font(.system(size: 15.5))
                         .frame(minHeight: 80, maxHeight: 160)
                         .padding(8)
                         .background(Color.black.opacity(0.2)).cornerRadius(8)
@@ -637,7 +637,7 @@ struct TasksView: View {
             .padding(24)
         }
         .frame(minWidth: 500, minHeight: 480)
-        .background(Color.koboldBackground)
+        .background(ZStack { Color.koboldBackground; LinearGradient(colors: [Color.koboldEmerald.opacity(0.015), .clear, Color.koboldGold.opacity(0.01)], startPoint: .topLeading, endPoint: .bottomTrailing) })
     }
 
     // MARK: - Networking
@@ -807,13 +807,13 @@ struct TaskCard: View {
             HStack(alignment: .top, spacing: 12) {
                 // Schedule icon
                 Image(systemName: task.schedulePreset.icon)
-                    .font(.system(size: 20))
+                    .font(.system(size: 21))
                     .foregroundColor(.koboldGold)
                     .frame(width: 28)
 
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 8) {
-                        Text(task.name).font(.system(size: 14, weight: .semibold))
+                        Text(task.name).font(.system(size: 16.5, weight: .semibold))
                         // Enabled/Disabled toggle
                         Toggle("", isOn: Binding(
                             get: { task.enabled },
@@ -837,7 +837,7 @@ struct TaskCard: View {
                     HStack(spacing: 12) {
                         HStack(spacing: 4) {
                             Image(systemName: "clock").font(.caption2)
-                            Text(task.scheduleDescription).font(.system(size: 10))
+                            Text(task.scheduleDescription).font(.system(size: 12.5))
                         }
                         .foregroundColor(.secondary)
                         .padding(.horizontal, 6).padding(.vertical, 3)

@@ -32,7 +32,7 @@ struct MenuBarPopoverView: View {
             // Footer
             footer
         }
-        .background(Color.koboldBackground)
+        .background(ZStack { Color.koboldBackground; LinearGradient(colors: [Color.koboldEmerald.opacity(0.015), .clear, Color.koboldGold.opacity(0.01)], startPoint: .topLeading, endPoint: .bottomTrailing) })
         .frame(width: 380, height: 520)
         .onAppear { sysMonitor.update() }
     }
@@ -47,14 +47,14 @@ struct MenuBarPopoverView: View {
                     .frame(width: 8, height: 8)
 
                 Text("KoboldOS")
-                    .font(.system(size: 13, weight: .bold))
+                    .font(.system(size: 15.5, weight: .bold))
                     .foregroundColor(.primary)
 
                 Spacer()
 
                 Button(action: { MenuBarController.shared.showMainWindow() }) {
                     Image(systemName: "macwindow")
-                        .font(.system(size: 12))
+                        .font(.system(size: 14.5))
                         .foregroundColor(.koboldEmerald)
                 }
                 .buttonStyle(.plain)
@@ -90,7 +90,7 @@ struct MenuBarPopoverView: View {
                 Divider().opacity(0.3)
 
                 // System metrics
-                Text("System").font(.system(size: 11, weight: .semibold)).foregroundColor(.secondary)
+                Text("System").font(.system(size: 13.5, weight: .semibold)).foregroundColor(.secondary)
 
                 HStack(spacing: 12) {
                     miniMetric(label: "CPU", value: String(format: "%.0f%%", sysMonitor.cpuUsage),
@@ -99,7 +99,7 @@ struct MenuBarPopoverView: View {
 
                     miniMetric(label: "RAM", value: String(format: "%.1f/%.0f GB", sysMonitor.ramUsedGB, sysMonitor.ramTotalGB),
                                progress: sysMonitor.ramTotalGB > 0 ? sysMonitor.ramUsedGB / sysMonitor.ramTotalGB : 0,
-                               color: sysMonitor.ramUsedGB / max(1, sysMonitor.ramTotalGB) > 0.85 ? .red : .blue)
+                               color: sysMonitor.ramUsedGB / max(1, sysMonitor.ramTotalGB) > 0.85 ? .red : .koboldEmerald)
 
                     miniMetric(label: "Disk", value: String(format: "%.0f GB frei", sysMonitor.diskFreeGB),
                                progress: sysMonitor.diskTotalGB > 0 ? (sysMonitor.diskTotalGB - sysMonitor.diskFreeGB) / sysMonitor.diskTotalGB : 0,
@@ -109,7 +109,7 @@ struct MenuBarPopoverView: View {
                 Divider().opacity(0.3)
 
                 // Quick actions
-                Text("Schnellzugriff").font(.system(size: 11, weight: .semibold)).foregroundColor(.secondary)
+                Text("Schnellzugriff").font(.system(size: 13.5, weight: .semibold)).foregroundColor(.secondary)
 
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
                     quickAction(icon: "bubble.left.and.bubble.right.fill", label: "Chat") {
@@ -142,15 +142,15 @@ struct MenuBarPopoverView: View {
     private func statusRow(icon: String, label: String, value: String, color: Color) -> some View {
         HStack(spacing: 8) {
             Image(systemName: icon)
-                .font(.system(size: 12))
+                .font(.system(size: 14.5))
                 .foregroundColor(color)
                 .frame(width: 20)
             Text(label)
-                .font(.system(size: 12, weight: .medium))
+                .font(.system(size: 14.5, weight: .medium))
                 .foregroundColor(.secondary)
             Spacer()
             Text(value)
-                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                .font(.system(size: 14.5, weight: .semibold, design: .monospaced))
                 .foregroundColor(.primary)
                 .lineLimit(1)
         }
@@ -159,10 +159,10 @@ struct MenuBarPopoverView: View {
 
     private func miniMetric(label: String, value: String, progress: Double, color: Color) -> some View {
         VStack(spacing: 4) {
-            Text(label).font(.system(size: 10, weight: .medium)).foregroundColor(.secondary)
+            Text(label).font(.system(size: 12.5, weight: .medium)).foregroundColor(.secondary)
             ProgressView(value: min(1, max(0, progress)))
                 .tint(color)
-            Text(value).font(.system(size: 9, design: .monospaced)).foregroundColor(.primary).lineLimit(1)
+            Text(value).font(.system(size: 11.5, design: .monospaced)).foregroundColor(.primary).lineLimit(1)
         }
     }
 
@@ -170,10 +170,10 @@ struct MenuBarPopoverView: View {
         Button(action: action) {
             VStack(spacing: 4) {
                 Image(systemName: icon)
-                    .font(.system(size: 16))
+                    .font(.system(size: 18.5))
                     .foregroundColor(.koboldEmerald)
                 Text(label)
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: 12.5, weight: .medium))
                     .foregroundColor(.primary)
             }
             .frame(maxWidth: .infinity)
@@ -202,7 +202,7 @@ struct MenuBarPopoverView: View {
                 inputBar
                 Button(action: { viewModel.messages.removeAll() }) {
                     Image(systemName: "trash")
-                        .font(.system(size: 11))
+                        .font(.system(size: 13.5))
                         .foregroundColor(.secondary)
                 }
                 .buttonStyle(.plain)
@@ -222,7 +222,7 @@ struct MenuBarPopoverView: View {
                 .font(.system(size: 32))
                 .foregroundColor(.secondary.opacity(0.5))
             Text("Frag mich etwas...")
-                .font(.system(size: 13))
+                .font(.system(size: 15.5))
                 .foregroundColor(.secondary)
             Spacer()
         }
@@ -259,7 +259,7 @@ struct MenuBarPopoverView: View {
         HStack(spacing: 8) {
             TextField("Nachricht...", text: $viewModel.inputText)
                 .textFieldStyle(.plain)
-                .font(.system(size: 13))
+                .font(.system(size: 15.5))
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
                 .background(Color.koboldSurface)
@@ -276,7 +276,7 @@ struct MenuBarPopoverView: View {
             } else {
                 Button(action: { viewModel.sendMessage() }) {
                     Image(systemName: "arrow.up.circle.fill")
-                        .font(.system(size: 22))
+                        .font(.system(size: 23))
                         .foregroundColor(viewModel.inputText.isEmpty ? .secondary : .koboldEmerald)
                 }
                 .buttonStyle(.plain)
@@ -290,11 +290,11 @@ struct MenuBarPopoverView: View {
     private var footer: some View {
         HStack {
             Text("⌘+Shift+K öffnet Hauptfenster")
-                .font(.system(size: 9))
+                .font(.system(size: 11.5))
                 .foregroundColor(.secondary.opacity(0.6))
             Spacer()
-            Text("v0.2.5")
-                .font(.system(size: 9))
+            Text("v0.2.6")
+                .font(.system(size: 11.5))
                 .foregroundColor(.secondary.opacity(0.4))
         }
         .padding(.horizontal, 12)
@@ -314,7 +314,7 @@ struct MenuBarMessageBubble: View {
 
             VStack(alignment: message.role == "user" ? .trailing : .leading, spacing: 2) {
                 Text(message.content)
-                    .font(.system(size: 12))
+                    .font(.system(size: 14.5))
                     .foregroundColor(.primary)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
@@ -327,9 +327,9 @@ struct MenuBarMessageBubble: View {
                 if message.role == "assistant", let confidence = message.confidence {
                     HStack(spacing: 3) {
                         Image(systemName: "gauge.medium")
-                            .font(.system(size: 8))
-                        Text("\(Int(confidence * 100))%")
                             .font(.system(size: 9))
+                        Text("\(Int(confidence * 100))%")
+                            .font(.system(size: 11.5))
                     }
                     .foregroundColor(confidence >= 0.8 ? .koboldEmerald : confidence >= 0.5 ? .koboldGold : .red)
                     .padding(.trailing, 4)

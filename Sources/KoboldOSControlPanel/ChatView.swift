@@ -11,7 +11,7 @@ struct ChatView: View {
     @AppStorage("kobold.agent.type") private var agentType: String = "general"
     @AppStorage("kobold.koboldName") private var koboldName: String = "KoboldOS"
     @AppStorage("kobold.showAgentSteps") private var showAgentSteps: Bool = true
-    @State private var showNotifications: Bool = false
+    // Notifications moved to GlobalHeaderBar
     @State private var scrollDebounceTask: Task<Void, Never>?
 
     /// Human-readable agent display name for the chat header badge
@@ -62,12 +62,23 @@ struct ChatView: View {
                 }
                 .onChange(of: viewModel.messages.count) { debouncedScroll(proxy: proxy) }
                 .onChange(of: viewModel.agentLoading) { debouncedScroll(proxy: proxy) }
+                .onChange(of: viewModel.activeThinkingSteps.count) {
+                    // Auto-scroll during live thinking to follow generation
+                    if viewModel.isAgentLoadingInCurrentChat {
+                        debouncedScroll(proxy: proxy)
+                    }
+                }
             }
 
             GlassDivider()
             inputBar
         }
-        .background(Color.koboldBackground)
+        .background(
+            ZStack {
+                Color.koboldBackground
+                LinearGradient(colors: [Color.koboldEmerald.opacity(0.015), .clear, Color.koboldGold.opacity(0.01)], startPoint: .topLeading, endPoint: .bottomTrailing)
+            }
+        )
     }
 
     // MARK: - Bubble Router
@@ -121,67 +132,82 @@ struct ChatView: View {
 
     var chatHeader: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 8) {
-                        switch viewModel.chatMode {
-                        case .workflow:
-                            Text("⚡ \(viewModel.workflowChatLabel)").font(.headline)
-                            GlassStatusBadge(label: "Workflow", color: .koboldGold, icon: "point.3.connected.trianglepath.dotted")
-                        case .task:
-                            Text("📋 \(viewModel.taskChatLabel)").font(.headline)
-                            GlassStatusBadge(label: "Task", color: .blue, icon: "checklist")
-                        case .normal:
-                            Text(koboldName.isEmpty ? "KoboldOS" : koboldName).font(.headline)
-                            GlassStatusBadge(label: agentDisplayName, color: .koboldGold, icon: "brain")
-                        }
+            VStack(spacing: 2) {
+                HStack(spacing: 8) {
+                    Spacer()
+                    switch viewModel.chatMode {
+                    case .workflow:
+                        Text("⚡ \(viewModel.workflowChatLabel)").font(.system(size: 14.5, weight: .semibold))
+                    case .task:
+                        Text("📋 \(viewModel.taskChatLabel)").font(.system(size: 14.5, weight: .semibold))
+                    case .normal:
+                        Text(koboldName.isEmpty ? "KoboldOS" : koboldName).font(.system(size: 14.5, weight: .semibold))
                     }
-                    Text(viewModel.chatMode == .workflow
-                         ? "Workflow-Chat · \(viewModel.workflowChatLabel)"
-                         : viewModel.chatMode == .task
-                         ? "Task-Chat · \(viewModel.taskChatLabel)"
-                         : l10n.language.toolsAvailable)
-                        .font(.caption).foregroundColor(.secondary)
+                    Spacer()
                 }
-                Spacer()
-                GlassStatusBadge(
-                    label: viewModel.isConnected ? l10n.language.connected : l10n.language.offline,
-                    color: viewModel.isConnected ? .koboldEmerald : .red
-                )
-
-                // Notification bell
-                Button(action: {
-                    showNotifications.toggle()
-                    if showNotifications { viewModel.markAllNotificationsRead() }
-                }) {
-                    ZStack(alignment: .topTrailing) {
-                        Image(systemName: viewModel.unreadNotificationCount > 0 ? "bell.badge.fill" : "bell.fill")
-                            .font(.system(size: 14))
-                            .foregroundColor(viewModel.unreadNotificationCount > 0 ? .koboldGold : .secondary)
-                        if viewModel.unreadNotificationCount > 0 {
-                            Text("\(min(viewModel.unreadNotificationCount, 99))")
-                                .font(.system(size: 8, weight: .bold))
-                                .foregroundColor(.white)
-                                .frame(minWidth: 14, minHeight: 14)
-                                .background(Circle().fill(Color.red))
-                                .offset(x: 6, y: -6)
-                        }
+                HStack(spacing: 6) {
+                    Spacer()
+                    switch viewModel.chatMode {
+                    case .workflow:
+                        GlassStatusBadge(label: "Workflow", color: .koboldGold, icon: "point.3.connected.trianglepath.dotted")
+                    case .task:
+                        GlassStatusBadge(label: "Task", color: .koboldEmerald, icon: "checklist")
+                    case .normal:
+                        GlassStatusBadge(label: agentDisplayName, color: .koboldGold, icon: "brain")
                     }
+                    if viewModel.chatMode == .normal, let topicId = viewModel.activeTopicId,
+                       let topic = viewModel.topics.first(where: { $0.id == topicId }) {
+                        HStack(spacing: 3) {
+                            Circle().fill(topic.swiftUIColor).frame(width: 6, height: 6)
+                            Text(topic.name)
+                                .font(.system(size: 11.5, weight: .medium))
+                                .foregroundColor(topic.swiftUIColor)
+                        }
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(topic.swiftUIColor.opacity(0.1)))
+                    }
+                    Spacer()
                 }
-                .buttonStyle(.plain)
-                .help("Benachrichtigungen")
-                .popover(isPresented: $showNotifications, arrowEdge: .bottom) {
-                    NotificationPopover(viewModel: viewModel)
-                }
-
-                Button(action: { viewModel.clearChatHistory() }) {
-                    Image(systemName: "trash").foregroundColor(.secondary)
-                }
-                .buttonStyle(.plain)
-                .help(l10n.language.clearHistory)
             }
-            .padding(.horizontal, 16).padding(.vertical, 12)
-            .background(Color.koboldPanel)
+            .padding(.horizontal, 16).padding(.vertical, 6)
+            .background(
+                ZStack {
+                    Color.koboldPanel.opacity(0.5)
+                    LinearGradient(colors: [Color.koboldEmerald.opacity(0.03), .clear, Color.koboldGold.opacity(0.02)], startPoint: .leading, endPoint: .trailing)
+                }
+            )
+
+            // Context Usage Bar (shows when agent is active)
+            if viewModel.contextPromptTokens > 0 || viewModel.agentLoading {
+                HStack(spacing: 6) {
+                    Image(systemName: "text.line.last.and.arrowtriangle.forward")
+                        .font(.system(size: 10))
+                        .foregroundColor(viewModel.contextUsagePercent > 0.8 ? .orange : .secondary)
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            RoundedRectangle(cornerRadius: 2)
+                                .fill(Color.white.opacity(0.08))
+                            RoundedRectangle(cornerRadius: 2)
+                                .fill(viewModel.contextUsagePercent > 0.8
+                                      ? Color.orange.opacity(0.7)
+                                      : Color.green.opacity(0.5))
+                                .frame(width: geo.size.width * min(1.0, viewModel.contextUsagePercent))
+                        }
+                    }
+                    .frame(height: 4)
+                    Text("\(Int(viewModel.contextUsagePercent * 100))%")
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(viewModel.contextUsagePercent > 0.8 ? .orange : .secondary)
+                        .frame(width: 30)
+                    Text("\(viewModel.contextPromptTokens)/\(viewModel.contextWindowSize)")
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundColor(.secondary)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 3)
+                .background(Color.black.opacity(0.15))
+            }
 
             // Mode-specific banner
             if viewModel.chatMode == .workflow {
@@ -201,22 +227,26 @@ struct ChatView: View {
                     }.buttonStyle(.plain)
                 }
                 .padding(.horizontal, 14).padding(.vertical, 6)
-                .background(Color.koboldEmerald.opacity(0.1))
+                .background(
+                    LinearGradient(colors: [Color.koboldEmerald.opacity(0.12), Color.koboldGold.opacity(0.06)], startPoint: .leading, endPoint: .trailing)
+                )
             } else if viewModel.chatMode == .task {
                 HStack(spacing: 6) {
                     Image(systemName: "checklist")
                         .font(.caption)
-                        .foregroundColor(.blue)
+                        .foregroundColor(.koboldEmerald)
                     Text("Task-Chat — gespeichert unter Aufgaben")
                         .font(.caption)
-                        .foregroundColor(.blue)
+                        .foregroundColor(.koboldEmerald)
                     Spacer()
                     Button(action: { viewModel.newSession() }) {
                         Text("Zurück zum Chat").font(.caption2).foregroundColor(.koboldEmerald)
                     }.buttonStyle(.plain)
                 }
                 .padding(.horizontal, 14).padding(.vertical, 6)
-                .background(Color.blue.opacity(0.1))
+                .background(
+                    LinearGradient(colors: [Color.koboldEmerald.opacity(0.10), Color.koboldGold.opacity(0.05)], startPoint: .leading, endPoint: .trailing)
+                )
             }
         }
     }
@@ -268,44 +298,70 @@ struct ChatView: View {
         ],
     ]
 
-    private var currentExamples: [String] {
-        let dayOfYear = Calendar.current.ordinality(of: .day, in: .year, for: Date()) ?? 0
-        let setIndex = dayOfYear % Self.exampleSets.count
-        return Self.exampleSets[setIndex]
+    @State private var activeTips: [String] = []
+    @State private var tipRotation: Double = 0
+
+    private func loadRandomTips() {
+        let allTips = Self.exampleSets.flatMap { $0 }
+        activeTips = Array(allTips.shuffled().prefix(4))
+        withAnimation(.easeInOut(duration: 0.3)) {
+            tipRotation += 360
+        }
     }
 
     var emptyState: some View {
         VStack(spacing: 20) {
             Spacer(minLength: 80)
             Text(l10n.language.startConversation)
-                .font(.system(size: 22, weight: .semibold))
+                .font(.system(size: 23, weight: .semibold))
             Text("\(koboldName.isEmpty ? "KoboldOS" : koboldName) ist bereit.")
-                .font(.system(size: 15)).foregroundColor(.secondary)
+                .font(.system(size: 17.5)).foregroundColor(.secondary)
             GlassCard(padding: 16, cornerRadius: 12) {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("Probier mal...").font(.system(size: 13, weight: .semibold)).foregroundColor(.koboldGold)
-                    ForEach(currentExamples, id: \.self) { example in
+                    HStack {
+                        Text("Probier mal...").font(.system(size: 15.5, weight: .semibold)).foregroundColor(.koboldGold)
+                        Spacer()
+                        Button(action: { loadRandomTips() }) {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 14.5, weight: .semibold))
+                                .foregroundColor(.koboldEmerald)
+                                .rotationEffect(.degrees(tipRotation))
+                        }
+                        .buttonStyle(.plain)
+                        .help("Neue Tipps laden")
+                    }
+                    ForEach(activeTips, id: \.self) { example in
                         Button(action: {
                             inputText = ""
                             viewModel.sendMessage(example)
                         }) {
                             HStack(spacing: 8) {
                                 Image(systemName: "chevron.right")
-                                    .font(.system(size: 10, weight: .bold))
+                                    .font(.system(size: 12.5, weight: .bold))
                                     .foregroundColor(.koboldEmerald.opacity(0.7))
                                 Text("\"\(example)\"")
-                                    .font(.system(size: 13))
+                                    .font(.system(size: 15.5))
                                     .foregroundColor(.secondary)
                             }
                             .padding(.vertical, 4).padding(.horizontal, 8)
-                            .background(Color.koboldEmerald.opacity(0.05))
+                            .background(
+                                LinearGradient(colors: [Color.koboldEmerald.opacity(0.05), Color.koboldGold.opacity(0.03)], startPoint: .leading, endPoint: .trailing)
+                            )
                             .cornerRadius(8)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(
+                                        LinearGradient(colors: [Color.koboldEmerald.opacity(0.15), Color.koboldGold.opacity(0.1)], startPoint: .leading, endPoint: .trailing),
+                                        lineWidth: 0.5
+                                    )
+                            )
                         }
                         .buttonStyle(.plain)
                     }
                 }
             }
             .frame(maxWidth: 400)
+            .onAppear { if activeTips.isEmpty { loadRandomTips() } }
             Spacer()
         }
         .frame(maxWidth: .infinity)
@@ -316,6 +372,10 @@ struct ChatView: View {
 
     var inputBar: some View {
         VStack(spacing: 0) {
+            Rectangle()
+                .fill(LinearGradient(colors: [Color.koboldEmerald.opacity(0.15), Color.koboldGold.opacity(0.1)], startPoint: .leading, endPoint: .trailing))
+                .frame(height: 0.5)
+
             // Attachment preview strip
             if !pendingAttachments.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -337,7 +397,7 @@ struct ChatView: View {
                 // Paperclip attachment button
                 Button(action: openFilePicker) {
                     Image(systemName: "paperclip")
-                        .font(.system(size: 15))
+                        .font(.system(size: 17.5))
                         .foregroundColor(pendingAttachments.isEmpty ? .secondary : .koboldEmerald)
                         .frame(width: 32, height: 32)
                         .background(Color.koboldSurface.opacity(0.4))
@@ -349,7 +409,7 @@ struct ChatView: View {
                 // Brain toggle — show/hide agent steps
                 Button(action: { showAgentSteps.toggle() }) {
                     Image(systemName: showAgentSteps ? "brain.fill" : "brain")
-                        .font(.system(size: 15))
+                        .font(.system(size: 17.5))
                         .foregroundColor(showAgentSteps ? .koboldGold : .secondary)
                         .frame(width: 32, height: 32)
                         .background(Color.koboldSurface.opacity(0.4))
@@ -368,10 +428,10 @@ struct ChatView: View {
                 if viewModel.isAgentLoadingInCurrentChat {
                     Button(action: { viewModel.cancelAgent() }) {
                         Image(systemName: "stop.circle.fill")
-                            .font(.system(size: 16, weight: .semibold))
+                            .font(.system(size: 18.5, weight: .semibold))
                             .foregroundColor(.white)
                             .frame(width: 36, height: 36)
-                            .background(Color.orange)
+                            .background(Color.koboldGold)
                             .cornerRadius(10)
                     }
                     .buttonStyle(.plain)
@@ -379,7 +439,7 @@ struct ChatView: View {
                 } else {
                     Button(action: send) {
                         Image(systemName: "paperplane.fill")
-                            .font(.system(size: 16, weight: .semibold))
+                            .font(.system(size: 18.5, weight: .semibold))
                             .foregroundColor(.white)
                             .frame(width: 36, height: 36)
                             .background(Color.koboldEmerald)
@@ -391,7 +451,12 @@ struct ChatView: View {
             }
             .padding(.horizontal, 12).padding(.vertical, 6)
         }
-        .background(Color.koboldPanel)
+        .background(
+            ZStack {
+                Color.koboldPanel
+                LinearGradient(colors: [Color.koboldEmerald.opacity(0.02), .clear, Color.koboldGold.opacity(0.015)], startPoint: .leading, endPoint: .trailing)
+            }
+        )
     }
 
     private func openFilePicker() {

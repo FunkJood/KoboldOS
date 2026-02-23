@@ -70,13 +70,9 @@ struct KoboldOSApp: App {
                     NotificationCenter.default.post(name: .koboldNavigate, object: SidebarTab.tasks)
                 }.keyboardShortcut("4", modifiers: .command)
 
-                Button("Agenten") {
-                    NotificationCenter.default.post(name: .koboldNavigate, object: SidebarTab.agents)
-                }.keyboardShortcut("5", modifiers: .command)
-
                 Button("Workflows") {
                     NotificationCenter.default.post(name: .koboldNavigate, object: SidebarTab.workflows)
-                }.keyboardShortcut("6", modifiers: .command)
+                }.keyboardShortcut("5", modifiers: .command)
 
                 Divider()
 
@@ -168,7 +164,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         NotificationCenter.default.post(name: .koboldShutdownSave, object: nil)
-        RuntimeManager.shared.stopDaemon()
+        ProactiveEngine.shared.cleanup()
+        RuntimeManager.shared.cleanup()
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {

@@ -140,10 +140,12 @@ public enum SecretsError: Error, LocalizedError {
 
 #elseif os(Linux)
 import Foundation
+import Crypto
 
 /// Secure secrets manager for storing API keys and sensitive information (Linux implementation)
 public actor SecretsManager {
     private let secretsDirectory: URL
+    private let masterKey: SymmetricKey
 
     public init(serviceName: String = "KoboldOS", accessGroup: String? = nil) {
         let fileManager = FileManager.default
@@ -152,27 +154,58 @@ public actor SecretsManager {
 
         // Create secrets directory if it doesn't exist
         try? fileManager.createDirectory(at: secretsDirectory, withIntermediateDirectories: true)
+
+        // Initialize or load master key for encryption
+        masterKey = SecretsManager.loadOrCreateMasterKey(at: secretsDirectory)
+    }
+
+    /// Load existing master key or create a new one
+    private static func loadOrCreateMasterKey(at directory: URL) -> SymmetricKey {
+        let keyFile = directory.appendingPathComponent(".masterkey")
+        if let keyData = try? Data(contentsOf: keyFile) {
+            return SymmetricKey(data: keyData)
+        } else {
+            // Generate a new 256-bit key
+            let newKey = SymmetricKey(size: .bits256)
+            // Save the key securely
+            try? newKey.data.write(to: keyFile)
+            // Set restrictive permissions on the key file
+            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: keyFile.path)
+            return newKey
+        }
     }
 
     /// Store a secret value
     public func storeSecret(key: String, value: String) throws {
         let fileURL = secretsDirectory.appendingPathComponent(key)
+
+        // Encrypt the value
         guard let data = value.data(using: .utf8) else {
             throw SecretsError.storageFailed(-1)
         }
 
-        // In a production implementation, you would encrypt the data here
-        // For now, we'll store it as plain text for simplicity
-        try data.write(to: fileURL)
+        do {
+            let sealedBox = try AES.GCM.seal(data, using: masterKey)
+            try sealedBox.combined.write(to: fileURL)
+        } catch {
+            throw SecretsError.storageFailed(-1)
+        }
     }
 
     /// Retrieve a secret value
     public func retrieveSecret(key: String) throws -> String? {
         let fileURL = secretsDirectory.appendingPathComponent(key)
-        guard let data = try? Data(contentsOf: fileURL) else {
+        guard let combinedData = try? Data(contentsOf: fileURL) else {
             return nil
         }
-        return String(data: data, encoding: .utf8)
+
+        do {
+            let sealedBox = try AES.GCM.SealedBox(combined: combinedData)
+            let decryptedData = try AES.GCM.open(sealedBox, using: masterKey)
+            return String(data: decryptedData, encoding: .utf8)
+        } catch {
+            throw SecretsError.retrievalFailed(-1)
+        }
     }
 
     /// Delete a secret
@@ -186,7 +219,8 @@ public actor SecretsManager {
         guard let fileURLs = try? FileManager.default.contentsOfDirectory(at: secretsDirectory, includingPropertiesForKeys: nil) else {
             return []
         }
-        return fileURLs.map { $0.lastPathComponent }
+        // Exclude the master key file from the list
+        return fileURLs.map { $0.lastPathComponent }.filter { $0 != ".masterkey" }
     }
 
     /// Clear all secrets
@@ -197,7 +231,10 @@ public actor SecretsManager {
         }
 
         for fileURL in fileURLs {
-            try? fileManager.removeItem(at: fileURL)
+            // Don't delete the master key file
+            if fileURL.lastPathComponent != ".masterkey" {
+                try? fileManager.removeItem(at: fileURL)
+            }
         }
     }
 }

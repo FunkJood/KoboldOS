@@ -10,13 +10,25 @@ public enum AgentType: String, Sendable {
     case planner    = "planner"
 
     public var stepLimit: Int {
+        let defaults: Int
         switch self {
-        case .researcher: return 20
-        case .coder:      return 15
-        case .instructor: return 12
-        case .general:    return 10
-        case .planner:    return 8
+        case .researcher: defaults = 50
+        case .coder:      defaults = 40
+        case .instructor: defaults = 30
+        case .general:    defaults = 25
+        case .planner:    defaults = 20
         }
+        // Allow user override via Settings
+        let key: String
+        switch self {
+        case .researcher: key = "kobold.agent.researcherSteps"
+        case .coder:      key = "kobold.agent.coderSteps"
+        case .instructor: key = "kobold.agent.coderSteps"
+        case .general:    key = "kobold.agent.generalSteps"
+        case .planner:    key = "kobold.agent.generalSteps"
+        }
+        let userValue = UserDefaults.standard.integer(forKey: key)
+        return userValue > 0 ? userValue : defaults
     }
 }
 
@@ -82,16 +94,53 @@ public actor AgentLoop {
     public let coreMemory: CoreMemory
     private var ruleEngine: ToolRuleEngine
     private var conversationHistory: [String] = []
-    private let maxConversationHistory = 50
+    private let maxConversationHistory = 200
     /// Proper message pairs for LLM context injection across turns
     private var conversationMessages: [[String: String]] = []
-    private let maxConversationPairs = 15
+    private let maxConversationPairs = 60
     private var agentType: AgentType = .general
     private var currentProviderConfig: LLMProviderConfig?
 
     /// Maximum number of message pairs (assistant+user) to keep in context window.
     /// System prompt + original user message are always preserved.
-    private let maxContextMessages = 20
+    private let maxContextMessages = 80
+
+    // MARK: - Context Management
+
+    /// Context window size from UserDefaults (default 150000)
+    private var contextWindowSize: Int {
+        let v = UserDefaults.standard.integer(forKey: "kobold.context.windowSize")
+        return v > 0 ? v : 150_000
+    }
+
+    /// Reserve 15% of context window for response generation
+    private var responseReserve: Int { Int(Double(contextWindowSize) * 0.15) }
+
+    /// Compression threshold (percentage 0.0-1.0, default 0.8)
+    private var compressionThreshold: Double {
+        let v = UserDefaults.standard.double(forKey: "kobold.context.threshold")
+        return v > 0 ? v : 0.8
+    }
+
+    /// Whether auto-compression is enabled
+    private var isAutoCompressEnabled: Bool {
+        if UserDefaults.standard.object(forKey: "kobold.context.autoCompress") == nil { return true }
+        return UserDefaults.standard.bool(forKey: "kobold.context.autoCompress")
+    }
+
+    /// Last known token counts from API response
+    private var lastKnownPromptTokens: Int = 0
+    private var lastKnownCompletionTokens: Int = 0
+
+    /// Get current context info for UI
+    public func getContextInfo() -> ContextInfo {
+        return ContextInfo(
+            promptTokens: lastKnownPromptTokens,
+            completionTokens: lastKnownCompletionTokens,
+            contextWindowSize: contextWindowSize,
+            isEstimated: lastKnownPromptTokens == 0
+        )
+    }
 
     public init(agentID: String = "default") {
         self.registry = ToolRegistry()
@@ -154,6 +203,9 @@ public actor AgentLoop {
         await registry.register(TTSTool())
         // Image Generation (Stable Diffusion)
         await registry.register(GenerateImageTool())
+
+        // MCP (Model Context Protocol) — connect configured external tool servers
+        await MCPConfigManager.shared.connectAllServers(registry: registry)
     }
 
     // MARK: - Configuration
@@ -194,6 +246,87 @@ public actor AgentLoop {
         guard messages.count > maxContextMessages + 2 else { return }
         let toRemove = messages.count - maxContextMessages - 2
         messages.removeSubrange(2..<(2 + toRemove))
+    }
+
+    /// Smart context management: estimates tokens, compresses if needed, falls back to pruning.
+    private func manageContext(_ messages: inout [[String: String]]) {
+        // 1. Estimate current token usage
+        let estimated = TokenEstimator.estimateTokens(messages: messages)
+        // Threshold accounts for response reserve (15%) — compress before we hit the wall
+        let effectiveLimit = contextWindowSize - responseReserve
+        let threshold = Int(Double(effectiveLimit) * compressionThreshold)
+
+        // Update last known if we're estimating
+        if lastKnownPromptTokens == 0 {
+            lastKnownPromptTokens = estimated
+        }
+
+        guard estimated > threshold else { return }
+
+        // 2. Try auto-compression if enabled
+        if isAutoCompressEnabled {
+            // 2a. Truncate old tool results first (cheapest operation)
+            truncateOldToolResults(&messages)
+
+            // Re-check after truncation
+            let afterTruncate = TokenEstimator.estimateTokens(messages: messages)
+            if afterTruncate <= threshold { return }
+
+            // 2b. Save highlights before discarding
+            saveConversationHighlights(messages)
+        }
+
+        // 3. Fallback: hard prune by message count
+        pruneMessages(&messages)
+    }
+
+    /// Truncate tool results older than the last 3, keeping only first 200 chars
+    private func truncateOldToolResults(_ messages: inout [[String: String]]) {
+        guard messages.count > 5 else { return }
+
+        // Find indices of tool-result messages (user role messages that start with tool result markers)
+        var toolResultIndices: [Int] = []
+        for i in 2..<messages.count {
+            if let content = messages[i]["content"],
+               messages[i]["role"] == "user",
+               (content.hasPrefix("[Tool Result") || content.hasPrefix("Tool '") || content.contains("\"tool_result\"")) {
+                toolResultIndices.append(i)
+            }
+        }
+
+        // Keep last 10 tool results intact, truncate older ones
+        guard toolResultIndices.count > 10 else { return }
+        let toTruncate = toolResultIndices.dropLast(10)
+        for idx in toTruncate {
+            if let content = messages[idx]["content"], content.count > 500 {
+                messages[idx]["content"] = String(content.prefix(500)) + "\n... (gekürzt)"
+            }
+        }
+    }
+
+    /// Extract key facts from messages before they get pruned, save to archival memory
+    private func saveConversationHighlights(_ messages: [[String: String]]) {
+        // Only save from messages that will be pruned (middle section)
+        guard messages.count > maxContextMessages + 2 else { return }
+        let pruneEnd = messages.count - maxContextMessages
+        let toPrune = messages[2..<pruneEnd]
+
+        // Extract assistant messages that contain useful content
+        var highlights: [String] = []
+        for msg in toPrune {
+            guard msg["role"] == "assistant", let content = msg["content"] else { continue }
+            // Skip JSON tool calls, only save meaningful responses
+            if content.contains("\"tool_name\"") && !content.contains("\"response\"") { continue }
+            if content.count > 50 {
+                highlights.append(String(content.prefix(300)))
+            }
+        }
+
+        guard !highlights.isEmpty else { return }
+        let summary = highlights.prefix(3).joined(separator: "\n---\n")
+        Task {
+            await archivalStore.insert(label: "conversation_highlights", content: summary)
+        }
     }
 
     // MARK: - Main Run (AgentZero-style loop)
@@ -261,7 +394,12 @@ public actor AgentLoop {
         let relevantMemories = await smartMemoryRetrieval(query: userMessage)
         let memoryRetrievalPrompt = relevantMemories.isEmpty ? "" : "\n\n## Relevante Erinnerungen (automatisch geladen)\n\(relevantMemories)"
 
-        let sysPrompt = buildSystemPrompt(toolDescriptions: toolDescriptions, compiledMemory: compiledMemory) + skillsPrompt + selfCheckPrompt + confidencePrompt + archivalPrompt + memoryRetrievalPrompt
+        // Context status for LLM awareness
+        let ctxTokens = lastKnownPromptTokens > 0 ? lastKnownPromptTokens : TokenEstimator.estimateTokens(messages: conversationMessages)
+        let ctxPercent = Int(TokenEstimator.usagePercent(estimatedTokens: ctxTokens, contextSize: contextWindowSize) * 100)
+        let contextStatusPrompt = "\n\n# Kontext-Status\nNutzung: ~\(ctxTokens) / \(contextWindowSize) Tokens (\(ctxPercent)%)"
+
+        let sysPrompt = buildSystemPrompt(toolDescriptions: toolDescriptions, compiledMemory: compiledMemory) + skillsPrompt + selfCheckPrompt + confidencePrompt + archivalPrompt + memoryRetrievalPrompt + contextStatusPrompt
 
         var messages: [[String: String]] = [
             ["role": "system", "content": sysPrompt]
@@ -279,16 +417,21 @@ public actor AgentLoop {
                 messages[0] = ["role": "system", "content": freshPrompt]
             }
 
-            // Prune old messages to prevent context window overflow on long tasks
-            pruneMessages(&messages)
+            // Smart context management (estimate tokens, compress if needed, fallback prune)
+            manageContext(&messages)
 
             let llmResponse: String
             do {
+                let resp: LLMResponse
                 if let pc = providerConfig, pc.isCloudProvider, !pc.apiKey.isEmpty {
-                    llmResponse = try await LLMRunner.shared.generate(messages: messages, config: pc)
+                    resp = try await LLMRunner.shared.generateWithTokens(messages: messages, config: pc)
                 } else {
-                    llmResponse = try await LLMRunner.shared.generate(messages: messages)
+                    resp = try await LLMRunner.shared.generateWithTokens(messages: messages)
                 }
+                llmResponse = resp.content
+                // Update token tracking from API response
+                if let pt = resp.promptTokens { lastKnownPromptTokens = pt }
+                if let ct = resp.completionTokens { lastKnownCompletionTokens = ct }
             } catch {
                 // LLM generation failed — retry up to 2 times with brief delay
                 let llmRetryCount = steps.filter { $0.type == .error }.count
@@ -623,16 +766,21 @@ public actor AgentLoop {
                         messages[0] = ["role": "system", "content": freshPrompt]
                     }
 
-                    // Prune old messages to prevent context window overflow on long tasks
-                    self.pruneMessages(&messages)
+                    // Smart context management (estimate tokens, compress if needed, fallback prune)
+                    self.manageContext(&messages)
 
                     let llmResponse: String
                     do {
+                        let resp: LLMResponse
                         if let pc = providerConfig, pc.isCloudProvider, !pc.apiKey.isEmpty {
-                            llmResponse = try await LLMRunner.shared.generate(messages: messages, config: pc)
+                            resp = try await LLMRunner.shared.generateWithTokens(messages: messages, config: pc)
                         } else {
-                            llmResponse = try await LLMRunner.shared.generate(messages: messages)
+                            resp = try await LLMRunner.shared.generateWithTokens(messages: messages)
                         }
+                        llmResponse = resp.content
+                        // Update token tracking from API response
+                        if let pt = resp.promptTokens { self.lastKnownPromptTokens = pt }
+                        if let ct = resp.completionTokens { self.lastKnownCompletionTokens = ct }
                     } catch {
                         let errorStep = AgentStep(
                             stepNumber: stepCount, type: .error,

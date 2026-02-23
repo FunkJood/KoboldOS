@@ -22,7 +22,7 @@ enum MemoryType: String, CaseIterable, Identifiable {
     var color: Color {
         switch self {
         case .kurzzeit: return .koboldEmerald
-        case .langzeit:  return .blue
+        case .langzeit:  return .koboldEmerald
         case .wissen:    return .koboldGold
         }
     }
@@ -189,7 +189,7 @@ struct MemoryView: View {
             }
             .padding(24)
         }
-        .background(Color.koboldBackground)
+        .background(ZStack { Color.koboldBackground; LinearGradient(colors: [Color.koboldEmerald.opacity(0.015), .clear, Color.koboldGold.opacity(0.01)], startPoint: .topLeading, endPoint: .bottomTrailing) })
         .task { await loadAll() }
         .onReceive(Timer.publish(every: 8, on: .main, in: .common).autoconnect()) { _ in
             Task { await loadEntries() }
@@ -238,16 +238,16 @@ struct MemoryView: View {
         HStack(spacing: 10) {
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass")
-                    .font(.system(size: 12))
+                    .font(.system(size: 14.5))
                     .foregroundColor(.secondary)
                 TextField("Erinnerungen durchsuchen...", text: $searchText)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 13))
+                    .font(.system(size: 15.5))
                 if !searchText.isEmpty {
                     Button(action: { searchText = "" }) {
                         Image(systemName: "xmark.circle.fill")
                             .foregroundColor(.secondary)
-                            .font(.system(size: 12))
+                            .font(.system(size: 14.5))
                     }
                     .buttonStyle(.plain)
                 }
@@ -273,13 +273,13 @@ struct MemoryView: View {
             if !allTags.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
-                        Text("Tags:").font(.system(size: 10, weight: .semibold)).foregroundColor(.secondary)
+                        Text("Tags:").font(.system(size: 12.5, weight: .semibold)).foregroundColor(.secondary)
 
                         if filterTag != nil {
                             Button(action: { withAnimation { filterTag = nil } }) {
                                 HStack(spacing: 3) {
-                                    Image(systemName: "xmark").font(.system(size: 8))
-                                    Text("Alle").font(.system(size: 10))
+                                    Image(systemName: "xmark").font(.system(size: 9))
+                                    Text("Alle").font(.system(size: 12.5))
                                 }
                                 .foregroundColor(.secondary)
                                 .padding(.horizontal, 6).padding(.vertical, 3)
@@ -311,9 +311,9 @@ struct MemoryView: View {
         }) {
             HStack(spacing: 3) {
                 Text("#\(tag)")
-                    .font(.system(size: 10, weight: isSelected ? .semibold : .regular))
+                    .font(.system(size: 12.5, weight: isSelected ? .semibold : .regular))
                 Text("\(count)")
-                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    .font(.system(size: 11.5, weight: .bold, design: .monospaced))
                     .foregroundColor(.secondary)
             }
             .foregroundColor(isSelected ? .koboldEmerald : .secondary)
@@ -333,7 +333,7 @@ struct MemoryView: View {
             }
         }) {
             Text(label)
-                .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
+                .font(.system(size: 13.5, weight: isSelected ? .semibold : .regular))
                 .foregroundColor(isSelected ? color : .secondary)
                 .padding(.horizontal, 8).padding(.vertical, 4)
                 .background(Capsule().fill(isSelected ? color.opacity(0.2) : Color.white.opacity(0.06))
@@ -351,18 +351,18 @@ struct MemoryView: View {
                 GlassCard(padding: 10, cornerRadius: 10) {
                     HStack(spacing: 8) {
                         Image(systemName: type_.icon)
-                            .font(.system(size: 16))
+                            .font(.system(size: 18.5))
                             .foregroundColor(type_.color)
                             .frame(width: 24)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(type_.rawValue).font(.system(size: 12, weight: .semibold))
+                            Text(type_.rawValue).font(.system(size: 14.5, weight: .semibold))
                             Text(type_.description)
-                                .font(.system(size: 9)).foregroundColor(.secondary)
+                                .font(.system(size: 11.5)).foregroundColor(.secondary)
                                 .lineLimit(2)
                         }
                         Spacer()
                         Text("\(count)")
-                            .font(.system(size: 14, weight: .bold, design: .monospaced))
+                            .font(.system(size: 16.5, weight: .bold, design: .monospaced))
                             .foregroundColor(type_.color)
                     }
                 }
@@ -421,9 +421,9 @@ struct MemoryView: View {
             Button(action: { withAnimation { showLegacyBlocks.toggle() } }) {
                 HStack(spacing: 6) {
                     Image(systemName: showLegacyBlocks ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 10))
-                    Text("Core Memory Blöcke").font(.system(size: 12, weight: .semibold))
-                    Text("(\(blocks.count))").font(.system(size: 11)).foregroundColor(.secondary)
+                        .font(.system(size: 12.5))
+                    Text("Core Memory Blöcke").font(.system(size: 14.5, weight: .semibold))
+                    Text("(\(blocks.count))").font(.system(size: 13.5)).foregroundColor(.secondary)
                     Spacer()
                 }
                 .foregroundColor(.secondary)
@@ -460,7 +460,7 @@ struct MemoryView: View {
                         Text("Einträge").font(.caption2).foregroundColor(.secondary)
                     }
                     VStack(alignment: .leading) {
-                        Text(formatBytes(archivalSize)).font(.title3.bold()).foregroundColor(.blue)
+                        Text(formatBytes(archivalSize)).font(.title3.bold()).foregroundColor(.koboldGold)
                         Text("Gesamtgröße").font(.caption2).foregroundColor(.secondary)
                     }
                     Spacer()
@@ -473,15 +473,15 @@ struct MemoryView: View {
                         ForEach(archivalEntries.prefix(5), id: \.content) { entry in
                             HStack(spacing: 8) {
                                 Text("[\(entry.label)]")
-                                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                    .font(.system(size: 12.5, weight: .semibold, design: .monospaced))
                                     .foregroundColor(.koboldGold)
                                 Text(entry.content.prefix(60) + (entry.content.count > 60 ? "..." : ""))
-                                    .font(.system(size: 10, design: .monospaced))
+                                    .font(.system(size: 12.5, design: .monospaced))
                                     .foregroundColor(.secondary)
                                     .lineLimit(1)
                                 Spacer()
                                 Text(entry.date)
-                                    .font(.system(size: 9))
+                                    .font(.system(size: 11.5))
                                     .foregroundColor(.secondary)
                             }
                         }
@@ -531,8 +531,8 @@ struct MemoryView: View {
                     ForEach(MemoryType.allCases) { type_ in
                         Button(action: { newType = type_ }) {
                             HStack(spacing: 5) {
-                                Image(systemName: type_.icon).font(.system(size: 11))
-                                Text(type_.rawValue).font(.system(size: 12, weight: .medium))
+                                Image(systemName: type_.icon).font(.system(size: 13.5))
+                                Text(type_.rawValue).font(.system(size: 14.5, weight: .medium))
                             }
                             .foregroundColor(newType == type_ ? type_.color : .secondary)
                             .padding(.horizontal, 10).padding(.vertical, 6)
@@ -550,7 +550,7 @@ struct MemoryView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Inhalt").font(.caption.bold()).foregroundColor(.secondary)
                 TextEditor(text: $newText)
-                    .font(.system(size: 13))
+                    .font(.system(size: 15.5))
                     .frame(minHeight: 80, maxHeight: 160)
                     .padding(8)
                     .background(Color.black.opacity(0.2)).cornerRadius(8)
@@ -578,7 +578,7 @@ struct MemoryView: View {
         }
         .padding(24)
         .frame(minWidth: 460, minHeight: 380)
-        .background(Color.koboldBackground)
+        .background(ZStack { Color.koboldBackground; LinearGradient(colors: [Color.koboldEmerald.opacity(0.015), .clear, Color.koboldGold.opacity(0.01)], startPoint: .topLeading, endPoint: .bottomTrailing) })
     }
 
     // MARK: - Networking: Tagged Entries
@@ -782,9 +782,9 @@ struct TaggedMemoryCard: View {
                     // Type badge
                     HStack(spacing: 3) {
                         Image(systemName: entry.memoryType.icon)
-                            .font(.system(size: 10))
+                            .font(.system(size: 12.5))
                         Text(entry.memoryType.rawValue)
-                            .font(.system(size: 10, weight: .semibold))
+                            .font(.system(size: 12.5, weight: .semibold))
                     }
                     .foregroundColor(entry.memoryType.color)
                     .padding(.horizontal, 6).padding(.vertical, 3)
@@ -793,7 +793,7 @@ struct TaggedMemoryCard: View {
                     // Tags
                     ForEach(entry.tags, id: \.self) { tag in
                         Text("#\(tag)")
-                            .font(.system(size: 9, weight: .medium))
+                            .font(.system(size: 11.5, weight: .medium))
                             .foregroundColor(.koboldEmerald.opacity(0.8))
                             .padding(.horizontal, 5).padding(.vertical, 2)
                             .background(Capsule().fill(Color.koboldEmerald.opacity(0.1)))
@@ -803,13 +803,13 @@ struct TaggedMemoryCard: View {
 
                     // Date
                     Text(formatDate(entry.timestamp))
-                        .font(.system(size: 9))
+                        .font(.system(size: 11.5))
                         .foregroundColor(.secondary)
 
                     // Delete
                     Button(action: { showDeleteConfirm = true }) {
                         Image(systemName: "trash")
-                            .font(.system(size: 10))
+                            .font(.system(size: 12.5))
                             .foregroundColor(.red.opacity(0.6))
                     }
                     .buttonStyle(.plain)
@@ -821,7 +821,7 @@ struct TaggedMemoryCard: View {
 
                 // Content
                 Text(entry.text)
-                    .font(.system(size: 12))
+                    .font(.system(size: 14.5))
                     .foregroundColor(.primary)
                     .lineLimit(3)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -850,11 +850,11 @@ struct LegacyMemoryBlockCard: View {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 8) {
                     Image(systemName: block.memoryType.icon)
-                        .font(.system(size: 12))
+                        .font(.system(size: 14.5))
                         .foregroundColor(block.memoryType.color)
                     GlassStatusBadge(label: block.displayLabel, color: block.memoryType.color, icon: "tag.fill")
                     Text(block.memoryType.rawValue)
-                        .font(.system(size: 10))
+                        .font(.system(size: 12.5))
                         .foregroundColor(block.memoryType.color.opacity(0.8))
                         .padding(.horizontal, 5).padding(.vertical, 2)
                         .background(Capsule().fill(block.memoryType.color.opacity(0.1)))
@@ -881,7 +881,7 @@ struct LegacyMemoryBlockCard: View {
                 }
                 if isEditing {
                     TextEditor(text: $block.content)
-                        .font(.system(size: 12, design: .monospaced))
+                        .font(.system(size: 14.5, design: .monospaced))
                         .frame(minHeight: 60, maxHeight: 160)
                         .padding(6)
                         .background(Color.black.opacity(0.2)).cornerRadius(6)
@@ -895,7 +895,7 @@ struct LegacyMemoryBlockCard: View {
                     }
                 } else {
                     Text(block.content.isEmpty ? "(leer)" : block.content)
-                        .font(.system(size: 12, design: .monospaced))
+                        .font(.system(size: 14.5, design: .monospaced))
                         .foregroundColor(block.content.isEmpty ? .secondary : .primary)
                         .lineLimit(4)
                         .frame(maxWidth: .infinity, alignment: .leading)

@@ -325,7 +325,7 @@ struct OnboardingView: View {
             progressDots(current: 1)
 
             Text(lang.obNameTitle)
-                .font(.system(size: 28, weight: .bold))
+                .font(.system(size: 29, weight: .bold))
                 .foregroundColor(.primary)
 
             Text(lang.obNameSubtitle)
@@ -369,7 +369,7 @@ struct OnboardingView: View {
             progressDots(current: 2)
 
             Text(lang.obPersonalityTitle)
-                .font(.system(size: 28, weight: .bold))
+                .font(.system(size: 29, weight: .bold))
                 .foregroundColor(.primary)
 
             Text(lang.obPersonalitySubtitle)
@@ -404,7 +404,7 @@ struct OnboardingView: View {
                 HStack {
                     Text(p.emoji).font(.title2)
                     Text(p.rawValue.capitalized)
-                        .font(.system(size: 15, weight: .semibold))
+                        .font(.system(size: 17.5, weight: .semibold))
                     Spacer()
                     if isSelected {
                         Image(systemName: "checkmark.circle.fill")
@@ -437,7 +437,7 @@ struct OnboardingView: View {
             progressDots(current: 3)
 
             Text(lang.obUseTitle)
-                .font(.system(size: 28, weight: .bold))
+                .font(.system(size: 29, weight: .bold))
                 .foregroundColor(.primary)
 
             Text(lang.obUseSubtitle)
@@ -469,7 +469,7 @@ struct OnboardingView: View {
         return Button(action: { withAnimation(.spring(response: 0.3)) { primaryUse = u } }) {
             VStack(spacing: 8) {
                 Text(u.emoji).font(.title)
-                Text(u.localizedLabel(lang)).font(.system(size: 14, weight: .medium))
+                Text(u.localizedLabel(lang)).font(.system(size: 16.5, weight: .medium))
             }
             .frame(maxWidth: .infinity)
             .padding(16)
@@ -497,7 +497,7 @@ struct OnboardingView: View {
             progressDots(current: 4)
 
             Text("Modelle herunterladen")
-                .font(.system(size: 28, weight: .bold))
+                .font(.system(size: 29, weight: .bold))
                 .foregroundColor(.primary)
 
             Text("Lade empfohlene KI-Modelle für Chat und Bildgenerierung.")
@@ -514,7 +514,7 @@ struct OnboardingView: View {
                                 HStack(spacing: 6) {
                                     Image(systemName: modelManager.chatModelInstalled ? "checkmark.circle.fill" : "cpu.fill")
                                         .foregroundColor(modelManager.chatModelInstalled ? .koboldEmerald : .koboldGold)
-                                    Text("Chat-Modell").font(.system(size: 13, weight: .semibold))
+                                    Text("Chat-Modell").font(.system(size: 15.5, weight: .semibold))
                                     Text("(\(modelManager.recommendedChatModel))").font(.caption).foregroundColor(.secondary)
                                 }
                                 Text(modelManager.chatModelInstalled ? "Bereits installiert" : "Empfohlen — Lokales Sprachmodell via Ollama")
@@ -536,8 +536,8 @@ struct OnboardingView: View {
                             VStack(alignment: .leading, spacing: 4) {
                                 HStack(spacing: 6) {
                                     Image(systemName: modelManager.sdModelInstalled ? "checkmark.circle.fill" : "photo.fill")
-                                        .foregroundColor(modelManager.sdModelInstalled ? .koboldEmerald : .purple)
-                                    Text("Bild-Modell").font(.system(size: 13, weight: .semibold))
+                                        .foregroundColor(modelManager.sdModelInstalled ? .koboldEmerald : .koboldGold)
+                                    Text("Bild-Modell").font(.system(size: 15.5, weight: .semibold))
                                     Text("(Stable Diffusion)").font(.caption).foregroundColor(.secondary)
                                 }
                                 Text(modelManager.sdModelInstalled ? "Bereits installiert" : "Optional — CoreML Bildgenerierung (~1.5 GB)")
@@ -588,7 +588,7 @@ struct OnboardingView: View {
     var hatchingView: some View {
         VStack(spacing: 28) {
             Text(lang.obHatching)
-                .font(.system(size: 28, weight: .bold))
+                .font(.system(size: 29, weight: .bold))
                 .foregroundStyle(
                     LinearGradient(
                         colors: [Color(hex: "#00C46A"), Color(hex: "#C9A227")],
@@ -680,7 +680,7 @@ struct OnboardingView: View {
                             }
                         }
                         Text(koboldMessage)
-                            .font(.system(size: 14))
+                            .font(.system(size: 16.5))
                             .foregroundColor(.primary)
                             .lineLimit(nil)
                             .fixedSize(horizontal: false, vertical: true)
@@ -701,7 +701,7 @@ struct OnboardingView: View {
                                 Image(systemName: ollamaInstalled ? "checkmark.circle.fill" : "cube.box.fill")
                                     .foregroundColor(ollamaInstalled ? .koboldEmerald : .koboldGold)
                                 Text(ollamaInstalled ? lang.obOllamaInstalled : lang.obInstallOllama)
-                                    .font(.system(size: 13, weight: .semibold))
+                                    .font(.system(size: 15.5, weight: .semibold))
                                 Spacer()
                                 if !ollamaInstalled {
                                     GlassButton(title: lang.obInstall, icon: nil, isPrimary: true) {
@@ -723,7 +723,7 @@ struct OnboardingView: View {
                                 Image(systemName: cliInstalled ? "checkmark.circle.fill" : "terminal.fill")
                                     .foregroundColor(cliInstalled ? .koboldEmerald : .koboldGold)
                                 Text(cliInstalled ? lang.obCLIInstalled : lang.obInstallCLI)
-                                    .font(.system(size: 13, weight: .semibold))
+                                    .font(.system(size: 15.5, weight: .semibold))
                                 Spacer()
                                 if !cliInstalled {
                                     GlassButton(title: lang.obInstall, icon: nil, isPrimary: false) {

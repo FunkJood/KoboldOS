@@ -153,7 +153,7 @@ struct AgentsView: View {
                             }
                             Text("Modelle laden")
                         }
-                        .font(.system(size: 12))
+                        .font(.system(size: 14.5))
                     }
                     .buttonStyle(.bordered)
                     .help("Ollama Modelle abrufen")
@@ -190,7 +190,7 @@ struct AgentsView: View {
             }
             .padding(24)
         }
-        .background(Color.koboldBackground)
+        .background(ZStack { Color.koboldBackground; LinearGradient(colors: [Color.koboldEmerald.opacity(0.015), .clear, Color.koboldGold.opacity(0.01)], startPoint: .topLeading, endPoint: .bottomTrailing) })
         .task { await store.fetchOllamaModels() }
     }
 
@@ -269,7 +269,7 @@ struct AgentsView: View {
             VStack(alignment: .leading, spacing: 0) {
                 HStack {
                     Label("Tool-Routing", systemImage: "arrow.triangle.swap")
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.system(size: 16.5, weight: .semibold))
                     Spacer()
                     Text("\(Self.toolRoutingDefaults.count) Tools")
                         .font(.caption).foregroundColor(.secondary)
@@ -280,18 +280,18 @@ struct AgentsView: View {
 
                 // Header
                 HStack(spacing: 0) {
-                    Text("Tool").font(.system(size: 10, weight: .bold)).frame(width: 140, alignment: .leading)
+                    Text("Tool").font(.system(size: 12.5, weight: .bold)).frame(width: 140, alignment: .leading)
                     // Agent emoji headers
                     HStack(spacing: 4) {
                         ForEach(store.configs, id: \.id) { config in
                             Text(config.emoji)
-                                .font(.system(size: 10))
+                                .font(.system(size: 12.5))
                                 .frame(width: 24)
                                 .help(config.displayName)
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    Text("Zweck").font(.system(size: 10, weight: .bold)).frame(width: 160, alignment: .leading)
+                    Text("Zweck").font(.system(size: 12.5, weight: .bold)).frame(width: 160, alignment: .leading)
                 }
                 .padding(.horizontal, 14).padding(.vertical, 6)
                 .background(Color.white.opacity(0.03))
@@ -301,11 +301,11 @@ struct AgentsView: View {
                         // Tool name + icon
                         HStack(spacing: 6) {
                             Image(systemName: item.icon)
-                                .font(.system(size: 10))
-                                .foregroundColor(.koboldCyan)
+                                .font(.system(size: 12.5))
+                                .foregroundColor(.koboldEmerald)
                                 .frame(width: 16)
                             Text(item.tool)
-                                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                .font(.system(size: 13.5, weight: .medium, design: .monospaced))
                         }
                         .frame(width: 140, alignment: .leading)
 
@@ -315,7 +315,7 @@ struct AgentsView: View {
                                 let enabled = isAgentEnabled(tool: item.tool, agent: config.id)
                                 Button(action: { toggleAgent(tool: item.tool, agent: config.id) }) {
                                     Text(config.emoji)
-                                        .font(.system(size: 12))
+                                        .font(.system(size: 14.5))
                                         .frame(width: 24, height: 24)
                                         .background(RoundedRectangle(cornerRadius: 6)
                                             .fill(enabled ? Color.koboldEmerald.opacity(0.25) : Color.white.opacity(0.04)))
@@ -332,7 +332,7 @@ struct AgentsView: View {
 
                         // Reason
                         Text(item.reason)
-                            .font(.system(size: 10))
+                            .font(.system(size: 12.5))
                             .foregroundColor(.secondary)
                             .frame(width: 160, alignment: .leading)
                     }
@@ -350,7 +350,7 @@ struct AgentsView: View {
             VStack(alignment: .leading, spacing: 0) {
                 HStack {
                     Label("Aktive Sessions", systemImage: "list.bullet.rectangle")
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.system(size: 16.5, weight: .semibold))
                     Spacer()
                     Text("\(viewModel.activeSessions.count) Sessions")
                         .font(.caption).foregroundColor(.secondary)
@@ -374,7 +374,7 @@ struct AgentsView: View {
                         Text("Status").frame(width: 90, alignment: .trailing)
                         Text("").frame(width: 30)
                     }
-                    .font(.system(size: 10, weight: .bold))
+                    .font(.system(size: 12.5, weight: .bold))
                     .foregroundColor(.secondary)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 6)
@@ -384,7 +384,7 @@ struct AgentsView: View {
                         HStack(spacing: 0) {
                             // Type badge
                             Text(session.parentAgentType.isEmpty ? "Agent" : "Sub")
-                                .font(.system(size: 9, weight: .bold))
+                                .font(.system(size: 11.5, weight: .bold))
                                 .foregroundColor(.white)
                                 .padding(.horizontal, 5).padding(.vertical, 2)
                                 .background(session.parentAgentType.isEmpty ? Color.koboldEmerald : Color.koboldGold)
@@ -392,20 +392,20 @@ struct AgentsView: View {
                                 .frame(width: 70, alignment: .leading)
 
                             Text(session.agentType)
-                                .font(.system(size: 11, weight: .medium))
+                                .font(.system(size: 13.5, weight: .medium))
                                 .frame(width: 80, alignment: .leading)
 
                             Text(session.prompt)
-                                .font(.system(size: 11))
+                                .font(.system(size: 13.5))
                                 .lineLimit(1)
                                 .frame(maxWidth: .infinity, alignment: .leading)
 
                             Text("\(session.stepCount)")
-                                .font(.system(size: 11, design: .monospaced))
+                                .font(.system(size: 13.5, design: .monospaced))
                                 .frame(width: 60, alignment: .trailing)
 
                             Text(session.tokensUsed > 0 ? "\(session.tokensUsed)" : "—")
-                                .font(.system(size: 11, design: .monospaced))
+                                .font(.system(size: 13.5, design: .monospaced))
                                 .foregroundColor(.secondary)
                                 .frame(width: 70, alignment: .trailing)
 
@@ -415,7 +415,7 @@ struct AgentsView: View {
                             if session.status == .running {
                                 Button(action: { viewModel.killSession(session.id) }) {
                                     Image(systemName: "stop.circle.fill")
-                                        .font(.system(size: 12))
+                                        .font(.system(size: 14.5))
                                         .foregroundColor(.orange)
                                 }
                                 .buttonStyle(.plain)
@@ -443,7 +443,7 @@ struct AgentsView: View {
                 .fill(statusColor(status))
                 .frame(width: 6, height: 6)
             Text(status.rawValue)
-                .font(.system(size: 10))
+                .font(.system(size: 12.5))
                 .foregroundColor(statusColor(status))
         }
     }
@@ -472,19 +472,19 @@ struct AgentActivityBanner: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(session.prompt)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: 13.5, weight: .medium))
                     .lineLimit(1)
                 HStack(spacing: 8) {
                     if !session.currentTool.isEmpty {
                         Label(session.currentTool, systemImage: "wrench.fill")
-                            .font(.system(size: 10))
+                            .font(.system(size: 12.5))
                             .foregroundColor(.koboldGold)
                     }
                     Label(session.elapsed, systemImage: "clock")
-                        .font(.system(size: 10))
+                        .font(.system(size: 12.5))
                         .foregroundColor(.secondary)
                     Label("\(session.stepCount) Schritte", systemImage: "arrow.triangle.2.circlepath")
-                        .font(.system(size: 10))
+                        .font(.system(size: 12.5))
                         .foregroundColor(.secondary)
                 }
             }
@@ -493,7 +493,7 @@ struct AgentActivityBanner: View {
 
             Button(action: onStop) {
                 Image(systemName: "stop.circle.fill")
-                    .font(.system(size: 16))
+                    .font(.system(size: 18.5))
                     .foregroundColor(.orange)
             }
             .buttonStyle(.plain)
@@ -556,7 +556,7 @@ struct AgentConfigCard: View {
         switch provider {
         case "openai":    return .green
         case "anthropic": return .orange
-        case "groq":      return .blue
+        case "groq":      return .koboldEmerald
         default:          return .gray
         }
     }
@@ -575,7 +575,7 @@ struct AgentConfigCard: View {
 
                         VStack(alignment: .leading, spacing: 2) {
                             Text(config.displayName)
-                                .font(.system(size: 14, weight: .semibold))
+                                .font(.system(size: 16.5, weight: .semibold))
                             Text(config.description)
                                 .font(.caption).foregroundColor(.secondary)
                                 .lineLimit(1)
@@ -587,9 +587,9 @@ struct AgentConfigCard: View {
                         if config.supportsVision {
                             HStack(spacing: 3) {
                                 Image(systemName: "eye.fill")
-                                    .font(.system(size: 10))
+                                    .font(.system(size: 12.5))
                                 Text("Vision")
-                                    .font(.system(size: 10, weight: .semibold))
+                                    .font(.system(size: 12.5, weight: .semibold))
                             }
                             .foregroundColor(.koboldEmerald)
                             .padding(.horizontal, 6).padding(.vertical, 3)
@@ -601,7 +601,7 @@ struct AgentConfigCard: View {
                         HStack(spacing: 4) {
                             if config.provider != "ollama" {
                                 Text(providerLabel(config.provider))
-                                    .font(.system(size: 9, weight: .bold))
+                                    .font(.system(size: 11.5, weight: .bold))
                                     .foregroundColor(.white)
                                     .padding(.horizontal, 5).padding(.vertical, 2)
                                     .background(providerColor(config.provider))
@@ -739,7 +739,7 @@ struct AgentConfigCard: View {
                                 .frame(width: 20)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text("Vision / Multimodal")
-                                    .font(.system(size: 13, weight: .medium))
+                                    .font(.system(size: 15.5, weight: .medium))
                                 Text("Aktiviert Bildanalyse — nutze ein Vision-Modell wie llava oder llama3.2-vision.")
                                     .font(.caption).foregroundColor(.secondary)
                             }
@@ -757,7 +757,7 @@ struct AgentConfigCard: View {
                             Label("System-Prompt", systemImage: "text.quote")
                                 .font(.caption.bold()).foregroundColor(.secondary)
                             TextEditor(text: $config.systemPrompt)
-                                .font(.system(size: 11))
+                                .font(.system(size: 13.5))
                                 .frame(minHeight: 60, maxHeight: 120)
                                 .padding(6)
                                 .background(Color.black.opacity(0.2))

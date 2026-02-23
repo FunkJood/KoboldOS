@@ -36,6 +36,13 @@ class RuntimeManager: ObservableObject {
         startHealthMonitor()
     }
 
+    /// Call on app termination to prevent timer leak
+    func cleanup() {
+        healthTimer?.invalidate()
+        healthTimer = nil
+        daemonTask?.cancel()
+    }
+
     var baseURL: String { "http://localhost:\(port)" }
 
     // MARK: - In-Process Daemon

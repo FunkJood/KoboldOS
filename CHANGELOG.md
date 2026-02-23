@@ -1,5 +1,55 @@
 # KoboldOS Changelog
 
+## Alpha v0.2.6 — 2026-02-23
+
+### Performance & Stability
+- **Context Window 8K → 150K**: Massiv erhöhte Agent-Kapazität, konfigurierbar bis 200K in Settings
+- **Agent-Limits konfigurierbar**: Researcher 50 Steps, Coder 40, Allgemein 25 — über Settings steuerbar
+- **Sub-Agent Concurrency**: Max parallel Sub-Agents (Standard 3), Timeout (Standard 5 Min) konfigurierbar
+- **Shell-Timeout**: Default 60s, max 300s, konfigurierbar in Settings
+- **Session-Switch optimiert**: 2-Phasen-Restore (clear → next run loop → restore), debounced saves
+- **RichTextView Caching**: @State-basiertes Caching für parseRichBlocks (kein Re-Parse bei jedem Render)
+- **CloverPatternBackground**: `.drawingGroup()` für GPU-beschleunigte Canvas-Darstellung
+- **ThinkingPanelBubble**: Doppelte onChange-Handler zusammengeführt
+- **Content Truncation erhöht**: Thoughts 2000 chars, Tool Results 8KB, Sub-Agent Results 4KB
+
+### UI Overhaul
+- **Alle Font-Sizes +1pt**: 470 Stellen in 19 Dateien — bessere Lesbarkeit
+- **Kleeblatt-Hintergrundmuster**: CloverPatternBackground in ContentArea
+- **GlobalHeaderBar**: Datum links, Uhr mittig, Wetter + aktive Agents + Notification-Bell rechts
+  - Auf allen Seiten sichtbar (außer Settings)
+  - Benachrichtigungs-Glocke von ChatView hierher verschoben
+- **Chat-Header verschlankt**: Name und Model-Badge zentriert, Tools-Unterschrift entfernt, Padding reduziert
+- **Agenten-Tab → Settings**: Sidebar-Tab entfernt, AgentsView jetzt unter Settings → "Agenten"
+- **"Agent" → "Persönlichkeit"**: Settings-Tab umbenannt (Soul.md, Personality.md, Kommunikation)
+- **Sidebar-Organisation**: Normale Chats als klappbare Sektion unter Aufgaben- und Workflow-Tabs
+- **Trash-Button**: Von Chat-Header in Sidebar "Gespräche" verschoben
+- **Online-Badge**: Von Chat-Header in GlobalHeaderBar verschoben
+
+### Workflow & Task Notifications
+- **Workflow-Sounds**: workflowStep (Purr), workflowDone (Hero), workflowFail (Sosumi)
+- **Deep-Link Notifications für Workflows**: Immer bei Completion/Failure, navigiert direkt zum Ergebnis-Chat
+- **Deep-Link Notifications für Tasks**: Immer bei Completion/Failure, navigiert direkt zum Task-Chat
+- **Active Sessions**: Bleiben 60 Sekunden nach Completion sichtbar (vorher sofort entfernt)
+
+### Security
+- **OAuth → UserDefaults**: Google OAuth und SoundCloud OAuth von Keychain auf UserDefaults migriert
+  - Behebt wiederholte macOS Keychain-Passwort-Abfragen bei unsigned Apps
+- **SecretsManagementView lazy-loaded**: Öffnet sich erst bei Bedarf (kein Keychain-Zugriff beim Tab-Wechsel)
+
+### Infrastructure
+- **MCP-Infrastruktur**: MCPClient, MCPConfigManager, MCPBridgeTool erstellt (noch nicht mit AgentLoop verdrahtet)
+- **TokenEstimator**: Heuristischer Token-Schätzer (3.5 chars/token)
+- **3-Stage Context Pruning**: Automatische Kontext-Komprimierung
+- **ArchivalMemory**: Langzeit-Archivierung von Kontext
+
+### Settings (neue Sektionen)
+- **Agent-Leistung**: Researcher/Coder/Allgemein Step-Limits, Shell-Timeout, Sub-Agent-Timeout, Max Sub-Agents
+- **Agenten**: Komplette AgentsView (Modell, Temperatur, System-Prompt, Vision pro Agent)
+- **Persönlichkeit**: Soul.md, Personality.md, Tonfall, Sprache, Ausführlichkeit (vorher "Agent")
+
+---
+
 ## Alpha v0.2.2 — 2026-02-22
 
 ### New Features (Session-Upgrade)

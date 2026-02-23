@@ -69,12 +69,14 @@ struct OnboardingWizardView: View {
                         handleNext()
                     }
                     .buttonStyle(.borderedProminent)
+                    .tint(.koboldEmerald)
                     .disabled(!isNextEnabled())
                 } else {
                     Button("Finish Setup") {
                         finishSetup()
                     }
                     .buttonStyle(.borderedProminent)
+                    .tint(.koboldEmerald)
                 }
             }
             .padding(.horizontal)
@@ -90,7 +92,7 @@ struct OnboardingWizardView: View {
         VStack(spacing: 20) {
             Image(systemName: "brain")
                 .font(.system(size: 60))
-                .foregroundColor(.koboldEmerald)
+                .foregroundStyle(LinearGradient(colors: [Color.koboldEmerald, Color.koboldGold], startPoint: .topLeading, endPoint: .bottomTrailing))
 
             Text("Welcome to KoboldOS")
                 .font(.title)
@@ -167,7 +169,7 @@ struct OnboardingWizardView: View {
             if dependencyCheckResults["claude"] ?? false {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("✓ Claude Code CLI is installed")
-                        .foregroundColor(.green)
+                        .foregroundColor(.koboldEmerald)
 
                     Text("Claude Code will be used automatically for coding tasks.")
                         .font(.caption)
@@ -218,7 +220,7 @@ struct OnboardingWizardView: View {
             if dependencyCheckResults["ollama"] ?? false {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("✓ Ollama is installed and running")
-                        .foregroundColor(.green)
+                        .foregroundColor(.koboldEmerald)
 
                     Text("Ollama will be used as the default backend for most tasks.")
                         .font(.caption)
@@ -267,13 +269,19 @@ struct OnboardingWizardView: View {
                 .multilineTextAlignment(.center)
                 .foregroundColor(.secondary)
 
-            GroupBox("API Keys (Optional)") {
+            FuturisticBox(icon: "key.fill", title: "API Keys (Optional)", accent: .koboldGold) {
                 VStack(alignment: .leading, spacing: 15) {
                     Text("Add API keys for additional capabilities:")
                         .font(.subheadline)
 
                     SecureField("API Key", text: $apiKey)
-                        .textFieldStyle(.roundedBorder)
+                        .textFieldStyle(.plain)
+                        .padding(.horizontal, 12).padding(.vertical, 9)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10)
+                                .fill(Color.white.opacity(0.08))
+                                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.koboldGold.opacity(0.2), lineWidth: 1))
+                        )
                         .overlay(
                             HStack {
                                 Spacer()
@@ -283,16 +291,16 @@ struct OnboardingWizardView: View {
                                 .buttonStyle(.borderless)
                                 .foregroundColor(.koboldEmerald)
                             }
+                            .padding(.trailing, 8)
                         )
 
                     Text("Supported services: OpenAI, Anthropic, etc.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
-                .padding()
             }
 
-            GroupBox("Default Model") {
+            FuturisticBox(icon: "cpu.fill", title: "Default Model", accent: .koboldEmerald) {
                 VStack(alignment: .leading, spacing: 15) {
                     Text("Select your preferred default model:")
                         .font(.subheadline)
@@ -308,7 +316,6 @@ struct OnboardingWizardView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
-                .padding()
             }
 
             Text("KoboldOS will use Claude Code for coding tasks and Ollama for other tasks.")
@@ -323,7 +330,7 @@ struct OnboardingWizardView: View {
         VStack(spacing: 20) {
             Image(systemName: "checkmark.circle.fill")
                 .font(.system(size: 60))
-                .foregroundColor(.green)
+                .foregroundStyle(LinearGradient(colors: [Color.koboldEmerald, Color.koboldGold], startPoint: .topLeading, endPoint: .bottomTrailing))
 
             Text("Setup Complete!")
                 .font(.title)
@@ -348,6 +355,7 @@ struct OnboardingWizardView: View {
             .padding()
             .background(Color.koboldPanel)
             .cornerRadius(12)
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(LinearGradient(colors: [Color.koboldEmerald.opacity(0.12), Color.koboldGold.opacity(0.08)], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 0.5))
 
             Text("Remember to keep your dependencies updated for the best experience.")
                 .font(.caption)
@@ -376,6 +384,7 @@ struct OnboardingWizardView: View {
         .padding()
         .background(Color.koboldSurface)
         .cornerRadius(12)
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(LinearGradient(colors: [Color.koboldEmerald.opacity(0.12), Color.koboldGold.opacity(0.08)], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 0.5))
     }
 
     private func checkDependencies() {

@@ -44,12 +44,12 @@ class ModelDownloadManager: ObservableObject {
 
     func sdModelDirectory() -> URL {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        return appSupport.appendingPathComponent("KoboldOS/models/sd")
+        return appSupport.appendingPathComponent("KoboldOS/sd-models")
     }
 
     func modelsRootDirectory() -> URL {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        return appSupport.appendingPathComponent("KoboldOS/models")
+        return appSupport.appendingPathComponent("KoboldOS/sd-models")
     }
 
     func openModelsFolder() {
@@ -123,7 +123,7 @@ class ModelDownloadManager: ObservableObject {
 
     // MARK: - SD Model Download (HuggingFace)
 
-    func downloadSDModel() {
+    func downloadSDModel(force: Bool = false) {
         guard !isDownloadingSD else { return }
         isDownloadingSD = true
         sdStatus = "Starte Download..."
@@ -133,6 +133,10 @@ class ModelDownloadManager: ObservableObject {
         Task {
             do {
                 let destDir = sdModelDirectory()
+                // On force re-download, remove existing files first
+                if force && FileManager.default.fileExists(atPath: destDir.path) {
+                    try? FileManager.default.removeItem(at: destDir)
+                }
                 try FileManager.default.createDirectory(at: destDir, withIntermediateDirectories: true)
 
                 // Download compiled CoreML model files from HuggingFace
@@ -157,8 +161,8 @@ class ModelDownloadManager: ObservableObject {
                     let dir = destFile.deletingLastPathComponent()
                     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
 
-                    // Skip if already exists
-                    if FileManager.default.fileExists(atPath: destFile.path) {
+                    // Skip if already exists (unless force)
+                    if !force && FileManager.default.fileExists(atPath: destFile.path) {
                         sdProgress = Double(index + 1) / Double(files.count)
                         continue
                     }

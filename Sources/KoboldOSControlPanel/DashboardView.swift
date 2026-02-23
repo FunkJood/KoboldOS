@@ -81,7 +81,6 @@ struct DashboardView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 20) {
-                dateWeatherBar
                 welcomeSection
                 dashboardToolbar
                 ProactiveSuggestionsBar(engine: proactiveEngine) { action in
@@ -97,7 +96,12 @@ struct DashboardView: View {
             .padding(24)
             .frame(maxWidth: .infinity)
         }
-        .background(Color.koboldBackground)
+        .background(
+            ZStack {
+                Color.koboldBackground
+                LinearGradient(colors: [Color.koboldEmerald.opacity(0.02), .clear, Color.koboldGold.opacity(0.015)], startPoint: .topLeading, endPoint: .bottomTrailing)
+            }
+        )
         .onAppear {
             Task { await viewModel.loadMetrics() }
             sysMonitor.update()
@@ -169,10 +173,10 @@ struct DashboardView: View {
         VStack(spacing: 6) {
             let userName = UserDefaults.standard.string(forKey: "kobold.profile.name") ?? ""
             Text("\(dailyGreetingPrefix)\(userName.isEmpty ? "!" : ", \(userName)!")")
-                .font(.system(size: 28, weight: .bold))
-                .foregroundColor(.primary)
+                .font(.system(size: 29, weight: .bold))
+                .foregroundStyle(LinearGradient(colors: [Color.koboldGold, Color.koboldEmerald], startPoint: .leading, endPoint: .trailing))
             Text(dailyGreeting)
-                .font(.system(size: 15, weight: .medium))
+                .font(.system(size: 17.5, weight: .medium))
                 .foregroundColor(.secondary)
         }
         .frame(maxWidth: .infinity)
@@ -195,7 +199,7 @@ struct DashboardView: View {
                             Text("CPU").font(.caption.bold())
                             Spacer()
                             Text(String(format: "%.1f%%", sysMonitor.cpuUsage))
-                                .font(.system(size: 12, weight: .bold, design: .monospaced))
+                                .font(.system(size: 14.5, weight: .bold, design: .monospaced))
                                 .foregroundColor(sysMonitor.cpuUsage > 80 ? .red : .primary)
                         }
                         GlassProgressBar(
@@ -210,17 +214,17 @@ struct DashboardView: View {
                     // RAM
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {
-                            Image(systemName: "memorychip.fill").font(.caption).foregroundColor(.blue)
+                            Image(systemName: "memorychip.fill").font(.caption).foregroundColor(.koboldEmerald)
                             Text("RAM").font(.caption.bold())
                             Spacer()
                             Text(String(format: "%.1f / %.0f GB", sysMonitor.ramUsedGB, sysMonitor.ramTotalGB))
-                                .font(.system(size: 12, weight: .bold, design: .monospaced))
+                                .font(.system(size: 14.5, weight: .bold, design: .monospaced))
                                 .foregroundColor(sysMonitor.ramUsedGB / sysMonitor.ramTotalGB > 0.85 ? .red : .primary)
                         }
                         GlassProgressBar(
                             value: sysMonitor.ramTotalGB > 0 ? sysMonitor.ramUsedGB / sysMonitor.ramTotalGB : 0,
                             color: sysMonitor.ramUsedGB / sysMonitor.ramTotalGB > 0.85 ? .red :
-                                   sysMonitor.ramUsedGB / sysMonitor.ramTotalGB > 0.65 ? .orange : .blue
+                                   sysMonitor.ramUsedGB / sysMonitor.ramTotalGB > 0.65 ? .orange : .koboldEmerald
                         )
                     }
                     .frame(maxWidth: .infinity)
@@ -234,7 +238,7 @@ struct DashboardView: View {
                             Text("Speicher").font(.caption.bold())
                             Spacer()
                             Text(String(format: "%.0f / %.0f GB", sysMonitor.diskTotalGB - sysMonitor.diskFreeGB, sysMonitor.diskTotalGB))
-                                .font(.system(size: 12, weight: .bold, design: .monospaced))
+                                .font(.system(size: 14.5, weight: .bold, design: .monospaced))
                                 .foregroundColor(sysMonitor.diskFreeGB < 20 ? .red : .primary)
                         }
                         GlassProgressBar(
@@ -246,6 +250,7 @@ struct DashboardView: View {
                 }
             }
         }
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(LinearGradient(colors: [Color.koboldEmerald.opacity(0.12), Color.koboldGold.opacity(0.08)], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 0.5))
     }
 
     // MARK: - Date & Weather Bar
@@ -262,31 +267,29 @@ struct DashboardView: View {
             // Datum links
             HStack(spacing: 8) {
                 Image(systemName: "calendar")
-                    .font(.system(size: 13))
+                    .font(.system(size: 15.5))
                     .foregroundColor(.koboldEmerald)
                 Text(formattedDate)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.system(size: 15.5, weight: .medium))
                     .foregroundColor(.primary)
             }
 
             Spacer()
 
-            // Wetter rechts (nur wenn API-Key vorhanden)
-            if !weatherManager.apiKey.isEmpty {
-                HStack(spacing: 8) {
-                    if weatherManager.isLoading {
-                        ProgressView().controlSize(.mini).scaleEffect(0.7)
-                    } else if let temp = weatherManager.temperature {
-                        Image(systemName: weatherManager.iconName)
-                            .font(.system(size: 13))
-                            .foregroundColor(.koboldGold)
-                        Text(String(format: "%.0f°C", temp))
-                            .font(.system(size: 13, weight: .semibold))
-                        if !weatherManager.cityName.isEmpty {
-                            Text(weatherManager.cityName)
-                                .font(.system(size: 11))
-                                .foregroundColor(.secondary)
-                        }
+            // Wetter rechts
+            HStack(spacing: 8) {
+                if weatherManager.isLoading {
+                    ProgressView().controlSize(.mini).scaleEffect(0.7)
+                } else if let temp = weatherManager.temperature {
+                    Image(systemName: weatherManager.iconName)
+                        .font(.system(size: 15.5))
+                        .foregroundColor(.koboldGold)
+                    Text(String(format: "%.0f°C", temp))
+                        .font(.system(size: 15.5, weight: .semibold))
+                    if !weatherManager.cityName.isEmpty {
+                        Text(weatherManager.cityName)
+                            .font(.system(size: 13.5))
+                            .foregroundColor(.secondary)
                     }
                 }
             }
@@ -299,6 +302,14 @@ struct DashboardView: View {
         }
         .padding(.horizontal, 4)
         .onAppear { weatherManager.fetchWeatherIfNeeded() }
+        .padding(.vertical, 10).padding(.horizontal, 14)
+        .background(
+            ZStack {
+                RoundedRectangle(cornerRadius: 12).fill(Color.koboldPanel)
+                RoundedRectangle(cornerRadius: 12).fill(LinearGradient(colors: [Color.koboldEmerald.opacity(0.04), .clear, Color.koboldGold.opacity(0.03)], startPoint: .leading, endPoint: .trailing))
+                RoundedRectangle(cornerRadius: 12).stroke(LinearGradient(colors: [Color.koboldEmerald.opacity(0.2), Color.koboldGold.opacity(0.15)], startPoint: .leading, endPoint: .trailing), lineWidth: 0.5)
+            }
+        )
     }
 
     // MARK: - Dashboard Toolbar (Period picker + actions, compact)
@@ -369,7 +380,7 @@ struct DashboardView: View {
                 title: "Laufzeit",
                 value: formatUptime(viewModel.metrics.uptimeSeconds),
                 icon: "clock.fill",
-                color: .blue
+                color: .koboldEmerald
             )
             Button(action: { if viewModel.metrics.errors > 0 { showErrorPopover.toggle() } }) {
                 MetricCard(
@@ -403,13 +414,14 @@ struct DashboardView: View {
                     GridItem(.flexible()), GridItem(.flexible())
                 ], spacing: 10) {
                     shortcutTile(title: "Chat", icon: "message.fill", color: .koboldEmerald, tab: .chat)
-                    shortcutTile(title: "Aufgaben", icon: "checklist", color: .blue, tab: .tasks)
-                    shortcutTile(title: "Gedächtnis", icon: "brain.filled.head.profile", color: .purple, tab: .memory)
+                    shortcutTile(title: "Aufgaben", icon: "checklist", color: .koboldGold, tab: .tasks)
+                    shortcutTile(title: "Gedächtnis", icon: "brain.filled.head.profile", color: .koboldEmerald, tab: .memory)
                     shortcutTile(title: "Workflows", icon: "point.3.connected.trianglepath.dotted", color: .koboldGold, tab: .workflows)
-                    shortcutTile(title: "Agenten", icon: "person.3.fill", color: .orange, tab: .agents)
+                    shortcutTile(title: "Agenten", icon: "person.3.fill", color: .koboldEmerald, tab: .settings)
                 }
             }
         }
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(LinearGradient(colors: [Color.koboldEmerald.opacity(0.12), Color.koboldGold.opacity(0.08)], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 0.5))
     }
 
     func shortcutTile(title: String, icon: String, color: Color, tab: SidebarTab) -> some View {
@@ -418,10 +430,10 @@ struct DashboardView: View {
         } label: {
             VStack(spacing: 6) {
                 Image(systemName: icon)
-                    .font(.system(size: 20))
+                    .font(.system(size: 21))
                     .foregroundColor(color)
                 Text(title)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: 13.5, weight: .medium))
                     .foregroundColor(.primary)
             }
             .frame(maxWidth: .infinity)
@@ -451,11 +463,11 @@ struct DashboardView: View {
                     Divider().frame(width: 1, height: 40).padding(.horizontal, 12)
                     statusColumn("Ø Latenz",
                                  value: String(format: "%.0f ms", viewModel.metrics.avgLatencyMs),
-                                 color: viewModel.metrics.avgLatencyMs > 5000 ? .red : .blue)
+                                 color: viewModel.metrics.avgLatencyMs > 5000 ? .red : .koboldEmerald)
                     Divider().frame(width: 1, height: 40).padding(.horizontal, 12)
                     statusColumn("Tokens",
                                  value: formatTokens(viewModel.metrics.tokensTotal),
-                                 color: .purple)
+                                 color: .koboldGold)
                 }
 
                 if viewModel.metrics.tokensTotal > 0 {
@@ -468,12 +480,13 @@ struct DashboardView: View {
                 }
             }
         }
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(LinearGradient(colors: [Color.koboldEmerald.opacity(0.12), Color.koboldGold.opacity(0.08)], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 0.5))
     }
 
     func statusColumn(_ label: String, value: String, color: Color) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(label).font(.caption).foregroundColor(.secondary)
-            Text(value).font(.system(size: 13, weight: .semibold)).foregroundColor(color).lineLimit(1)
+            Text(value).font(.system(size: 15.5, weight: .semibold)).foregroundColor(color).lineLimit(1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -495,7 +508,7 @@ struct DashboardView: View {
                                 .fill(traceColor(trace))
                                 .frame(width: 6, height: 6)
                             Text(trace)
-                                .font(.system(size: 12, design: .monospaced))
+                                .font(.system(size: 14.5, design: .monospaced))
                                 .foregroundColor(.primary)
                                 .lineLimit(1)
                         }
@@ -504,6 +517,7 @@ struct DashboardView: View {
                 }
             }
         }
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(LinearGradient(colors: [Color.koboldEmerald.opacity(0.12), Color.koboldGold.opacity(0.08)], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 0.5))
     }
 
     // MARK: - Helpers
@@ -553,13 +567,13 @@ struct ErrorListPopover: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 13))
+                    .font(.system(size: 15.5))
                     .foregroundColor(.red)
                 Text("Fehler-Log")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 15.5, weight: .semibold))
                 Spacer()
                 Text("\(viewModel.metrics.errors) Fehler")
-                    .font(.system(size: 11))
+                    .font(.system(size: 13.5))
                     .foregroundColor(.secondary)
             }
             .padding(.horizontal, 14).padding(.vertical, 10)
@@ -569,13 +583,13 @@ struct ErrorListPopover: View {
             if errorNotifications.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "checkmark.seal.fill")
-                        .font(.system(size: 24))
+                        .font(.system(size: 25))
                         .foregroundColor(.koboldEmerald.opacity(0.5))
                     Text("Keine Fehlerdetails verfügbar")
                         .font(.caption)
                         .foregroundColor(.secondary)
                     Text("Fehler werden ab dieser Sitzung protokolliert.")
-                        .font(.system(size: 10))
+                        .font(.system(size: 12.5))
                         .foregroundColor(.secondary.opacity(0.7))
                 }
                 .frame(maxWidth: .infinity)
@@ -586,19 +600,19 @@ struct ErrorListPopover: View {
                         ForEach(errorNotifications) { notif in
                             HStack(alignment: .top, spacing: 10) {
                                 Image(systemName: notif.icon)
-                                    .font(.system(size: 13))
+                                    .font(.system(size: 15.5))
                                     .foregroundColor(notif.color)
                                     .frame(width: 18)
                                 VStack(alignment: .leading, spacing: 3) {
                                     Text(notif.title)
-                                        .font(.system(size: 12, weight: .semibold))
+                                        .font(.system(size: 14.5, weight: .semibold))
                                         .foregroundColor(.primary)
                                     Text(notif.message)
-                                        .font(.system(size: 11, design: .monospaced))
+                                        .font(.system(size: 13.5, design: .monospaced))
                                         .foregroundColor(.secondary)
                                         .textSelection(.enabled)
                                     Text(notif.timestamp, style: .relative)
-                                        .font(.system(size: 9))
+                                        .font(.system(size: 11.5))
                                         .foregroundColor(.secondary.opacity(0.6))
                                 }
                                 Spacer()

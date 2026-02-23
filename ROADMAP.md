@@ -1,18 +1,23 @@
 # KoboldOS Roadmap
 
-## Alpha v0.2.2 (Aktuell)
+## Alpha v0.2.6 (Aktuell)
 
-### Session-Trennung & Task-System
-- Strikte Trennung: 3 separate Session-Speicher (Chat, Task, Workflow)
-- `ChatMode` Enum: Normal, Task, Workflow
-- Task-Bearbeitung (Edit, Toggle enabled/disabled)
-- Task-Chats in eigener Sidebar-Liste
-- Workflow-Chats in eigener Sidebar-Liste
-- Task Auto-Scheduler (Cron-basiert, alle 60s geprüft)
-- Notification-Navigation: Klick auf Benachrichtigung navigiert zum Chat/Task/Workflow
-- Bugfix: Fenster schließen = Minimize in Toolbar (nicht App beenden)
+### Performance & UI Overhaul
+- Context Window 150K (konfigurierbar bis 200K), Agent-Limits konfigurierbar
+- GlobalHeaderBar: Datum, Uhr (mittig), Wetter, aktive Agents, Benachrichtigungen
+- Chat-Header verschlankt: Name/Model zentriert, Tools-Zeile entfernt
+- Alle Fonts +1pt, Kleeblatt-Hintergrundmuster
+- Agenten-Tab aus Sidebar in Settings verschoben
+- Settings: "Persönlichkeit" (vorher "Agent"), neue "Agenten"-Sektion, "Agent-Leistung"
+- Session-Switch: 2-Phasen-Restore, debounced saves
+- RichTextView Caching, CloverPattern GPU-Rendering
+- OAuth → UserDefaults (kein Keychain-PW-Prompt mehr)
+- Workflow/Task Deep-Link Notifications + Sounds
+- Sidebar: Chats klappbar unter Aufgaben/Workflows
+- MCP-Infrastruktur erstellt (MCPClient, MCPConfigManager, MCPBridgeTool)
+- TokenEstimator, 3-Stage Context Pruning, ArchivalMemory
 
-### Bisherige Features
+### Bisherige Features (v0.1.1–v0.2.5)
 - Agent-gesteuerter Chat mit SSE-Streaming
 - Tool-System: Shell, File, Browser, Calendar, Contacts, HTTP, AppleScript
 - CoreMemory (Kurzzeit, Langzeit, Wissen)
@@ -24,18 +29,34 @@
 - Auto-Update via GitHub Releases
 - MacOS Menu Bar Integration
 - Web-Fernsteuerung
+- Strikte Session-Trennung (Chat/Task/Workflow)
+- Notification-Navigation mit Deep-Links
+
+---
+
+## v0.2.7 — Voice Chat & MCP Integration
+
+### Voice Chat (Prio 1)
+- **TTS-Lautsprecher-Button** im Chat: Text-to-Speech für Agent-Antworten
+- **Mikrofon-Eingabe**: Live-Audiogespräch (wie ChatGPT Voice Mode)
+- **Natürliche männliche Stimme**: Bestes verfügbares Vocal Model
+- **STT-Integration**: Whisper-basiert (STTManager bereits vorhanden)
+
+### MCP verdrahten (Prio 1)
+- **AgentLoop.setupTools() → MCPConfigManager.connectAllServers()**: MCP-Tools im Agent verfügbar
+- **MCP Settings-UI**: Server-Konfiguration unter Settings → Verbindungen
+
+### Weitere Tasks
+- TeamView: Unused vars bereinigen, Race Conditions fixen, Trigger-Stubs implementieren
+- Applikationen-Tab: Terminal/WebView/Programm-Runner in Sidebar
 
 ---
 
 ## v0.3.0 — Kontext-Intelligenz & Memory-Revolution
 
-### Kontext-Management (Prio 1)
-- **Kontext-Bewusstsein**: Agent ist sich IMMER über aktuelle Kontextgröße bewusst
-- **Kontextgröße einstellbar** in Settings (4K, 8K, 16K, 32K, 64K, 128K, 256K)
-- **Kontext-Komprimierung am Ende**: Wenn Kontext voll, automatisch:
-  1. Wichtigstes in Erinnerungen (CoreMemory) speichern
-  2. Stichpunkte/Zusammenfassung für neuen Kontext erstellen
-  3. Alten Kontext archivieren, neuen starten mit Zusammenfassung
+### Kontext-Management
+- ~~Kontextgröße einstellbar~~ ✅ (v0.2.6: bis 200K)
+- ~~Kontext-Komprimierung~~ ✅ (v0.2.6: 3-Stage Pruning + ArchivalMemory)
 - **Dynamische Konversations-Komprimierung**: Ältere Messages automatisch zusammenfassen
 
 ### Memory-Upgrade (Prio 1)
@@ -205,8 +226,15 @@
 |---------|---------|--------|
 | Session-Trennung | v0.2.2 | Done |
 | Task-System Upgrade | v0.2.2 | Done |
-| Window-Close Fix | v0.2.2 | Done |
-| Kontext-Komprimierung | v0.3.0 | Geplant |
+| Context 150K + konfigurierbar | v0.2.6 | Done |
+| GlobalHeaderBar | v0.2.6 | Done |
+| Performance (Caching, GPU, Debounce) | v0.2.6 | Done |
+| Workflow/Task Notifications | v0.2.6 | Done |
+| OAuth Keychain→UserDefaults | v0.2.6 | Done |
+| MCP Infrastruktur | v0.2.6 | Done |
+| Kontext-Komprimierung (3-Stage) | v0.2.6 | Done |
+| Voice Chat (TTS + Mikro) | v0.2.7 | Nächste |
+| MCP verdrahten | v0.2.7 | Nächste |
 | Agent Self-Managed Memory | v0.3.0 | Geplant |
 | FAISS Vector-DB | v0.3.0 | Geplant |
 | WebApp UI-Spiegelung | v0.3.0 | Geplant |
@@ -216,7 +244,7 @@
 | Composio/LangChain/CrewAI | v0.4.0 | Geplant |
 | Playwright Browser | v0.4.0 | Geplant |
 | REST API | v0.4.0 | Geplant |
-| Voice (Whisper + ElevenLabs) | v0.5.0 | Geplant |
+| Voice Wake Mode | v0.5.0 | Geplant |
 | Messaging (WhatsApp etc.) | v0.5.0 | Geplant |
 | Canvas/A2UI | v0.5.0 | Geplant |
 | iOS App | v0.6.0 | Geplant |

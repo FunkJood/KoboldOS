@@ -19,7 +19,15 @@ struct MainView: View {
                 Divider()
                 ContentAreaView(viewModel: viewModel, selectedTab: selectedTab, runtimeManager: runtimeManager)
             }
-            .background(Color.koboldBackground)
+            .background(
+                ZStack {
+                    Color.koboldBackground
+                    LinearGradient(
+                        colors: [Color.koboldEmerald.opacity(0.015), .clear, Color.koboldGold.opacity(0.01)],
+                        startPoint: .topLeading, endPoint: .bottomTrailing
+                    )
+                }
+            )
             .blur(radius: hasOnboarded ? 0 : 10)
             .disabled(!hasOnboarded)
 
@@ -72,7 +80,7 @@ struct SidebarView: View {
                 // Collapsed: only toggle button
                 Button(action: { withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { isCollapsed = false } }) {
                     Image(systemName: "sidebar.right")
-                        .font(.system(size: 16, weight: .medium))
+                        .font(.system(size: 18.5, weight: .medium))
                         .foregroundColor(.koboldEmerald)
                         .frame(width: 32, height: 32)
                         .background(Color.koboldSurface.opacity(0.6))
@@ -83,28 +91,18 @@ struct SidebarView: View {
                 .padding(.top, 12)
                 .padding(.bottom, 8)
             } else {
-                // Expanded: Logo with collapse button overlay
-                ZStack(alignment: .topTrailing) {
-                    KoboldOSSidebarLogo(userName: userName)
-                        .padding(.horizontal, 10)
-
-                    Button(action: { withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { isCollapsed = true } }) {
-                        Image(systemName: "sidebar.left")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(.koboldEmerald.opacity(0.7))
-                            .frame(width: 22, height: 22)
-                            .background(Color.koboldSurface.opacity(0.5))
-                            .cornerRadius(5)
+                // Expanded: Logo (klick = Sidebar einklappen)
+                KoboldOSSidebarLogo(userName: userName)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { isCollapsed = true }
                     }
-                    .buttonStyle(.plain)
-                    .help("Menü einklappen")
-                    .padding(.top, 4)
-                    .padding(.trailing, 14)
-                }
-                .padding(.top, 8)
-                .padding(.bottom, 6)
+                    .help("Sidebar einklappen")
+                    .padding(.horizontal, 10)
+                    .padding(.top, 8)
+                    .padding(.bottom, 6)
 
-                Divider().padding(.horizontal, 10)
+                Rectangle().fill(LinearGradient(colors: [.clear, Color.koboldEmerald.opacity(0.12), Color.koboldGold.opacity(0.08), .clear], startPoint: .leading, endPoint: .trailing)).frame(height: 0.5).padding(.horizontal, 10)
             }
 
             if !isCollapsed {
@@ -116,17 +114,21 @@ struct SidebarView: View {
                             sidebarButton(tab)
                         }
 
-                        Divider()
+                        Rectangle().fill(LinearGradient(colors: [.clear, Color.koboldEmerald.opacity(0.12), Color.koboldGold.opacity(0.08), .clear], startPoint: .leading, endPoint: .trailing)).frame(height: 0.5)
                             .padding(.vertical, 4)
                             .padding(.horizontal, 10)
 
                         // Context-sensitive list
                         if selectedTab == .workflows {
                             workflowSessionsList
-                            Divider().padding(.horizontal, 10).padding(.vertical, 4)
+                            Rectangle().fill(LinearGradient(colors: [.clear, Color.koboldEmerald.opacity(0.12), Color.koboldGold.opacity(0.08), .clear], startPoint: .leading, endPoint: .trailing)).frame(height: 0.5).padding(.horizontal, 10).padding(.vertical, 4)
                             projectsList
+                            Rectangle().fill(LinearGradient(colors: [.clear, Color.koboldEmerald.opacity(0.12), Color.koboldGold.opacity(0.08), .clear], startPoint: .leading, endPoint: .trailing)).frame(height: 0.5).padding(.horizontal, 10).padding(.vertical, 4)
+                            collapsibleChatsList
                         } else if selectedTab == .tasks {
                             tasksSidebarList
+                            Rectangle().fill(LinearGradient(colors: [.clear, Color.koboldEmerald.opacity(0.12), Color.koboldGold.opacity(0.08), .clear], startPoint: .leading, endPoint: .trailing)).frame(height: 0.5).padding(.horizontal, 10).padding(.vertical, 4)
+                            collapsibleChatsList
                         } else {
                             sessionsList
                         }
@@ -134,13 +136,15 @@ struct SidebarView: View {
                     .padding(.top, 6)
                 }
 
-                Divider().padding(.horizontal, 10)
+                Rectangle().fill(LinearGradient(colors: [.clear, Color.koboldEmerald.opacity(0.12), Color.koboldGold.opacity(0.08), .clear], startPoint: .leading, endPoint: .trailing)).frame(height: 0.5).padding(.horizontal, 10)
 
                 // FIXED BOTTOM: Daemon Status
                 StatusIndicatorView(
                     status: runtimeManager.healthStatus,
                     pid: runtimeManager.daemonPID,
-                    port: runtimeManager.port
+                    port: runtimeManager.port,
+                    onRestart: { runtimeManager.retryConnection() },
+                    onStop: { runtimeManager.stopDaemon() }
                 )
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
@@ -152,10 +156,18 @@ struct SidebarView: View {
                     ForEach(SidebarTab.allCases, id: \.self) { tab in
                         Button(action: { selectedTab = tab }) {
                             Image(systemName: iconForTab(tab))
-                                .font(.system(size: 14))
+                                .font(.system(size: 16.5))
                                 .foregroundColor(selectedTab == tab ? .koboldEmerald : .secondary)
                                 .frame(width: 32, height: 32)
-                                .background(selectedTab == tab ? Color.koboldSurface : Color.clear)
+                                .background(
+                                    Group {
+                                        if selectedTab == tab {
+                                            RoundedRectangle(cornerRadius: 6)
+                                                .fill(Color.koboldSurface)
+                                                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.koboldEmerald.opacity(0.2), lineWidth: 0.5))
+                                        }
+                                    }
+                                )
                                 .cornerRadius(6)
                         }
                         .buttonStyle(.plain)
@@ -166,7 +178,17 @@ struct SidebarView: View {
                 Spacer()
             }
         }
-        .background(Color.koboldPanel)
+        .background(
+            ZStack {
+                Color.koboldPanel
+                LinearGradient(
+                    colors: [Color.koboldEmerald.opacity(0.03), .clear, Color.koboldGold.opacity(0.02)],
+                    startPoint: .topLeading, endPoint: .bottomTrailing
+                )
+                // Subtle right-edge glow line
+                HStack { Spacer(); Rectangle().fill(LinearGradient(colors: [Color.koboldEmerald.opacity(0.15), Color.koboldGold.opacity(0.08)], startPoint: .top, endPoint: .bottom)).frame(width: 1) }
+            }
+        )
         .clipped()
     }
 
@@ -185,10 +207,10 @@ struct SidebarView: View {
             if viewModel.taskSessions.isEmpty {
                 HStack(spacing: 6) {
                     Image(systemName: "checklist")
-                        .font(.system(size: 10))
+                        .font(.system(size: 12.5))
                         .foregroundColor(.secondary)
                     Text("Noch keine Task-Chats")
-                        .font(.system(size: 10))
+                        .font(.system(size: 12.5))
                         .foregroundColor(.secondary)
                 }
                 .padding(.horizontal, 16)
@@ -211,6 +233,62 @@ struct SidebarView: View {
         }
     }
 
+    // MARK: - Collapsible Normal Chats (shown in Tasks/Workflows tabs)
+    @State private var showNormalChatsInSubTab: Bool = false
+
+    private var collapsibleChatsList: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button(action: {
+                withAnimation(.easeInOut(duration: 0.2)) { showNormalChatsInSubTab.toggle() }
+            }) {
+                HStack(spacing: 6) {
+                    Image(systemName: showNormalChatsInSubTab ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 10.5, weight: .bold))
+                        .foregroundColor(.secondary)
+                    Image(systemName: "bubble.left.and.bubble.right")
+                        .font(.system(size: 11.5))
+                        .foregroundColor(.koboldEmerald)
+                    Text("Chats")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Text("\(viewModel.sessions.count)")
+                        .font(.system(size: 10.5, weight: .medium, design: .rounded))
+                        .foregroundColor(.secondary)
+                        .padding(.horizontal, 5).padding(.vertical, 1)
+                        .background(Capsule().fill(Color.secondary.opacity(0.15)))
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 6)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if showNormalChatsInSubTab {
+                ForEach(viewModel.sessions.prefix(20)) { session in
+                    SidebarSessionRow(
+                        session: session,
+                        isCurrent: session.id == viewModel.currentSessionId,
+                        icon: "bubble.left",
+                        accentColor: .koboldEmerald
+                    ) {
+                        viewModel.switchToSession(session)
+                        selectedTab = .chat
+                    } onDelete: {
+                        viewModel.deleteSession(session)
+                    }
+                }
+                if viewModel.sessions.count > 20 {
+                    Text("+ \(viewModel.sessions.count - 20) weitere...")
+                        .font(.system(size: 11.5))
+                        .foregroundColor(.secondary)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 4)
+                }
+            }
+        }
+    }
+
     // MARK: - Workflow Sessions List
     private var workflowSessionsList: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -222,14 +300,14 @@ struct SidebarView: View {
                     .padding(.leading, 16)
                 Spacer()
                 Button(action: { viewModel.loadWorkflowDefinitions() }) {
-                    Image(systemName: "arrow.clockwise").font(.system(size: 9))
+                    Image(systemName: "arrow.clockwise").font(.system(size: 11.5))
                 }.buttonStyle(.plain).foregroundColor(.secondary)
                 Button(action: {
                     viewModel.openWorkflowChat(nodeName: "Neuer Workflow")
                     selectedTab = .workflows
                 }) {
                     Image(systemName: "plus")
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(size: 13.5, weight: .medium))
                         .foregroundColor(.koboldEmerald)
                 }
                 .buttonStyle(.plain)
@@ -241,10 +319,10 @@ struct SidebarView: View {
             if viewModel.workflowDefinitions.isEmpty && viewModel.workflowSessions.isEmpty {
                 HStack(spacing: 6) {
                     Image(systemName: "point.3.connected.trianglepath.dotted")
-                        .font(.system(size: 10))
+                        .font(.system(size: 12.5))
                         .foregroundColor(.secondary)
                     Text("Noch keine Workflows")
-                        .font(.system(size: 10))
+                        .font(.system(size: 12.5))
                         .foregroundColor(.secondary)
                 }
                 .padding(.horizontal, 16)
@@ -258,17 +336,17 @@ struct SidebarView: View {
                 }) {
                     HStack(spacing: 8) {
                         Image(systemName: "gearshape.2.fill")
-                            .font(.system(size: 10))
+                            .font(.system(size: 12.5))
                             .foregroundColor(.koboldGold)
                         VStack(alignment: .leading, spacing: 1) {
-                            Text(def.name).font(.system(size: 11, weight: .medium)).lineLimit(1)
+                            Text(def.name).font(.system(size: 13.5, weight: .medium)).lineLimit(1)
                             if !def.description.isEmpty {
-                                Text(def.description).font(.system(size: 9)).foregroundColor(.secondary).lineLimit(1)
+                                Text(def.description).font(.system(size: 11.5)).foregroundColor(.secondary).lineLimit(1)
                             }
                         }
                         Spacer()
                         Button(action: { viewModel.deleteWorkflowDefinition(def) }) {
-                            Image(systemName: "trash").font(.system(size: 9))
+                            Image(systemName: "trash").font(.system(size: 11.5))
                         }.buttonStyle(.plain).foregroundColor(.secondary.opacity(0.6))
                     }
                     .padding(.horizontal, 16)
@@ -281,7 +359,7 @@ struct SidebarView: View {
 
             // Workflow chats (sessions)
             if !viewModel.workflowSessions.isEmpty {
-                Divider().padding(.horizontal, 12).padding(.vertical, 4)
+                Rectangle().fill(LinearGradient(colors: [.clear, Color.koboldEmerald.opacity(0.12), Color.koboldGold.opacity(0.08), .clear], startPoint: .leading, endPoint: .trailing)).frame(height: 0.5).padding(.horizontal, 12).padding(.vertical, 4)
 
                 HStack {
                     Text("Workflow-Chats")
@@ -321,7 +399,7 @@ struct SidebarView: View {
                 Spacer()
                 Button(action: { viewModel.newProject() }) {
                     Image(systemName: "folder.badge.plus")
-                        .font(.system(size: 11))
+                        .font(.system(size: 13.5))
                         .foregroundColor(.koboldEmerald)
                 }
                 .buttonStyle(.plain)
@@ -344,18 +422,51 @@ struct SidebarView: View {
         }
     }
 
-    // MARK: - Sessions List
+    // MARK: - Sessions List (Topics + Date Groups — AgentZero-style)
+
+    @State private var sessionSearchText: String = ""
+    @State private var showNewTopicSheet: Bool = false
+    @State private var newTopicName: String = ""
+    @State private var newTopicColor: String = "#34d399"
+
     private var sessionsList: some View {
         VStack(alignment: .leading, spacing: 0) {
+            // Header
             HStack {
                 Text("Gespräche")
                     .font(.caption2.weight(.semibold))
                     .foregroundColor(.secondary)
                     .padding(.leading, 16)
                 Spacer()
+                Text("\(viewModel.sessions.count)")
+                    .font(.system(size: 11.5, weight: .medium, design: .rounded))
+                    .foregroundColor(.secondary.opacity(0.6))
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(Capsule().fill(Color.koboldSurface))
+
+                // New topic folder button
+                Button(action: { showNewTopicSheet = true }) {
+                    Image(systemName: "folder.badge.plus")
+                        .font(.system(size: 12.5))
+                        .foregroundColor(.koboldGold)
+                }
+                .buttonStyle(.plain)
+                .help("Neues Thema erstellen")
+
+                // Clear all chats
+                Button(action: { viewModel.clearChatHistory() }) {
+                    Image(systemName: "trash")
+                        .font(.system(size: 11.5))
+                        .foregroundColor(.secondary.opacity(0.5))
+                }
+                .buttonStyle(.plain)
+                .help("Verlauf leeren")
+
+                // New chat button
                 Button(action: { viewModel.newSession(); selectedTab = .chat }) {
                     Image(systemName: "square.and.pencil")
-                        .font(.system(size: 11))
+                        .font(.system(size: 13.5))
                         .foregroundColor(.koboldEmerald)
                 }
                 .buttonStyle(.plain)
@@ -364,18 +475,217 @@ struct SidebarView: View {
             }
             .padding(.vertical, 6)
 
-            ForEach(viewModel.sessions) { session in
-                SidebarSessionRow(
-                    session: session,
-                    isCurrent: session.id == viewModel.currentSessionId
-                ) {
-                    viewModel.switchToSession(session)
-                    selectedTab = .chat
-                } onDelete: {
-                    viewModel.deleteSession(session)
+            // Search
+            if viewModel.sessions.count > 4 {
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 11.5))
+                        .foregroundColor(.secondary)
+                    TextField("Suchen...", text: $sessionSearchText)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 12.5))
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(Color.koboldSurface.opacity(0.6))
+                .cornerRadius(6)
+                .padding(.horizontal, 12)
+                .padding(.bottom, 6)
+            }
+
+            // Topic folders
+            ForEach(viewModel.topics) { topic in
+                SidebarTopicFolder(
+                    topic: topic,
+                    sessions: filteredSessions.filter { $0.topicId == topic.id },
+                    currentSessionId: viewModel.currentSessionId,
+                    isStreaming: viewModel.agentLoading,
+                    onToggle: { viewModel.toggleTopicExpanded(topic) },
+                    onNewChat: {
+                        viewModel.newSession(topicId: topic.id)
+                        selectedTab = .chat
+                    },
+                    onDeleteTopic: {
+                        withAnimation(.easeOut(duration: 0.25)) { viewModel.deleteTopic(topic) }
+                    },
+                    onEditTopic: { updated in
+                        viewModel.updateTopic(updated)
+                    },
+                    onSelectSession: { session in
+                        viewModel.switchToSession(session)
+                        selectedTab = .chat
+                    },
+                    onDeleteSession: { session in
+                        withAnimation(.easeOut(duration: 0.25)) { viewModel.deleteSession(session) }
+                    },
+                    onRemoveFromTopic: { session in
+                        viewModel.assignSessionToTopic(sessionId: session.id, topicId: nil)
+                    }
+                )
+            }
+
+            // Ungrouped sessions (no topic) — grouped by date
+            let ungrouped = filteredSessions.filter { $0.topicId == nil }
+            if !ungrouped.isEmpty {
+                let dateGroups = groupByDate(ungrouped)
+                ForEach(dateGroups, id: \.label) { group in
+                    SessionGroupHeader(label: group.label)
+                    ForEach(group.sessions) { session in
+                        SidebarSessionRow(
+                            session: session,
+                            isCurrent: session.id == viewModel.currentSessionId,
+                            isStreaming: session.id == viewModel.currentSessionId && viewModel.agentLoading,
+                            topicColor: nil
+                        ) {
+                            viewModel.switchToSession(session)
+                            selectedTab = .chat
+                        } onDelete: {
+                            withAnimation(.easeOut(duration: 0.25)) { viewModel.deleteSession(session) }
+                        }
+                        .contextMenu {
+                            if !viewModel.topics.isEmpty {
+                                Menu("Thema zuweisen") {
+                                    ForEach(viewModel.topics) { topic in
+                                        Button(action: { viewModel.assignSessionToTopic(sessionId: session.id, topicId: topic.id) }) {
+                                            HStack {
+                                                Circle().fill(topic.swiftUIColor).frame(width: 8, height: 8)
+                                                Text(topic.name)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            Button(role: .destructive, action: { viewModel.deleteSession(session) }) {
+                                Label("Löschen", systemImage: "trash")
+                            }
+                        }
+                        .transition(.asymmetric(
+                            insertion: .move(edge: .top).combined(with: .opacity),
+                            removal: .move(edge: .trailing).combined(with: .opacity)
+                        ))
+                    }
                 }
             }
+
+            if viewModel.sessions.isEmpty && viewModel.topics.isEmpty {
+                HStack(spacing: 6) {
+                    Image(systemName: "bubble.left.and.bubble.right")
+                        .font(.system(size: 12.5))
+                        .foregroundColor(.secondary.opacity(0.5))
+                    Text("Noch keine Gespräche")
+                        .font(.system(size: 12.5))
+                        .foregroundColor(.secondary.opacity(0.5))
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+            }
         }
+        .popover(isPresented: $showNewTopicSheet, arrowEdge: .trailing) {
+            newTopicPopover
+        }
+    }
+
+    // MARK: - New Topic Popover
+
+    private var newTopicPopover: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Neues Thema")
+                .font(.system(size: 14.5, weight: .semibold))
+                .foregroundColor(.primary)
+
+            TextField("Name...", text: $newTopicName)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 13.5))
+
+            // Color picker
+            HStack(spacing: 6) {
+                ForEach(ChatTopic.defaultColors, id: \.self) { color in
+                    Circle()
+                        .fill(Color(hex: color))
+                        .frame(width: 18, height: 18)
+                        .overlay(
+                            Circle().stroke(Color.white, lineWidth: newTopicColor == color ? 2 : 0)
+                        )
+                        .scaleEffect(newTopicColor == color ? 1.15 : 1.0)
+                        .animation(.spring(response: 0.2), value: newTopicColor)
+                        .onTapGesture { newTopicColor = color }
+                }
+            }
+
+            HStack {
+                Spacer()
+                Button("Abbrechen") {
+                    showNewTopicSheet = false
+                    newTopicName = ""
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(.secondary)
+
+                Button("Erstellen") {
+                    let name = newTopicName.trimmingCharacters(in: .whitespaces)
+                    if !name.isEmpty {
+                        viewModel.createTopic(name: name, color: newTopicColor)
+                    }
+                    showNewTopicSheet = false
+                    newTopicName = ""
+                    newTopicColor = "#34d399"
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.koboldEmerald)
+                .disabled(newTopicName.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+        }
+        .padding(16)
+        .frame(width: 280)
+    }
+
+    // MARK: - Helpers
+
+    private var filteredSessions: [ChatSession] {
+        if sessionSearchText.isEmpty {
+            return viewModel.sessions.sorted { $0.createdAt > $1.createdAt }
+        }
+        let q = sessionSearchText.lowercased()
+        return viewModel.sessions
+            .filter { $0.title.lowercased().contains(q) }
+            .sorted { $0.createdAt > $1.createdAt }
+    }
+
+    private struct SessionGroup: Identifiable {
+        let label: String
+        let sessions: [ChatSession]
+        var id: String { label }
+    }
+
+    private func groupByDate(_ sessions: [ChatSession]) -> [SessionGroup] {
+        let calendar = Calendar.current
+        let now = Date()
+        let sorted = sessions.sorted { $0.createdAt > $1.createdAt }
+
+        var today: [ChatSession] = []
+        var yesterday: [ChatSession] = []
+        var thisWeek: [ChatSession] = []
+        var older: [ChatSession] = []
+
+        for session in sorted {
+            if calendar.isDateInToday(session.createdAt) {
+                today.append(session)
+            } else if calendar.isDateInYesterday(session.createdAt) {
+                yesterday.append(session)
+            } else if let weekAgo = calendar.date(byAdding: .day, value: -7, to: now),
+                      session.createdAt >= weekAgo {
+                thisWeek.append(session)
+            } else {
+                older.append(session)
+            }
+        }
+
+        var groups: [SessionGroup] = []
+        if !today.isEmpty     { groups.append(SessionGroup(label: "Heute", sessions: today)) }
+        if !yesterday.isEmpty { groups.append(SessionGroup(label: "Gestern", sessions: yesterday)) }
+        if !thisWeek.isEmpty  { groups.append(SessionGroup(label: "Letzte 7 Tage", sessions: thisWeek)) }
+        if !older.isEmpty     { groups.append(SessionGroup(label: "Älter", sessions: older)) }
+        return groups
     }
 
     func sidebarButton(_ tab: SidebarTab) -> some View {
@@ -391,7 +701,7 @@ struct SidebarView: View {
                 // Beta badge for Team tab
                 if tab == .workflows {
                     Text("Beta")
-                        .font(.system(size: 9, weight: .bold))
+                        .font(.system(size: 11.5, weight: .bold))
                         .foregroundColor(.koboldGold)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 2)
@@ -400,7 +710,22 @@ struct SidebarView: View {
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
-            .background(selectedTab == tab ? Color.koboldSurface : Color.clear)
+            .background(
+                Group {
+                    if selectedTab == tab {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.koboldSurface)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(LinearGradient(colors: [Color.koboldEmerald.opacity(0.08), Color.koboldGold.opacity(0.04)], startPoint: .leading, endPoint: .trailing))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(LinearGradient(colors: [Color.koboldEmerald.opacity(0.2), Color.koboldGold.opacity(0.1)], startPoint: .leading, endPoint: .trailing), lineWidth: 0.5)
+                            )
+                    }
+                }
+            )
             .cornerRadius(8)
         }
         .buttonStyle(.plain)
@@ -412,7 +737,6 @@ struct SidebarView: View {
         case .dashboard:  return l10n.language.dashboard
         case .memory:     return "Gedächtnis"
         case .tasks:      return l10n.language.tasks
-        case .agents:     return l10n.language.agents
         case .workflows:  return l10n.language.team
         case .settings:   return l10n.language.settings
         }
@@ -424,9 +748,392 @@ struct SidebarView: View {
         case .dashboard:  return "chart.bar.fill"
         case .memory:     return "brain.filled.head.profile"
         case .tasks:      return "checklist"
-        case .agents:     return "person.3.fill"
         case .workflows:  return "point.3.connected.trianglepath.dotted"
         case .settings:   return "gearshape.fill"
+        }
+    }
+}
+
+// MARK: - SessionGroupHeader
+
+struct SessionGroupHeader: View {
+    let label: String
+    var body: some View {
+        HStack(spacing: 6) {
+            Text(label.uppercased())
+                .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                .foregroundColor(.secondary.opacity(0.5))
+                .tracking(0.8)
+            Rectangle()
+                .fill(LinearGradient(colors: [Color.secondary.opacity(0.15), .clear], startPoint: .leading, endPoint: .trailing))
+                .frame(height: 0.5)
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 10)
+        .padding(.bottom, 4)
+    }
+}
+
+// MARK: - SidebarTopicFolder (AgentZero-style project folder)
+
+struct SidebarTopicFolder: View {
+    let topic: ChatTopic
+    let sessions: [ChatSession]
+    let currentSessionId: UUID
+    let isStreaming: Bool
+    let onToggle: () -> Void
+    let onNewChat: () -> Void
+    let onDeleteTopic: () -> Void
+    let onEditTopic: (ChatTopic) -> Void
+    let onSelectSession: (ChatSession) -> Void
+    let onDeleteSession: (ChatSession) -> Void
+    let onRemoveFromTopic: (ChatSession) -> Void
+
+    @State private var isHovered: Bool = false
+    @State private var showEditor: Bool = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Folder header
+            HStack(spacing: 6) {
+                Button(action: onToggle) {
+                    HStack(spacing: 6) {
+                        Image(systemName: topic.isExpanded ? "folder.fill" : "folder")
+                            .font(.system(size: 12.5))
+                            .foregroundColor(topic.swiftUIColor)
+
+                        Text(topic.name)
+                            .font(.system(size: 13.5, weight: .semibold))
+                            .foregroundColor(.primary.opacity(0.9))
+                            .lineLimit(1)
+
+                        Text("\(sessions.count)")
+                            .font(.system(size: 10.5, weight: .medium, design: .rounded))
+                            .foregroundColor(topic.swiftUIColor.opacity(0.8))
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background(Capsule().fill(topic.swiftUIColor.opacity(0.12)))
+
+                        Spacer()
+
+                        Image(systemName: topic.isExpanded ? "chevron.down" : "chevron.right")
+                            .font(.system(size: 10.5, weight: .medium))
+                            .foregroundColor(.secondary.opacity(0.5))
+                    }
+                }
+                .buttonStyle(.plain)
+
+                if isHovered {
+                    // Edit button
+                    Button(action: { showEditor = true }) {
+                        Image(systemName: "slider.horizontal.3")
+                            .font(.system(size: 10.5, weight: .medium))
+                            .foregroundColor(.secondary.opacity(0.7))
+                            .frame(width: 18, height: 18)
+                            .background(Circle().fill(Color.koboldSurface.opacity(0.5)))
+                    }
+                    .buttonStyle(.plain)
+                    .transition(.scale.combined(with: .opacity))
+                    .help("Thema bearbeiten")
+
+                    // New chat in topic
+                    Button(action: onNewChat) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 10.5, weight: .medium))
+                            .foregroundColor(topic.swiftUIColor)
+                            .frame(width: 18, height: 18)
+                            .background(Circle().fill(topic.swiftUIColor.opacity(0.1)))
+                    }
+                    .buttonStyle(.plain)
+                    .transition(.scale.combined(with: .opacity))
+                    .help("Neuer Chat in \(topic.name)")
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(isHovered ? Color.koboldSurface.opacity(0.4) : .clear)
+            )
+            .padding(.horizontal, 4)
+            .onHover { isHovered = $0 }
+            .animation(.easeOut(duration: 0.15), value: isHovered)
+            .contextMenu {
+                Button(action: { showEditor = true }) {
+                    Label("Bearbeiten", systemImage: "pencil")
+                }
+                Button(action: onNewChat) {
+                    Label("Neuer Chat", systemImage: "plus.message")
+                }
+                Divider()
+                Button(role: .destructive, action: onDeleteTopic) {
+                    Label("Thema löschen", systemImage: "trash")
+                }
+            }
+
+            // Project path hint (when collapsed, show path if set)
+            if !topic.isExpanded && !topic.projectPath.isEmpty {
+                HStack(spacing: 4) {
+                    Image(systemName: "folder.badge.gearshape")
+                        .font(.system(size: 10.5))
+                        .foregroundColor(.secondary.opacity(0.4))
+                    Text(topic.displayPath)
+                        .font(.system(size: 10.5))
+                        .foregroundColor(.secondary.opacity(0.4))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                .padding(.horizontal, 18)
+                .padding(.bottom, 2)
+            }
+
+            // Sessions inside folder
+            if topic.isExpanded {
+                ForEach(sessions.sorted { $0.createdAt > $1.createdAt }) { session in
+                    SidebarSessionRow(
+                        session: session,
+                        isCurrent: session.id == currentSessionId,
+                        isStreaming: session.id == currentSessionId && isStreaming,
+                        topicColor: topic.swiftUIColor
+                    ) {
+                        onSelectSession(session)
+                    } onDelete: {
+                        onDeleteSession(session)
+                    }
+                    .padding(.leading, 10)
+                    .contextMenu {
+                        Button(action: { onRemoveFromTopic(session) }) {
+                            Label("Aus Thema entfernen", systemImage: "folder.badge.minus")
+                        }
+                        Button(role: .destructive, action: { onDeleteSession(session) }) {
+                            Label("Löschen", systemImage: "trash")
+                        }
+                    }
+                    .transition(.asymmetric(
+                        insertion: .move(edge: .top).combined(with: .opacity),
+                        removal: .move(edge: .trailing).combined(with: .opacity)
+                    ))
+                }
+
+                if sessions.isEmpty {
+                    Text("Keine Chats")
+                        .font(.system(size: 11.5))
+                        .foregroundColor(.secondary.opacity(0.4))
+                        .padding(.leading, 36)
+                        .padding(.vertical, 3)
+                }
+            }
+
+            // Subtle bottom accent line
+            Rectangle()
+                .fill(topic.swiftUIColor.opacity(0.08))
+                .frame(height: 0.5)
+                .padding(.horizontal, 16)
+                .padding(.top, 2)
+        }
+        .padding(.top, 4)
+        .sheet(isPresented: $showEditor) {
+            TopicEditorSheet(topic: topic, onSave: onEditTopic)
+        }
+    }
+}
+
+// MARK: - TopicEditorSheet (full topic settings: name, color, project folder, instructions, memory)
+
+struct TopicEditorSheet: View {
+    let topic: ChatTopic
+    let onSave: (ChatTopic) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var editName: String = ""
+    @State private var editColor: String = ""
+    @State private var editInstructions: String = ""
+    @State private var editProjectPath: String = ""
+    @State private var editUseOwnMemory: Bool = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Header
+            HStack {
+                Circle().fill(Color(hex: editColor)).frame(width: 14, height: 14)
+                Text("Thema bearbeiten")
+                    .font(.system(size: 16.5, weight: .bold))
+                Spacer()
+                Button(action: { dismiss() }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 20))
+                        .foregroundColor(.secondary.opacity(0.5))
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 20)
+            .padding(.bottom, 12)
+
+            Divider().padding(.horizontal, 16)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    // Name
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label("Name", systemImage: "tag")
+                            .font(.system(size: 13.5, weight: .semibold))
+                            .foregroundColor(.secondary)
+                        TextField("Themenname...", text: $editName)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(size: 14.5))
+                    }
+
+                    // Color
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label("Farbe", systemImage: "paintpalette")
+                            .font(.system(size: 13.5, weight: .semibold))
+                            .foregroundColor(.secondary)
+                        HStack(spacing: 8) {
+                            ForEach(ChatTopic.defaultColors, id: \.self) { color in
+                                Circle()
+                                    .fill(Color(hex: color))
+                                    .frame(width: 24, height: 24)
+                                    .overlay(
+                                        Circle().stroke(Color.white, lineWidth: editColor == color ? 2.5 : 0)
+                                    )
+                                    .shadow(color: editColor == color ? Color(hex: color).opacity(0.5) : .clear, radius: 4)
+                                    .scaleEffect(editColor == color ? 1.15 : 1.0)
+                                    .animation(.spring(response: 0.25), value: editColor)
+                                    .onTapGesture { editColor = color }
+                            }
+                        }
+                    }
+
+                    // Project folder
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label("Projektordner", systemImage: "folder.badge.gearshape")
+                            .font(.system(size: 13.5, weight: .semibold))
+                            .foregroundColor(.secondary)
+                        Text("Ordner auf deinem Mac den der Agent als Arbeitsverzeichnis nutzt.")
+                            .font(.system(size: 12.5))
+                            .foregroundColor(.secondary.opacity(0.6))
+                        HStack(spacing: 8) {
+                            TextField("~/Projects/MeinProjekt", text: $editProjectPath)
+                                .textFieldStyle(.roundedBorder)
+                                .font(.system(size: 13.5, design: .monospaced))
+                            Button("Wählen...") {
+                                let panel = NSOpenPanel()
+                                panel.canChooseDirectories = true
+                                panel.canChooseFiles = false
+                                panel.allowsMultipleSelection = false
+                                panel.message = "Projektordner für \"\(editName)\" wählen"
+                                panel.prompt = "Auswählen"
+                                if panel.runModal() == .OK, let url = panel.url {
+                                    editProjectPath = url.path
+                                }
+                            }
+                            .buttonStyle(.bordered)
+                            if !editProjectPath.isEmpty {
+                                Button(action: { editProjectPath = "" }) {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .foregroundColor(.secondary.opacity(0.5))
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        if !editProjectPath.isEmpty {
+                            let exists = FileManager.default.fileExists(atPath: editProjectPath)
+                            HStack(spacing: 4) {
+                                Image(systemName: exists ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                                    .font(.system(size: 11.5))
+                                    .foregroundColor(exists ? .green : .orange)
+                                Text(exists ? "Ordner existiert" : "Ordner nicht gefunden")
+                                    .font(.system(size: 11.5))
+                                    .foregroundColor(exists ? .green : .orange)
+                            }
+                        }
+                    }
+
+                    // Instructions
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label("Anweisungen", systemImage: "text.document")
+                            .font(.system(size: 13.5, weight: .semibold))
+                            .foregroundColor(.secondary)
+                        Text("Spezifische Anweisungen die bei jedem Chat in diesem Thema an den Agenten gesendet werden. Z.B. Coding-Style, Kontext, Regeln.")
+                            .font(.system(size: 12.5))
+                            .foregroundColor(.secondary.opacity(0.6))
+                        TextEditor(text: $editInstructions)
+                            .font(.system(size: 13.5, design: .monospaced))
+                            .frame(minHeight: 150, maxHeight: 300)
+                            .padding(4)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(Color.koboldSurface)
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(Color.secondary.opacity(0.2), lineWidth: 0.5)
+                            )
+                        HStack {
+                            Spacer()
+                            Text("\(editInstructions.count) Zeichen")
+                                .font(.system(size: 11.5))
+                                .foregroundColor(.secondary.opacity(0.5))
+                        }
+                    }
+
+                    // Memory isolation
+                    VStack(alignment: .leading, spacing: 6) {
+                        Toggle(isOn: $editUseOwnMemory) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Label("Eigenes Gedächtnis", systemImage: "brain.head.profile")
+                                    .font(.system(size: 13.5, weight: .semibold))
+                                Text("Wenn aktiv, hat dieses Thema ein isoliertes Gedächtnis. Der Agent speichert und liest Erinnerungen nur für dieses Thema.")
+                                    .font(.system(size: 12.5))
+                                    .foregroundColor(.secondary.opacity(0.6))
+                            }
+                        }
+                        .toggleStyle(.switch)
+                        .tint(.koboldEmerald)
+                    }
+                }
+                .padding(20)
+            }
+
+            Divider().padding(.horizontal, 16)
+
+            // Footer buttons
+            HStack {
+                // Info: created date
+                Text("Erstellt: \(topic.createdAt.formatted(date: .abbreviated, time: .shortened))")
+                    .font(.system(size: 11.5))
+                    .foregroundColor(.secondary.opacity(0.5))
+                Spacer()
+                Button("Abbrechen") { dismiss() }
+                    .keyboardShortcut(.escape)
+                    .buttonStyle(.plain)
+                    .foregroundColor(.secondary)
+                Button("Speichern") {
+                    var updated = topic
+                    updated.name = editName.trimmingCharacters(in: .whitespaces).isEmpty ? topic.name : editName.trimmingCharacters(in: .whitespaces)
+                    updated.color = editColor
+                    updated.instructions = editInstructions
+                    updated.projectPath = editProjectPath
+                    updated.useOwnMemory = editUseOwnMemory
+                    onSave(updated)
+                    dismiss()
+                }
+                .keyboardShortcut(.return)
+                .buttonStyle(.borderedProminent)
+                .tint(.koboldEmerald)
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
+        }
+        .frame(width: 540, height: 620)
+        .background(Color.koboldBackground)
+        .onAppear {
+            editName = topic.name
+            editColor = topic.color
+            editInstructions = topic.instructions
+            editProjectPath = topic.projectPath
+            editUseOwnMemory = topic.useOwnMemory
         }
     }
 }
@@ -438,15 +1145,24 @@ struct SidebarSessionRow: View {
     let isCurrent: Bool
     var icon: String = "message"
     var accentColor: Color = .koboldEmerald
+    var isStreaming: Bool = false
+    var topicColor: Color? = nil
     let onTap: () -> Void
     let onDelete: () -> Void
 
+    @State private var isHovered: Bool = false
+    @State private var pulseScale: CGFloat = 1.0
+
+    private var effectiveAccent: Color { topicColor ?? accentColor }
+
     init(session: ChatSession, isCurrent: Bool, icon: String = "message", accentColor: Color = .koboldEmerald,
-         onTap: @escaping () -> Void, onDelete: @escaping () -> Void) {
+         isStreaming: Bool = false, topicColor: Color? = nil, onTap: @escaping () -> Void, onDelete: @escaping () -> Void) {
         self.session = session
         self.isCurrent = isCurrent
         self.icon = icon
         self.accentColor = accentColor
+        self.isStreaming = isStreaming
+        self.topicColor = topicColor
         self.onTap = onTap
         self.onDelete = onDelete
     }
@@ -454,46 +1170,86 @@ struct SidebarSessionRow: View {
     var body: some View {
         HStack(spacing: 0) {
             Button(action: onTap) {
-                HStack(spacing: 6) {
+                HStack(spacing: 8) {
+                    // Status indicator dot (AgentZero-style)
                     ZStack {
-                        Image(systemName: icon)
-                            .font(.system(size: 9))
-                            .foregroundColor(isCurrent ? accentColor : .secondary)
+                        Circle()
+                            .fill(isCurrent ? effectiveAccent : Color.secondary.opacity(0.3))
+                            .frame(width: 7, height: 7)
+                        if isStreaming {
+                            Circle()
+                                .fill(effectiveAccent.opacity(0.4))
+                                .frame(width: 7, height: 7)
+                                .scaleEffect(pulseScale)
+                                .opacity(2.0 - Double(pulseScale))
+                        }
                         if session.hasUnread && !isCurrent {
                             Circle()
                                 .fill(Color.blue)
-                                .frame(width: 6, height: 6)
-                                .offset(x: 6, y: -5)
+                                .frame(width: 7, height: 7)
                         }
                     }
+
                     VStack(alignment: .leading, spacing: 1) {
                         Text(session.title)
-                            .font(.system(size: 11, weight: isCurrent || session.hasUnread ? .semibold : .regular))
-                            .foregroundColor(isCurrent ? accentColor : session.hasUnread ? .primary : .primary)
+                            .font(.system(size: 13.5, weight: isCurrent || session.hasUnread ? .semibold : .regular))
+                            .foregroundColor(isCurrent ? .primary : .primary.opacity(0.85))
                             .lineLimit(1)
                         Text(session.formattedDate)
-                            .font(.system(size: 9))
-                            .foregroundColor(.secondary)
+                            .font(.system(size: 11.5))
+                            .foregroundColor(.secondary.opacity(0.7))
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 5)
-                .background(isCurrent ? Color.koboldSurface : Color.clear)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(
+                    ZStack {
+                        if isCurrent {
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(Color.koboldSurface)
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(LinearGradient(colors: [effectiveAccent.opacity(0.1), effectiveAccent.opacity(0.02)], startPoint: .leading, endPoint: .trailing))
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(effectiveAccent.opacity(isStreaming ? 0.35 : 0.18), lineWidth: isStreaming ? 1.0 : 0.5)
+                        } else if isHovered {
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(Color.koboldSurface.opacity(0.5))
+                        }
+                    }
+                )
             }
             .buttonStyle(.plain)
 
+            // Delete button — visible on hover or current
             Button(action: onDelete) {
                 Image(systemName: "xmark")
-                    .font(.system(size: 9))
-                    .foregroundColor(.secondary.opacity(0.6))
-                    .padding(.trailing, 8)
+                    .font(.system(size: 10.5))
+                    .foregroundColor(.secondary.opacity(0.5))
+                    .frame(width: 20, height: 20)
+                    .background(Circle().fill(Color.koboldSurface.opacity(isHovered ? 0.8 : 0)))
+                    .cornerRadius(10)
             }
             .buttonStyle(.plain)
-            .opacity(isCurrent ? 1 : 0)
+            .padding(.trailing, 6)
+            .opacity(isHovered || isCurrent ? 1 : 0)
+            .animation(.easeInOut(duration: 0.15), value: isHovered)
         }
-        .cornerRadius(6)
+        .cornerRadius(8)
         .padding(.horizontal, 4)
+        .scaleEffect(isHovered && !isCurrent ? 1.01 : 1.0)
+        .animation(.easeOut(duration: 0.15), value: isHovered)
+        .onHover { hovering in isHovered = hovering }
+        .onAppear { if isStreaming { startPulse() } }
+        .onChange(of: isStreaming) {
+            if isStreaming { startPulse() } else { pulseScale = 1.0 }
+        }
+    }
+
+    private func startPulse() {
+        withAnimation(.easeInOut(duration: 1.0).repeatForever(autoreverses: false)) {
+            pulseScale = 2.0
+        }
     }
 }
 
@@ -511,27 +1267,42 @@ struct SidebarProjectRow: View {
                 VStack(alignment: .leading, spacing: 1) {
                     HStack(spacing: 4) {
                         Image(systemName: "folder.fill")
-                            .font(.system(size: 9))
+                            .font(.system(size: 11.5))
                             .foregroundColor(isSelected ? .koboldGold : .secondary)
                         Text(project.name)
-                            .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
+                            .font(.system(size: 13.5, weight: isSelected ? .semibold : .regular))
                             .foregroundColor(isSelected ? .koboldGold : .primary)
                             .lineLimit(1)
                     }
                     Text(project.formattedDate)
-                        .font(.system(size: 9))
+                        .font(.system(size: 11.5))
                         .foregroundColor(.secondary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 5)
-                .background(isSelected ? Color.koboldSurface : Color.clear)
+                .background(
+                    Group {
+                        if isSelected {
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(Color.koboldSurface)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .fill(LinearGradient(colors: [Color.koboldGold.opacity(0.08), .clear], startPoint: .leading, endPoint: .trailing))
+                                )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .stroke(Color.koboldGold.opacity(0.15), lineWidth: 0.5)
+                                )
+                        }
+                    }
+                )
             }
             .buttonStyle(.plain)
 
             Button(action: onDelete) {
                 Image(systemName: "xmark")
-                    .font(.system(size: 9))
+                    .font(.system(size: 11.5))
                     .foregroundColor(.secondary.opacity(0.6))
                     .padding(.trailing, 8)
             }
@@ -550,50 +1321,184 @@ struct ContentAreaView: View {
     let selectedTab: SidebarTab
     @ObservedObject var runtimeManager: RuntimeManager
 
+    @State private var showGlobalNotifications = false
+
     var body: some View {
-        Group {
-            switch selectedTab {
-            case .chat:
-                if runtimeManager.healthStatus == "OK" {
-                    ChatView(viewModel: viewModel)
-                } else {
-                    ChatLockedView(status: runtimeManager.healthStatus)
+        ZStack {
+            // Zartes Kleeblatt-Hintergrundmuster
+            CloverPatternBackground()
+                .ignoresSafeArea()
+
+            VStack(spacing: 0) {
+                // Global header bar (visible on all tabs except settings)
+                if selectedTab != .settings {
+                    GlobalHeaderBar(viewModel: viewModel, showNotifications: $showGlobalNotifications)
+                        .padding(.horizontal, 16).padding(.top, 10)
                 }
-            case .dashboard:  DashboardView(viewModel: viewModel)
-            case .memory:     MemoryView(viewModel: viewModel)
-            case .tasks:      TasksView(viewModel: viewModel)
-            case .agents:     AgentsView(viewModel: viewModel)
-            case .workflows:
-                if viewModel.chatMode == .workflow {
-                    // Workflow-Chat embedded in TeamView layout
-                    VStack(spacing: 0) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "point.3.connected.trianglepath.dotted")
-                                .font(.caption)
-                                .foregroundColor(.koboldEmerald)
-                            Text("Workflow-Chat aktiv: \(viewModel.workflowChatLabel)")
-                                .font(.caption.weight(.medium))
-                                .foregroundColor(.koboldEmerald)
-                            Spacer()
-                            Button(action: { viewModel.newSession() }) {
-                                HStack(spacing: 4) {
-                                    Image(systemName: "arrow.left").font(.caption2)
-                                    Text("Zurück zum Canvas").font(.caption2)
-                                }
-                                .foregroundColor(.koboldEmerald)
-                            }.buttonStyle(.plain)
-                        }
-                        .padding(.horizontal, 14).padding(.vertical, 8)
-                        .background(Color.koboldEmerald.opacity(0.1))
-                        GlassDivider()
+
+                Group {
+                switch selectedTab {
+                case .chat:
+                    if runtimeManager.healthStatus == "OK" {
                         ChatView(viewModel: viewModel)
+                    } else {
+                        ChatLockedView(status: runtimeManager.healthStatus)
                     }
-                } else {
-                    TeamView(viewModel: viewModel)
+                case .dashboard:  DashboardView(viewModel: viewModel)
+                case .memory:     MemoryView(viewModel: viewModel)
+                case .tasks:      TasksView(viewModel: viewModel)
+                case .workflows:
+                    if viewModel.chatMode == .workflow {
+                        VStack(spacing: 0) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "point.3.connected.trianglepath.dotted")
+                                    .font(.caption)
+                                    .foregroundColor(.koboldEmerald)
+                                Text("Workflow-Chat aktiv: \(viewModel.workflowChatLabel)")
+                                    .font(.caption.weight(.medium))
+                                    .foregroundColor(.koboldEmerald)
+                                Spacer()
+                                Button(action: { viewModel.newSession() }) {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "arrow.left").font(.caption2)
+                                        Text("Zurück zum Canvas").font(.caption2)
+                                    }
+                                    .foregroundColor(.koboldEmerald)
+                                }.buttonStyle(.plain)
+                            }
+                            .padding(.horizontal, 14).padding(.vertical, 8)
+                            .background(
+                                LinearGradient(colors: [Color.koboldEmerald.opacity(0.12), Color.koboldGold.opacity(0.05)], startPoint: .leading, endPoint: .trailing)
+                            )
+                            GlassDivider()
+                            ChatView(viewModel: viewModel)
+                        }
+                    } else {
+                        TeamView(viewModel: viewModel)
+                    }
+                case .settings:   SettingsView(viewModel: viewModel)
                 }
-            case .settings:   SettingsView(viewModel: viewModel)
+            }
+            } // VStack
+        } // ZStack mit CloverPattern
+    }
+}
+
+// MARK: - Global Header Bar (Dashboard dateWeatherBar + Glocke, auf allen Seiten außer Settings)
+
+struct GlobalHeaderBar: View {
+    @ObservedObject var viewModel: RuntimeViewModel
+    @Binding var showNotifications: Bool
+    @StateObject private var weatherManager = WeatherManager.shared
+
+    private var formattedDate: String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "de_DE")
+        f.dateFormat = "EEEE, d. MMMM yyyy"
+        return f.string(from: Date())
+    }
+
+    private var formattedTime: String {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm"
+        return f.string(from: Date())
+    }
+
+    var body: some View {
+        HStack {
+            // Datum links
+            HStack(spacing: 8) {
+                Image(systemName: "calendar")
+                    .font(.system(size: 15.5))
+                    .foregroundColor(.koboldEmerald)
+                Text(formattedDate)
+                    .font(.system(size: 15.5, weight: .medium))
+                    .foregroundColor(.primary)
+            }
+
+            Spacer()
+
+            // Uhrzeit mittig
+            Text(formattedTime)
+                .font(.system(size: 15.5, weight: .semibold, design: .monospaced))
+                .foregroundColor(.koboldEmerald)
+
+            Spacer()
+
+            // Wetter
+            HStack(spacing: 8) {
+                if weatherManager.isLoading {
+                    ProgressView().controlSize(.mini).scaleEffect(0.7)
+                } else if let temp = weatherManager.temperature {
+                    Image(systemName: weatherManager.iconName)
+                        .font(.system(size: 15.5))
+                        .foregroundColor(.koboldGold)
+                    Text(String(format: "%.0f°C", temp))
+                        .font(.system(size: 15.5, weight: .semibold))
+                    if !weatherManager.cityName.isEmpty {
+                        Text(weatherManager.cityName)
+                            .font(.system(size: 13.5))
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+
+            // Aktive Agents
+            let runningAgents = viewModel.activeSessions.filter { $0.status == .running }.count
+            if runningAgents > 0 {
+                HStack(spacing: 4) {
+                    Circle()
+                        .fill(Color.koboldEmerald)
+                        .frame(width: 6, height: 6)
+                    Text("\(runningAgents) Agent\(runningAgents == 1 ? "" : "s")")
+                        .font(.system(size: 13.5, weight: .semibold))
+                        .foregroundColor(.koboldEmerald)
+                }
+                .padding(.horizontal, 8).padding(.vertical, 3)
+                .background(Capsule().fill(Color.koboldEmerald.opacity(0.12)))
+            }
+
+            // Online badge
+            GlassStatusBadge(
+                label: viewModel.isConnected ? "Online" : "Offline",
+                color: viewModel.isConnected ? .koboldEmerald : .red
+            )
+
+            // Notification Bell
+            Button(action: {
+                showNotifications.toggle()
+                if showNotifications { viewModel.markAllNotificationsRead() }
+            }) {
+                ZStack(alignment: .topTrailing) {
+                    Image(systemName: viewModel.unreadNotificationCount > 0 ? "bell.badge.fill" : "bell.fill")
+                        .font(.system(size: 16.5))
+                        .foregroundColor(viewModel.unreadNotificationCount > 0 ? .koboldGold : .secondary)
+                    if viewModel.unreadNotificationCount > 0 {
+                        Text("\(min(viewModel.unreadNotificationCount, 99))")
+                            .font(.system(size: 10.5, weight: .bold))
+                            .foregroundColor(.white)
+                            .frame(minWidth: 14, minHeight: 14)
+                            .background(Circle().fill(Color.red))
+                            .offset(x: 6, y: -6)
+                    }
+                }
+            }
+            .buttonStyle(.plain)
+            .help("Benachrichtigungen")
+            .popover(isPresented: $showNotifications, arrowEdge: .bottom) {
+                NotificationPopover(viewModel: viewModel)
             }
         }
+        .padding(.horizontal, 4)
+        .onAppear { weatherManager.fetchWeatherIfNeeded() }
+        .padding(.vertical, 10).padding(.horizontal, 14)
+        .background(
+            ZStack {
+                RoundedRectangle(cornerRadius: 12).fill(Color.koboldPanel)
+                RoundedRectangle(cornerRadius: 12).fill(LinearGradient(colors: [Color.koboldEmerald.opacity(0.04), .clear, Color.koboldGold.opacity(0.03)], startPoint: .leading, endPoint: .trailing))
+                RoundedRectangle(cornerRadius: 12).stroke(LinearGradient(colors: [Color.koboldEmerald.opacity(0.2), Color.koboldGold.opacity(0.15)], startPoint: .leading, endPoint: .trailing), lineWidth: 0.5)
+            }
+        )
     }
 }
 
@@ -606,7 +1511,7 @@ struct ChatLockedView: View {
         VStack(spacing: 20) {
             Spacer()
             Image(systemName: "lock.fill")
-                .font(.system(size: 48))
+                .font(.system(size: 49))
                 .foregroundColor(.secondary)
             Text("Daemon nicht bereit")
                 .font(.title2.bold())
@@ -631,7 +1536,6 @@ enum SidebarTab: String, CaseIterable {
     case tasks
     case workflows
     case memory
-    case agents
     case settings
 }
 
@@ -693,10 +1597,27 @@ struct KoboldOSSidebarLogo: View {
                 .animation(.easeInOut(duration: 2).repeatForever(autoreverses: true), value: glowPulse)
 
             // Main content
-            VStack(spacing: 3) {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
+            HStack(spacing: 8) {
+                // App Icon with glow
+                ZStack {
+                    // Glow behind icon
+                    Circle()
+                        .fill(Color.koboldEmerald.opacity(glowPulse ? 0.3 : 0.15))
+                        .frame(width: 52, height: 52)
+                        .blur(radius: 10)
+                        .animation(.easeInOut(duration: 2).repeatForever(autoreverses: true), value: glowPulse)
+                    Image(nsImage: NSApp.applicationIconImage)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 48, height: 48)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                        .shadow(color: Color.koboldEmerald.opacity(0.6), radius: glowPulse ? 5 : 2)
+                        .animation(.easeInOut(duration: 2).repeatForever(autoreverses: true), value: glowPulse)
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
                     Text("KoboldOS")
-                        .font(.system(size: 18, weight: .heavy, design: .rounded))
+                        .font(.system(size: 15.5, weight: .heavy, design: .rounded))
                         .italic()
                         .foregroundStyle(
                             LinearGradient(
@@ -707,19 +1628,12 @@ struct KoboldOSSidebarLogo: View {
                         .shadow(color: Color.koboldEmerald.opacity(0.8), radius: glowPulse ? 6 : 3)
                         .animation(.easeInOut(duration: 2).repeatForever(autoreverses: true), value: glowPulse)
 
-                    Text("Alpha v0.2.5")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundColor(.koboldGold)
-                        .padding(.horizontal, 4).padding(.vertical, 2)
-                        .background(Capsule().fill(Color.koboldGold.opacity(0.2)))
-                        .overlay(Capsule().stroke(Color.koboldGold.opacity(0.4), lineWidth: 0.5))
-                }
-
-                if !userName.isEmpty {
-                    Text(userName)
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundColor(Color.koboldEmerald.opacity(0.7))
-                        .tracking(1)
+                    if !userName.isEmpty {
+                        Text(userName)
+                            .font(.system(size: 11.5, weight: .medium))
+                            .foregroundColor(Color.koboldEmerald.opacity(0.7))
+                            .tracking(1)
+                    }
                 }
             }
         }

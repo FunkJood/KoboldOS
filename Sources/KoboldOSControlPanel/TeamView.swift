@@ -11,8 +11,8 @@ struct TeamView: View {
     @State private var connections: [WorkflowConnection] = []
     @State private var selectedNodeId: UUID? = nil
     @State private var isRunning = false
-    @State private var runOutput = ""
-    @State private var showAddNode = false
+    @State private var lastRunOutput = ""  // Stores final workflow output for display
+    @State private var showRunOutput = false
     @State private var dragSourceNodeId: UUID? = nil
     @State private var isDraggingPort: Bool = false
     @State private var dragSourceIsOutput: Bool = true
@@ -51,7 +51,7 @@ struct TeamView: View {
                 VStack(spacing: 16) {
                     Spacer()
                     Image(systemName: "folder.badge.questionmark")
-                        .font(.system(size: 48))
+                        .font(.system(size: 49))
                         .foregroundColor(.secondary.opacity(0.5))
                     Text("Kein Projekt ausgewählt")
                         .font(.title3)
@@ -61,7 +61,7 @@ struct TeamView: View {
                     // Workflow ideas
                     GlassCard(padding: 12, cornerRadius: 12) {
                         VStack(alignment: .leading, spacing: 10) {
-                            Text("Workflow-Ideen").font(.system(size: 13, weight: .semibold)).foregroundColor(.koboldGold)
+                            Text("Workflow-Ideen").font(.system(size: 15.5, weight: .semibold)).foregroundColor(.koboldGold)
                             ForEach(currentWorkflowSuggestions, id: \.name) { suggestion in
                                 Button(action: {
                                     viewModel.newProject()
@@ -69,15 +69,15 @@ struct TeamView: View {
                                 }) {
                                     HStack(spacing: 10) {
                                         Image(systemName: suggestion.icon)
-                                            .font(.system(size: 12))
+                                            .font(.system(size: 14.5))
                                             .foregroundColor(.koboldGold)
                                             .frame(width: 20)
                                         VStack(alignment: .leading, spacing: 2) {
                                             Text(suggestion.name)
-                                                .font(.system(size: 12, weight: .medium))
+                                                .font(.system(size: 14.5, weight: .medium))
                                                 .foregroundColor(.primary)
                                             Text(suggestion.description)
-                                                .font(.system(size: 10))
+                                                .font(.system(size: 12.5))
                                                 .foregroundColor(.secondary)
                                                 .lineLimit(1)
                                         }
@@ -107,7 +107,7 @@ struct TeamView: View {
                 }
             }
         }
-        .background(Color.koboldBackground)
+        .background(ZStack { Color.koboldBackground; LinearGradient(colors: [Color.koboldEmerald.opacity(0.015), .clear, Color.koboldGold.opacity(0.01)], startPoint: .topLeading, endPoint: .bottomTrailing) })
         .onAppear { loadWorkflowState() }
         .onChange(of: nodes.count) { saveWorkflowState() }
         .onChange(of: connections.count) { saveWorkflowState() }
@@ -173,7 +173,7 @@ struct TeamView: View {
             if viewModel.selectedProject != nil {
                 HStack(spacing: 8) {
                     Image(systemName: "brain")
-                        .font(.system(size: 12))
+                        .font(.system(size: 14.5))
                         .foregroundColor(.koboldGold)
                     GlassTextField(
                         text: $agentBuilderText,
@@ -182,7 +182,7 @@ struct TeamView: View {
                     )
                     Button(action: { buildWorkflowWithAgent() }) {
                         Image(systemName: "paperplane.fill")
-                            .font(.system(size: 13))
+                            .font(.system(size: 15.5))
                             .foregroundColor(.white)
                             .frame(width: 28, height: 28)
                             .background(agentBuilderText.isEmpty ? Color.secondary : Color.koboldEmerald)
@@ -199,17 +199,17 @@ struct TeamView: View {
                         if isAgentBuilding {
                             ProgressView().controlSize(.mini).scaleEffect(0.7)
                             Image(systemName: "brain")
-                                .font(.system(size: 10))
+                                .font(.system(size: 12.5))
                                 .foregroundColor(.koboldGold)
                             Text("Erstelle Workflow...")
-                                .font(.system(size: 11, weight: .medium))
+                                .font(.system(size: 13.5, weight: .medium))
                                 .foregroundColor(.koboldGold)
                         } else if !agentBuildStatus.isEmpty {
                             Image(systemName: "checkmark.circle.fill")
-                                .font(.system(size: 10))
+                                .font(.system(size: 12.5))
                                 .foregroundColor(.koboldEmerald)
                             Text(agentBuildStatus)
-                                .font(.system(size: 11))
+                                .font(.system(size: 13.5))
                                 .foregroundColor(.koboldEmerald)
                         }
                         Spacer()
@@ -227,6 +227,31 @@ struct TeamView: View {
             if case .success(let urls) = result, let url = urls.first {
                 importWorkflowJSON(from: url)
             }
+        }
+        .sheet(isPresented: $showRunOutput) {
+            VStack(spacing: 12) {
+                HStack {
+                    Image(systemName: "checkmark.circle.fill").foregroundColor(.koboldEmerald)
+                    Text("Workflow-Ergebnis").font(.headline)
+                    Spacer()
+                    Button("Schließen") { showRunOutput = false }.buttonStyle(.plain)
+                }
+                ScrollView {
+                    Text(lastRunOutput)
+                        .font(.system(.body, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                HStack {
+                    Button("Kopieren") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(lastRunOutput, forType: .string)
+                    }
+                    Spacer()
+                }
+            }
+            .padding()
+            .frame(minWidth: 500, minHeight: 300)
         }
     }
 
@@ -351,21 +376,21 @@ struct TeamView: View {
             .overlay(alignment: .bottomTrailing) {
                 HStack(spacing: 4) {
                     Button(action: { withAnimation(.easeOut(duration: 0.2)) { canvasScale = max(0.3, canvasScale - 0.1) } }) {
-                        Image(systemName: "minus.magnifyingglass").font(.system(size: 12))
+                        Image(systemName: "minus.magnifyingglass").font(.system(size: 14.5))
                     }.buttonStyle(.plain)
                     Text(String(format: "%.0f%%", canvasScale * 100))
-                        .font(.system(size: 10, design: .monospaced))
+                        .font(.system(size: 12.5, design: .monospaced))
                         .foregroundColor(.secondary)
                         .frame(width: 36)
                     Button(action: { withAnimation(.easeOut(duration: 0.2)) { canvasScale = min(3.0, canvasScale + 0.1) } }) {
-                        Image(systemName: "plus.magnifyingglass").font(.system(size: 12))
+                        Image(systemName: "plus.magnifyingglass").font(.system(size: 14.5))
                     }.buttonStyle(.plain)
                     Button(action: {
                         withAnimation(.easeOut(duration: 0.2)) {
                             canvasScale = 1.0; canvasOffset = .zero; lastDragOffset = .zero
                         }
                     }) {
-                        Image(systemName: "arrow.counterclockwise").font(.system(size: 11))
+                        Image(systemName: "arrow.counterclockwise").font(.system(size: 13.5))
                     }.buttonStyle(.plain)
                 }
                 .padding(6)
@@ -374,7 +399,7 @@ struct TeamView: View {
                 .padding(12)
             }
         }
-        .background(Color.koboldBackground)
+        .background(ZStack { Color.koboldBackground; LinearGradient(colors: [Color.koboldEmerald.opacity(0.015), .clear, Color.koboldGold.opacity(0.01)], startPoint: .topLeading, endPoint: .bottomTrailing) })
     }
 
     // MARK: - Node Inspector
@@ -524,6 +549,7 @@ struct TeamView: View {
 
         agentBuilderText = ""
         isAgentBuilding = true
+        agentBuildStatus = "Erstelle Workflow..."
 
         let prompt = """
         Erstelle einen Workflow mit dem workflow_manage Tool basierend auf dieser Beschreibung: \(text)
@@ -535,11 +561,20 @@ struct TeamView: View {
 
         viewModel.sendMessage(prompt)
 
-        // Auto-finish status after a delay (agent works asynchronously)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+        // Poll for agent completion instead of arbitrary delay
+        Task { @MainActor in
+            for _ in 0..<60 {  // max 30s
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                if !viewModel.agentLoading {
+                    break
+                }
+            }
             isAgentBuilding = false
-            agentBuildStatus = "Workflow-Anfrage gesendet"
-            DispatchQueue.main.asyncAfter(deadline: .now() + 5) { agentBuildStatus = "" }
+            agentBuildStatus = "Workflow erstellt"
+            // Reload workflow state in case agent created nodes
+            loadWorkflowState()
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            agentBuildStatus = ""
         }
     }
 
@@ -580,13 +615,21 @@ struct TeamView: View {
     func runWorkflow() async {
         guard !nodes.isEmpty else { return }
         isRunning = true
-        defer { isRunning = false }
+        defer {
+            isRunning = false
+            saveWorkflowState()
+        }
 
-        // Clear previous outputs
-        for i in 0..<nodes.count { nodes[i].lastOutput = "" }
+        // 1. Reset all nodes to idle
+        for i in 0..<nodes.count {
+            nodes[i].lastOutput = ""
+            nodes[i].executionStatus = .idle
+            nodes[i].statusMessage = ""
+            nodes[i].executionProgress = 0.0
+            nodes[i].errorMessage = ""
+        }
 
-        // Build execution order from connections (topological traversal)
-        // Find root nodes (nodes that are not targets of any connection)
+        // 2. Build topological execution order
         let targetIds = Set(connections.map { $0.targetNodeId })
         var queue = nodes.filter { !targetIds.contains($0.id) }.map { $0.id }
         var visited = Set<UUID>()
@@ -597,28 +640,260 @@ struct TeamView: View {
             visited.insert(currentId)
 
             guard let nodeIdx = nodes.firstIndex(where: { $0.id == currentId }) else { continue }
-            let node = nodes[nodeIdx]
 
-            // Skip input/output nodes for execution
-            if node.type != .input && node.type != .output {
-                // Gather context from connected source nodes
-                let sourceIds = connections.filter { $0.targetNodeId == currentId }.map { $0.sourceNodeId }
-                let context = sourceIds.compactMap { sid in
-                    nodes.first(where: { $0.id == sid })?.lastOutput
-                }.filter { !$0.isEmpty }.joined(separator: "\n\n")
+            // 2a. Set to waiting
+            nodes[nodeIdx].executionStatus = .waiting
+            nodes[nodeIdx].statusMessage = "Wartet..."
 
-                let prompt = node.prompt.isEmpty
-                    ? "Step \(node.title): \(context.isEmpty ? "Start the workflow." : "Based on previous step:\n\(String(context.prefix(500)))")"
-                    : "\(node.prompt)\n\nKontext:\n\(context.prefix(500))"
+            // Gather context from upstream nodes
+            let sourceIds = connections.filter { $0.targetNodeId == currentId }.map { $0.sourceNodeId }
+            let upstreamOutput = sourceIds.compactMap { sid in
+                nodes.first(where: { $0.id == sid })?.lastOutput
+            }.filter { !$0.isEmpty }.joined(separator: "\n\n")
 
-                viewModel.sendWorkflowMessage(prompt, modelOverride: node.modelOverride, agentOverride: node.agentType)
-                try? await Task.sleep(nanoseconds: 500_000_000)
-                nodes[nodeIdx].lastOutput = "Verarbeitet von \(node.title)"
+            // 2b. Set to running
+            nodes[nodeIdx].executionStatus = .running
+            nodes[nodeIdx].statusMessage = "Verarbeite..."
+
+            do {
+                // 2c. Execute based on node type
+                let result = try await executeNode(nodeIdx: nodeIdx, upstreamOutput: upstreamOutput)
+
+                // 2d. Set to success
+                nodes[nodeIdx].executionStatus = .success
+                nodes[nodeIdx].statusMessage = String(result.prefix(60))
+                nodes[nodeIdx].lastOutput = result
+                nodes[nodeIdx].executionProgress = 1.0
+
+            } catch {
+                // 2d. Set to error
+                nodes[nodeIdx].executionStatus = .error
+                nodes[nodeIdx].statusMessage = error.localizedDescription
+                nodes[nodeIdx].errorMessage = error.localizedDescription
+                // Continue with other branches despite error
             }
 
-            // Queue connected target nodes
-            let nextIds = connections.filter { $0.sourceNodeId == currentId }.map { $0.targetNodeId }
-            queue.append(contentsOf: nextIds)
+            // Small delay for visual feedback
+            try? await Task.sleep(nanoseconds: 200_000_000)
+
+            // 2e. Queue downstream nodes — for condition nodes, handle branching
+            if nodes[nodeIdx].type == .condition {
+                let outConns = connections.filter { $0.sourceNodeId == currentId }
+                let conditionResult = nodes[nodeIdx].lastOutput
+                if conditionResult == "true", let firstConn = outConns.first {
+                    queue.append(firstConn.targetNodeId)
+                } else if conditionResult == "false", outConns.count > 1 {
+                    queue.append(outConns[1].targetNodeId)
+                } else if let firstConn = outConns.first {
+                    queue.append(firstConn.targetNodeId)
+                }
+            } else {
+                let nextIds = connections.filter { $0.sourceNodeId == currentId }.map { $0.targetNodeId }
+                queue.append(contentsOf: nextIds)
+            }
+        }
+    }
+
+    /// Execute a single node and return its output
+    private func executeNode(nodeIdx: Int, upstreamOutput: String) async throws -> String {
+        let node = nodes[nodeIdx]
+
+        switch node.type {
+        case .trigger:
+            nodes[nodeIdx].statusMessage = "Gestartet"
+            return "workflow_started"
+
+        case .input:
+            return upstreamOutput
+
+        case .output:
+            nodes[nodeIdx].statusMessage = "Abgeschlossen"
+            lastRunOutput = upstreamOutput
+            showRunOutput = true
+            return upstreamOutput
+
+        case .agent:
+            nodes[nodeIdx].statusMessage = "Agent arbeitet..."
+            let prompt = node.prompt.isEmpty
+                ? "Aufgabe: \(node.title)\n\nKontext:\n\(String(upstreamOutput.prefix(1000)))"
+                : "\(node.prompt)\n\nKontext:\n\(String(upstreamOutput.prefix(1000)))"
+
+            viewModel.sendWorkflowMessage(prompt, modelOverride: node.modelOverride, agentOverride: node.agentType)
+
+            // Wait for agent response (poll for up to 60s)
+            var waitCount = 0
+            while waitCount < 120 {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                waitCount += 1
+                nodes[nodeIdx].executionProgress = min(0.9, Double(waitCount) / 120.0)
+                nodes[nodeIdx].statusMessage = "Agent arbeitet... (\(waitCount/2)s)"
+
+                // Check if we got a response in the workflow session
+                if let lastMsg = viewModel.workflowLastResponse, !lastMsg.isEmpty {
+                    viewModel.workflowLastResponse = nil
+                    return lastMsg
+                }
+            }
+            return "Agent-Timeout nach 60s"
+
+        case .tool:
+            nodes[nodeIdx].statusMessage = "Tool ausführen..."
+            let toolType = node.agentType ?? "shell"
+            let toolPrompt = node.prompt.isEmpty ? upstreamOutput : node.prompt
+            viewModel.sendWorkflowMessage(
+                "Führe das Tool '\(toolType)' aus: \(toolPrompt)\nInput: \(String(upstreamOutput.prefix(500)))",
+                modelOverride: node.modelOverride,
+                agentOverride: nil
+            )
+            // Poll for response (same pattern as agent nodes, up to 30s)
+            var toolWait = 0
+            while toolWait < 60 {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                toolWait += 1
+                nodes[nodeIdx].executionProgress = min(0.9, Double(toolWait) / 60.0)
+                nodes[nodeIdx].statusMessage = "Tool arbeitet... (\(toolWait / 2)s)"
+                if let resp = viewModel.workflowLastResponse, !resp.isEmpty {
+                    viewModel.workflowLastResponse = nil
+                    return resp
+                }
+            }
+            return "Tool-Timeout nach 30s"
+
+        case .condition:
+            nodes[nodeIdx].statusMessage = "Prüfe Bedingung..."
+            return evaluateCondition(expression: node.conditionExpression, output: upstreamOutput)
+
+        case .delay:
+            let seconds = max(1, node.delaySeconds)
+            for remaining in stride(from: seconds, through: 1, by: -1) {
+                nodes[nodeIdx].statusMessage = "Warte... \(remaining)s"
+                nodes[nodeIdx].executionProgress = 1.0 - (Double(remaining) / Double(seconds))
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+            }
+            nodes[nodeIdx].statusMessage = "Fertig"
+            return upstreamOutput
+
+        case .webhook:
+            nodes[nodeIdx].statusMessage = "Sende Webhook..."
+            return await executeWebhook(node: node, input: upstreamOutput)
+
+        case .formula:
+            nodes[nodeIdx].statusMessage = "Berechne..."
+            return evaluateFormula(expression: node.prompt, input: upstreamOutput)
+
+        case .merger:
+            nodes[nodeIdx].statusMessage = "Zusammenführen..."
+            return upstreamOutput
+        }
+    }
+
+    // MARK: - Condition Evaluation
+
+    /// Simple string-based condition evaluation
+    private func evaluateCondition(expression: String, output: String) -> String {
+        let expr = expression.trimmingCharacters(in: .whitespaces).lowercased()
+
+        if expr.contains("contains(") {
+            // output.contains("error") → check if output contains the string
+            if let range = expr.range(of: #"contains\(['"](.*?)['"]\)"#, options: .regularExpression) {
+                let searchStr = String(expr[range]).replacingOccurrences(of: "contains(", with: "")
+                    .replacingOccurrences(of: ")", with: "")
+                    .replacingOccurrences(of: "'", with: "")
+                    .replacingOccurrences(of: "\"", with: "")
+                return output.lowercased().contains(searchStr) ? "true" : "false"
+            }
+        }
+
+        if expr == "output.isempty" || expr == "output.isEmpty" {
+            return output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "true" : "false"
+        }
+
+        if expr.contains("length") && expr.contains(">") {
+            // output.length > 100
+            if let numStr = expr.components(separatedBy: ">").last?.trimmingCharacters(in: .whitespaces),
+               let threshold = Int(numStr) {
+                return output.count > threshold ? "true" : "false"
+            }
+        }
+
+        if expr.contains("length") && expr.contains("<") {
+            if let numStr = expr.components(separatedBy: "<").last?.trimmingCharacters(in: .whitespaces),
+               let threshold = Int(numStr) {
+                return output.count < threshold ? "true" : "false"
+            }
+        }
+
+        // Default: treat non-empty output as true
+        return output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "false" : "true"
+    }
+
+    // MARK: - Formula Evaluation
+
+    /// Simple formula/template evaluation
+    private func evaluateFormula(expression: String, input: String) -> String {
+        var result = expression
+        // Replace template variables
+        result = result.replacingOccurrences(of: "{{input}}", with: input)
+        result = result.replacingOccurrences(of: "{{date}}", with: ISO8601DateFormatter().string(from: Date()))
+        result = result.replacingOccurrences(of: "{{length}}", with: "\(input.count)")
+        result = result.replacingOccurrences(of: "{{lines}}", with: "\(input.components(separatedBy: "\n").count)")
+
+        // Replace {{env.KEY}} with environment variables
+        let envPattern = #"\{\{env\.(\w+)\}\}"#
+        if let regex = try? NSRegularExpression(pattern: envPattern) {
+            let matches = regex.matches(in: result, range: NSRange(result.startIndex..., in: result))
+            for match in matches.reversed() {
+                if let keyRange = Range(match.range(at: 1), in: result) {
+                    let key = String(result[keyRange])
+                    let value = ProcessInfo.processInfo.environment[key] ?? ""
+                    if let fullRange = Range(match.range, in: result) {
+                        result.replaceSubrange(fullRange, with: value)
+                    }
+                }
+            }
+        }
+
+        // Simple string operations
+        if result.hasPrefix("upper:") { return input.uppercased() }
+        if result.hasPrefix("lower:") { return input.lowercased() }
+        if result.hasPrefix("trim:") { return input.trimmingCharacters(in: .whitespacesAndNewlines) }
+        if result.hasPrefix("reverse:") { return String(input.reversed()) }
+        if result.hasPrefix("wordcount:") { return "\(input.split(separator: " ").count)" }
+
+        return result
+    }
+
+    // MARK: - Webhook Execution
+
+    /// Send HTTP request to webhook URL
+    private func executeWebhook(node: WorkflowNode, input: String) async -> String {
+        let urlString = node.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: urlString) else {
+            return "Fehler: Ungültige URL '\(urlString)'"
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.2.5"
+        request.setValue("KoboldOS/\(version)", forHTTPHeaderField: "User-Agent")
+        request.timeoutInterval = 30
+
+        // Send upstream output as JSON body
+        let body: [String: String] = ["data": input, "source": "KoboldOS Workflow"]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+            let responseBody = String(data: data, encoding: .utf8) ?? ""
+            if statusCode >= 200 && statusCode < 300 {
+                return responseBody.isEmpty ? "OK (\(statusCode))" : String(responseBody.prefix(2000))
+            } else {
+                return "HTTP \(statusCode): \(String(responseBody.prefix(500)))"
+            }
+        } catch {
+            return "Webhook-Fehler: \(error.localizedDescription)"
         }
     }
 }
@@ -645,6 +920,36 @@ struct WorkflowConnection: Identifiable, Codable {
 
 // MARK: - WorkflowNode
 
+// MARK: - NodeExecutionStatus
+
+enum NodeExecutionStatus: String, Codable {
+    case idle     // Grau — nicht aktiv
+    case waiting  // Blau — wartet auf Upstream
+    case running  // Grün-pulsierend — wird gerade ausgeführt
+    case success  // Grün — erfolgreich abgeschlossen
+    case error    // Rot — Fehler aufgetreten
+
+    var color: Color {
+        switch self {
+        case .idle:    return .gray
+        case .waiting: return .blue
+        case .running: return .green
+        case .success: return .green
+        case .error:   return .red
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .idle:    return "circle"
+        case .waiting: return "clock"
+        case .running: return "arrow.triangle.2.circlepath"
+        case .success: return "checkmark.circle.fill"
+        case .error:   return "xmark.circle.fill"
+        }
+    }
+}
+
 struct WorkflowNode: Identifiable, Codable {
     let id: UUID
     var type: NodeType
@@ -658,6 +963,12 @@ struct WorkflowNode: Identifiable, Codable {
     var delaySeconds: Int = 0             // For delay nodes
     var modelOverride: String?            // Per-node model (e.g. "llama3.2", "gpt-4o")
     var agentType: String?                // Per-node agent type (e.g. "coder", "researcher")
+
+    // Execution state (not persisted)
+    var executionStatus: NodeExecutionStatus = .idle
+    var statusMessage: String = ""
+    var executionProgress: Double = 0.0
+    var errorMessage: String = ""
 
     enum CodingKeys: String, CodingKey {
         case id, type, title, prompt, x, y, triggerConfig, conditionExpression, delaySeconds
@@ -738,13 +1049,13 @@ struct WorkflowNode: Identifiable, Codable {
             case .trigger:   return .red
             case .input:     return .koboldEmerald
             case .agent:     return .koboldGold
-            case .tool:      return .blue
-            case .output:    return .purple
+            case .tool:      return .koboldEmerald
+            case .output:    return .koboldGold
             case .condition: return .orange
-            case .merger:    return .cyan
+            case .merger:    return .koboldEmerald
             case .delay:     return .gray
-            case .webhook:   return .pink
-            case .formula:   return .mint
+            case .webhook:   return .koboldGold
+            case .formula:   return .koboldEmerald
             }
         }
         var icon: String {
@@ -782,15 +1093,30 @@ struct WorkflowNodeCard: View {
     var onPortDragUpdate: ((CGPoint) -> Void)? = nil
     @GestureState private var dragStart: CGPoint? = nil
 
+    /// Only THIS node is actively running
+    private var isNodeRunning: Bool { node.executionStatus == .running }
+
+    /// Border color based on execution status
+    private var borderColor: Color {
+        if isSelected { return node.type.color }
+        switch node.executionStatus {
+        case .idle:    return Color.white.opacity(0.12)
+        case .waiting: return Color.blue.opacity(0.5)
+        case .running: return Color.green.opacity(0.8)
+        case .success: return Color.green.opacity(0.6)
+        case .error:   return Color.red.opacity(0.7)
+        }
+    }
+
     var body: some View {
         ZStack {
             VStack(spacing: 0) {
                 // Type label bar
                 HStack(spacing: 4) {
                     Image(systemName: node.type.icon)
-                        .font(.system(size: 9))
+                        .font(.system(size: 11.5))
                     Text(node.type.rawValue.uppercased())
-                        .font(.system(size: 9, weight: .bold))
+                        .font(.system(size: 11.5, weight: .bold))
                 }
                 .foregroundColor(node.type.color)
                 .padding(.horizontal, 8)
@@ -800,19 +1126,50 @@ struct WorkflowNodeCard: View {
 
                 // Node title
                 Text(node.title)
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.system(size: 14.5, weight: .semibold))
                     .lineLimit(1)
                     .padding(.horizontal, 8)
-                    .padding(.vertical, 8)
+                    .padding(.vertical, node.executionStatus == .idle ? 8 : 4)
+
+                // Mini status bar (only when not idle)
+                if node.executionStatus != .idle {
+                    HStack(spacing: 3) {
+                        if isNodeRunning {
+                            ProgressView()
+                                .controlSize(.mini)
+                                .scaleEffect(0.6)
+                        } else {
+                            Image(systemName: node.executionStatus.icon)
+                                .font(.system(size: 9))
+                                .foregroundColor(node.executionStatus.color)
+                        }
+                        Text(node.statusMessage.isEmpty ? node.executionStatus.rawValue : node.statusMessage)
+                            .font(.system(size: 9.5))
+                            .foregroundColor(node.executionStatus.color)
+                            .lineLimit(1)
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.bottom, 3)
+
+                    // Progress bar
+                    if node.executionProgress > 0 && node.executionProgress < 1 {
+                        GeometryReader { geo in
+                            RoundedRectangle(cornerRadius: 1)
+                                .fill(node.executionStatus.color.opacity(0.6))
+                                .frame(width: geo.size.width * node.executionProgress, height: 2)
+                        }
+                        .frame(height: 2)
+                        .padding(.horizontal, 4)
+                        .padding(.bottom, 2)
+                    }
+                }
             }
-            .frame(width: 130, height: 70)
+            .frame(width: 130)
+            .frame(minHeight: 70)
             .background(Color.koboldPanel)
             .overlay(
                 RoundedRectangle(cornerRadius: 8)
-                    .stroke(
-                        isSelected ? node.type.color : Color.white.opacity(0.12),
-                        lineWidth: isSelected ? 2 : 1
-                    )
+                    .stroke(borderColor, lineWidth: isSelected ? 2 : (node.executionStatus == .idle ? 1 : 1.5))
             )
             .cornerRadius(8)
 
@@ -845,12 +1202,18 @@ struct WorkflowNodeCard: View {
                 )
         }
         .shadow(
-            color: isSelected ? node.type.color.opacity(0.4) : .black.opacity(0.3),
-            radius: isSelected ? 12 : 4
+            color: isNodeRunning ? Color.green.opacity(0.5) :
+                   (isSelected ? node.type.color.opacity(0.4) :
+                   (node.executionStatus == .success ? Color.green.opacity(0.3) :
+                   (node.executionStatus == .error ? Color.red.opacity(0.3) : .black.opacity(0.3)))),
+            radius: isNodeRunning ? 16 : (isSelected ? 12 : 4)
         )
-        .scaleEffect(isRunning ? 1.05 : 1.0)
-        .animation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true).delay(Double.random(in: 0...0.3)),
-                   value: isRunning)
+        // Only pulse the actively running node (not all nodes!)
+        .scaleEffect(isNodeRunning ? 1.05 : 1.0)
+        .animation(isNodeRunning
+            ? .easeInOut(duration: 0.6).repeatForever(autoreverses: true)
+            : .default,
+            value: isNodeRunning)
         .gesture(
             DragGesture()
                 .updating($dragStart) { value, state, _ in
@@ -926,7 +1289,7 @@ struct NodeInspector: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Prompt").font(.caption).foregroundColor(.secondary)
                 TextEditor(text: $node.prompt)
-                    .font(.system(size: 11))
+                    .font(.system(size: 13.5))
                     .frame(minHeight: 80)
                     .padding(6)
                     .background(Color.black.opacity(0.2))
@@ -940,7 +1303,7 @@ struct NodeInspector: View {
                     ForEach(incomingConnections) { conn in
                         HStack(spacing: 4) {
                             Image(systemName: "arrow.right").font(.caption2).foregroundColor(.koboldEmerald)
-                            Text("← Eingang").font(.system(size: 11)).foregroundColor(.secondary)
+                            Text("← Eingang").font(.system(size: 13.5)).foregroundColor(.secondary)
                             Spacer()
                             Button(action: { onDeleteConnection?(conn.id) }) {
                                 Image(systemName: "xmark.circle.fill")
@@ -952,7 +1315,7 @@ struct NodeInspector: View {
                     ForEach(outgoingConnections) { conn in
                         HStack(spacing: 4) {
                             Image(systemName: "arrow.right").font(.caption2).foregroundColor(.koboldGold)
-                            Text("→ Ausgang").font(.system(size: 11)).foregroundColor(.secondary)
+                            Text("→ Ausgang").font(.system(size: 13.5)).foregroundColor(.secondary)
                             Spacer()
                             Button(action: { onDeleteConnection?(conn.id) }) {
                                 Image(systemName: "xmark.circle.fill")
@@ -969,13 +1332,63 @@ struct NodeInspector: View {
                 triggerConfigSection
             }
 
+            // Tool selection
+            if node.type == .tool {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Tool / Integration").font(.caption).foregroundColor(.secondary)
+                    let toolOptions: [(String, String, String)] = [
+                        ("shell",      "terminal.fill",                 "Shell-Befehl"),
+                        ("file",       "doc.fill",                      "Datei lesen/schreiben"),
+                        ("browser",    "globe",                         "Web-Suche/Scraping"),
+                        ("http",       "network",                       "HTTP-Request"),
+                        ("email",      "envelope.fill",                 "E-Mail senden"),
+                        ("sms",        "message.fill",                  "SMS senden"),
+                        ("telegram",   "paperplane.fill",               "Telegram-Nachricht"),
+                        ("slack",      "number",                        "Slack-Nachricht"),
+                        ("github",     "chevron.left.forwardslash.chevron.right", "GitHub API"),
+                        ("notion",     "doc.text.fill",                 "Notion Seite"),
+                        ("calendar",   "calendar",                      "Kalender-Event"),
+                        ("contacts",   "person.2.fill",                 "Kontakte"),
+                        ("webhook",    "antenna.radiowaves.left.and.right", "Webhook aufrufen"),
+                        ("image_gen",  "photo.artframe",                "Bild generieren"),
+                        ("tts",        "speaker.wave.3.fill",           "Text vorlesen"),
+                        ("memory",     "brain.head.profile",            "Gedächtnis"),
+                        ("custom",     "wrench.fill",                   "Benutzerdefiniert"),
+                    ]
+                    let currentTool = node.agentType ?? "custom"
+                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 4) {
+                        ForEach(toolOptions, id: \.0) { (id, icon, label) in
+                            Button(action: { node.agentType = id }) {
+                                HStack(spacing: 4) {
+                                    Image(systemName: icon)
+                                        .font(.system(size: 12.5))
+                                        .frame(width: 16)
+                                    Text(label)
+                                        .font(.system(size: 12.5))
+                                        .lineLimit(1)
+                                    Spacer()
+                                }
+                                .padding(.horizontal, 6).padding(.vertical, 4)
+                                .background(currentTool == id ? Color.koboldEmerald.opacity(0.2) : Color.koboldSurface)
+                                .cornerRadius(4)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 4)
+                                        .stroke(currentTool == id ? Color.koboldEmerald : Color.clear, lineWidth: 1)
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+
             // Condition expression
             if node.type == .condition {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Bedingung").font(.caption).foregroundColor(.secondary)
                     GlassTextField(text: $node.conditionExpression, placeholder: "z.B. output.contains('error')")
                     Text("Wenn wahr: oberer Ausgang. Wenn falsch: unterer Ausgang.")
-                        .font(.system(size: 9)).foregroundColor(.secondary)
+                        .font(.system(size: 11.5)).foregroundColor(.secondary)
                 }
             }
 
@@ -994,13 +1407,13 @@ struct NodeInspector: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Formel").font(.caption).foregroundColor(.secondary)
                     TextEditor(text: $node.prompt)
-                        .font(.system(size: 11, design: .monospaced))
+                        .font(.system(size: 13.5, design: .monospaced))
                         .frame(minHeight: 60)
                         .padding(6)
                         .background(Color.black.opacity(0.2))
                         .cornerRadius(6)
                     Text("Variablen: {{input}}, {{date}}, {{env.KEY}}")
-                        .font(.system(size: 9)).foregroundColor(.secondary)
+                        .font(.system(size: 11.5)).foregroundColor(.secondary)
                 }
             }
 
@@ -1072,17 +1485,17 @@ struct NodeInspector: View {
                 Button(action: { triggerType.wrappedValue = type }) {
                     HStack(spacing: 8) {
                         Image(systemName: type.icon)
-                            .font(.system(size: 12))
+                            .font(.system(size: 14.5))
                             .foregroundColor(triggerType.wrappedValue == type ? .white : .secondary)
                             .frame(width: 24, height: 24)
                             .background(triggerType.wrappedValue == type ? Color.red : Color.clear)
                             .cornerRadius(6)
                         VStack(alignment: .leading, spacing: 1) {
                             Text(type.rawValue)
-                                .font(.system(size: 11, weight: .semibold))
+                                .font(.system(size: 13.5, weight: .semibold))
                                 .foregroundColor(triggerType.wrappedValue == type ? .primary : .secondary)
                             Text(type.description)
-                                .font(.system(size: 9))
+                                .font(.system(size: 11.5))
                                 .foregroundColor(.secondary)
                         }
                         Spacer()
@@ -1102,18 +1515,18 @@ struct NodeInspector: View {
             switch triggerType.wrappedValue {
             case .cron:
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Cron-Ausdruck").font(.system(size: 10, weight: .semibold))
+                    Text("Cron-Ausdruck").font(.system(size: 12.5, weight: .semibold))
                     let cronBinding = Binding<String>(
                         get: { node.triggerConfig?.cronExpression ?? "" },
                         set: { node.triggerConfig?.cronExpression = $0 }
                     )
                     GlassTextField(text: cronBinding, placeholder: "0 8 * * * (täglich 8 Uhr)")
-                    Text("Min Std Tag Mon WTag").font(.system(size: 9, design: .monospaced)).foregroundColor(.secondary)
+                    Text("Min Std Tag Mon WTag").font(.system(size: 11.5, design: .monospaced)).foregroundColor(.secondary)
                 }
 
             case .webhook:
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Webhook-Pfad").font(.system(size: 10, weight: .semibold))
+                    Text("Webhook-Pfad").font(.system(size: 12.5, weight: .semibold))
                     let pathBinding = Binding<String>(
                         get: { node.triggerConfig?.webhookPath ?? "" },
                         set: { node.triggerConfig?.webhookPath = $0 }
@@ -1121,7 +1534,7 @@ struct NodeInspector: View {
                     GlassTextField(text: pathBinding, placeholder: "/hook/mein-workflow")
                     if let path = node.triggerConfig?.webhookPath, !path.isEmpty {
                         Text("URL: http://localhost:8080\(path)")
-                            .font(.system(size: 9, design: .monospaced))
+                            .font(.system(size: 11.5, design: .monospaced))
                             .foregroundColor(.koboldEmerald)
                             .textSelection(.enabled)
                     }
@@ -1129,7 +1542,7 @@ struct NodeInspector: View {
 
             case .fileWatcher:
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Überwachter Pfad").font(.system(size: 10, weight: .semibold))
+                    Text("Überwachter Pfad").font(.system(size: 12.5, weight: .semibold))
                     let watchBinding = Binding<String>(
                         get: { node.triggerConfig?.watchPath ?? "" },
                         set: { node.triggerConfig?.watchPath = $0 }
@@ -1139,7 +1552,7 @@ struct NodeInspector: View {
 
             case .appEvent:
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Event").font(.system(size: 10, weight: .semibold))
+                    Text("Event").font(.system(size: 12.5, weight: .semibold))
                     let eventBinding = Binding<String>(
                         get: { node.triggerConfig?.eventName ?? "" },
                         set: { node.triggerConfig?.eventName = $0 }
@@ -1156,7 +1569,7 @@ struct NodeInspector: View {
 
             case .manual:
                 Text("Workflow wird manuell über den Play-Button gestartet.")
-                    .font(.system(size: 10)).foregroundColor(.secondary)
+                    .font(.system(size: 12.5)).foregroundColor(.secondary)
             }
         }
         .padding(10)

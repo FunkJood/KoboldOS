@@ -3,6 +3,56 @@ import SwiftUI
 // MARK: - KoboldOS Glass Design System
 // Inspired by: MVP GlassUI, OpenClaw dark theme, AgentZero dashboard, Ollama minimal UI
 
+// MARK: - Clover Background Pattern
+
+/// Zartes Kleeblatt-Muster als Hintergrund für die Content-Area
+struct CloverPatternBackground: View {
+    var color: Color = .koboldEmerald
+    var opacity: Double = 0.025
+    var size: CGFloat = 28
+    var spacing: CGFloat = 60
+
+    var body: some View {
+        Canvas { context, canvasSize in
+            let cols = Int(canvasSize.width / spacing) + 2
+            let rows = Int(canvasSize.height / spacing) + 2
+
+            for row in 0..<rows {
+                for col in 0..<cols {
+                    let offsetX: CGFloat = row.isMultiple(of: 2) ? spacing / 2 : 0
+                    let x = CGFloat(col) * spacing + offsetX
+                    let y = CGFloat(row) * spacing
+                    let center = CGPoint(x: x, y: y)
+                    let leafSize = size * 0.38
+                    let petalDist = size * 0.22
+
+                    // 3 Blätter (Kleeblatt)
+                    for angle in [0.0, 2.094, 4.189] { // 0°, 120°, 240° in radians
+                        let lx = center.x + cos(angle - .pi / 2) * petalDist
+                        let ly = center.y + sin(angle - .pi / 2) * petalDist
+                        let leafRect = CGRect(
+                            x: lx - leafSize / 2,
+                            y: ly - leafSize / 2,
+                            width: leafSize,
+                            height: leafSize
+                        )
+                        let leaf = Path(ellipseIn: leafRect)
+                        context.fill(leaf, with: .color(color.opacity(opacity)))
+                    }
+
+                    // Stiel
+                    var stem = Path()
+                    stem.move(to: CGPoint(x: center.x, y: center.y + size * 0.05))
+                    stem.addLine(to: CGPoint(x: center.x + size * 0.08, y: center.y + size * 0.35))
+                    context.stroke(stem, with: .color(color.opacity(opacity * 0.7)), lineWidth: 1)
+                }
+            }
+        }
+        .drawingGroup() // GPU-accelerated rendering for repeated pattern
+        .allowsHitTesting(false)
+    }
+}
+
 // MARK: - GlassBackground
 
 struct GlassBackground: View {
@@ -66,8 +116,8 @@ struct GlassButton: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 6) {
-                if let icon { Image(systemName: icon).font(.system(size: 13, weight: .medium)) }
-                Text(title).font(.system(size: 13, weight: .semibold))
+                if let icon { Image(systemName: icon).font(.system(size: 15.5, weight: .medium)) }
+                Text(title).font(.system(size: 15.5, weight: .semibold))
             }
             .foregroundColor(.white)
             .padding(.horizontal, 14)
@@ -155,7 +205,7 @@ struct GlassChatBubble: View {
                     } else if isUser {
                         // User messages: plain text (no markdown rendering needed)
                         Text(message)
-                            .font(.system(size: 14))
+                            .font(.system(size: 16.5))
                             .foregroundColor(.white)
                             .textSelection(.enabled)
                     } else {
@@ -219,7 +269,7 @@ struct CopyButton: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
         }) {
             Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                .font(.system(size: 10))
+                .font(.system(size: 12.5))
                 .foregroundColor(copied ? .koboldEmerald : .secondary)
         }
         .buttonStyle(.plain)
@@ -304,6 +354,69 @@ struct GlassProgressBar: View {
     }
 }
 
+// MARK: - FuturisticBox (Settings cards with glow + gradient accents)
+
+struct FuturisticBox<Content: View>: View {
+    let icon: String
+    let title: String
+    let accentColor: Color
+    let content: Content
+
+    init(icon: String, title: String, accent: Color = .koboldEmerald, @ViewBuilder content: () -> Content) {
+        self.icon = icon; self.title = title; self.accentColor = accent; self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // Header with gradient accent line
+            HStack(spacing: 8) {
+                Image(systemName: icon)
+                    .font(.system(size: 16.5, weight: .semibold))
+                    .foregroundStyle(
+                        LinearGradient(colors: [accentColor, accentColor.opacity(0.6)], startPoint: .topLeading, endPoint: .bottomTrailing)
+                    )
+                    .shadow(color: accentColor.opacity(0.5), radius: 4)
+                Text(title)
+                    .font(.system(size: 15.5, weight: .bold))
+                    .foregroundColor(.primary)
+                Spacer()
+            }
+
+            // Gradient divider
+            Rectangle()
+                .fill(LinearGradient(colors: [accentColor.opacity(0.6), accentColor.opacity(0.1), .clear], startPoint: .leading, endPoint: .trailing))
+                .frame(height: 1)
+
+            content
+        }
+        .padding(14)
+        .background(
+            ZStack {
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color.koboldPanel)
+                // Subtle gradient overlay
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(
+                        LinearGradient(
+                            colors: [accentColor.opacity(0.04), .clear, .clear],
+                            startPoint: .topLeading, endPoint: .bottomTrailing
+                        )
+                    )
+                // Border with glow
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(
+                        LinearGradient(
+                            colors: [accentColor.opacity(0.25), Color.white.opacity(0.08), accentColor.opacity(0.1)],
+                            startPoint: .topLeading, endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 0.8
+                    )
+            }
+        )
+        .shadow(color: accentColor.opacity(0.08), radius: 8, x: 0, y: 2)
+    }
+}
+
 // MARK: - GlassDivider
 
 struct GlassDivider: View {
@@ -329,11 +442,11 @@ struct GlassSectionHeader: View {
         HStack(spacing: 8) {
             if let icon {
                 Image(systemName: icon)
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.system(size: 14.5, weight: .semibold))
                     .foregroundColor(.koboldEmerald)
             }
             Text(title.uppercased())
-                .font(.system(size: 10, weight: .semibold))
+                .font(.system(size: 12.5, weight: .semibold))
                 .foregroundColor(.secondary)
             Spacer()
         }
@@ -376,7 +489,7 @@ struct MetricCard: View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
                     Image(systemName: icon)
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.system(size: 16.5, weight: .semibold))
                         .foregroundColor(color)
                     Text(title)
                         .font(.caption)
@@ -384,7 +497,7 @@ struct MetricCard: View {
                     Spacer()
                 }
                 Text(value)
-                    .font(.system(size: 22, weight: .bold, design: .monospaced))
+                    .font(.system(size: 23, weight: .bold, design: .monospaced))
                     .foregroundColor(.primary)
                 if let sub = subtitle {
                     Text(sub)
@@ -412,7 +525,7 @@ struct ToolCallBubble: View {
                 Button(action: { withAnimation(.easeInOut(duration: 0.2)) { expanded.toggle() } }) {
                     HStack(spacing: 6) {
                         Image(systemName: "wrench.fill").font(.caption2).foregroundColor(.koboldGold)
-                        Text(toolName).font(.system(size: 12, weight: .semibold)).foregroundColor(.koboldGold)
+                        Text(toolName).font(.system(size: 14.5, weight: .semibold)).foregroundColor(.koboldGold)
                         Spacer()
                         if showCopy {
                             CopyButton(text: "\(toolName): \(args)", copied: $copied)
@@ -423,7 +536,7 @@ struct ToolCallBubble: View {
                 .buttonStyle(.plain)
                 if expanded && !args.isEmpty {
                     Text(args)
-                        .font(.system(size: 11, design: .monospaced))
+                        .font(.system(size: 13.5, design: .monospaced))
                         .foregroundColor(.secondary)
                         .padding(8)
                         .background(Color.black.opacity(0.3))
@@ -456,7 +569,7 @@ struct ToolResultBubble: View {
                 Button(action: { withAnimation(.easeInOut(duration: 0.2)) { expanded.toggle() } }) {
                     HStack(spacing: 6) {
                         Image(systemName: success ? "checkmark.circle.fill" : "xmark.circle.fill").font(.caption2).foregroundColor(color)
-                        Text("\(toolName) \(success ? "✓" : "✗")").font(.system(size: 12, weight: .semibold)).foregroundColor(color)
+                        Text("\(toolName) \(success ? "✓" : "✗")").font(.system(size: 14.5, weight: .semibold)).foregroundColor(color)
                         Spacer()
                         if showCopy {
                             CopyButton(text: output, copied: $copied)
@@ -467,7 +580,7 @@ struct ToolResultBubble: View {
                 .buttonStyle(.plain)
                 if expanded {
                     Text(output.count > 600 ? String(output.prefix(600)) + "…" : output)
-                        .font(.system(size: 11, design: .monospaced))
+                        .font(.system(size: 13.5, design: .monospaced))
                         .foregroundColor(.secondary)
                         .padding(8)
                         .background(Color.black.opacity(0.3))
@@ -531,7 +644,7 @@ struct TerminalResultBubble: View {
                             .font(.caption2)
                             .foregroundColor(success ? .koboldEmerald : .red)
                         Text("Terminal")
-                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                            .font(.system(size: 14.5, weight: .semibold, design: .monospaced))
                             .foregroundColor(success ? .koboldEmerald : .red)
                         Spacer()
                         if showCopy {
@@ -539,7 +652,7 @@ struct TerminalResultBubble: View {
                         }
                         if let code = exitCode {
                             Text(code)
-                                .font(.system(size: 10, design: .monospaced))
+                                .font(.system(size: 12.5, design: .monospaced))
                                 .foregroundColor(success ? .secondary : .red)
                         }
                         Image(systemName: expanded ? "chevron.up" : "chevron.down")
@@ -562,11 +675,11 @@ struct TerminalResultBubble: View {
                                 Text(displayCommand)
                                     .foregroundColor(.white)
                             }
-                            .font(.system(size: 12, design: .monospaced))
+                            .font(.system(size: 14.5, design: .monospaced))
 
                             if !bodyText.isEmpty {
                                 Text(bodyText)
-                                    .font(.system(size: 11, design: .monospaced))
+                                    .font(.system(size: 13.5, design: .monospaced))
                                     .foregroundColor(Color(red: 0.78, green: 0.78, blue: 0.78))
                                     .padding(.top, 4)
                             }
@@ -609,7 +722,7 @@ struct ThoughtBubble: View {
                 Button(action: { withAnimation(.easeInOut(duration: 0.2)) { expanded.toggle() } }) {
                     HStack(spacing: 6) {
                         Image(systemName: "brain").font(.caption2).foregroundColor(.secondary)
-                        Text(thinkingLabel).font(.system(size: 12, weight: .medium)).italic().foregroundColor(.secondary)
+                        Text(thinkingLabel).font(.system(size: 14.5, weight: .medium)).italic().foregroundColor(.secondary)
                         Spacer()
                         if showCopy {
                             CopyButton(text: text, copied: $copied)
@@ -620,7 +733,7 @@ struct ThoughtBubble: View {
                 .buttonStyle(.plain)
                 if expanded {
                     Text(text)
-                        .font(.system(size: 12)).italic()
+                        .font(.system(size: 14.5)).italic()
                         .foregroundColor(.secondary.opacity(0.7))
                         .padding(8)
                         .background(Color.black.opacity(0.2))
@@ -650,10 +763,10 @@ struct ConfidenceBadge: View {
     var body: some View {
         HStack(spacing: 4) {
             Image(systemName: "gauge.medium")
-                .font(.system(size: 9))
+                .font(.system(size: 11.5))
                 .foregroundColor(color)
             Text(String(format: "%.0f%%", value * 100))
-                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .font(.system(size: 12.5, weight: .medium, design: .monospaced))
                 .foregroundColor(color)
         }
         .padding(.horizontal, 8)
@@ -671,9 +784,9 @@ struct AgentStepBubble: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: "arrow.triangle.2.circlepath").font(.system(size: 9)).foregroundColor(.koboldEmerald)
-            Text("Schritt \(stepNumber)").font(.system(size: 10, weight: .semibold)).foregroundColor(.secondary)
-            Text(description).font(.system(size: 10)).foregroundColor(.secondary).lineLimit(1)
+            Image(systemName: "arrow.triangle.2.circlepath").font(.system(size: 11.5)).foregroundColor(.koboldEmerald)
+            Text("Schritt \(stepNumber)").font(.system(size: 12.5, weight: .semibold)).foregroundColor(.secondary)
+            Text(description).font(.system(size: 12.5)).foregroundColor(.secondary).lineLimit(1)
         }
         .padding(.horizontal, 10).padding(.vertical, 3)
         .background(Capsule().fill(Color.white.opacity(0.05)))
@@ -700,10 +813,10 @@ struct SubAgentSpawnBubble: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            Text(profileEmoji).font(.system(size: 10))
-            Text("Sub-Agent").font(.system(size: 10, weight: .semibold)).foregroundColor(.cyan)
-            Text(profile.capitalized).font(.system(size: 10, weight: .bold)).foregroundColor(.cyan)
-            Text("gestartet").font(.system(size: 10)).foregroundColor(.secondary)
+            Text(profileEmoji).font(.system(size: 12.5))
+            Text("Sub-Agent").font(.system(size: 12.5, weight: .semibold)).foregroundColor(.cyan)
+            Text(profile.capitalized).font(.system(size: 12.5, weight: .bold)).foregroundColor(.cyan)
+            Text("gestartet").font(.system(size: 12.5)).foregroundColor(.secondary)
         }
         .padding(.horizontal, 10).padding(.vertical, 4)
         .background(
@@ -733,7 +846,7 @@ struct SubAgentResultBubble: View {
                     HStack(spacing: 6) {
                         Image(systemName: "person.2.fill").font(.caption2).foregroundColor(.cyan)
                         Text("\(profile.capitalized) \(success ? "✓" : "✗")")
-                            .font(.system(size: 12, weight: .semibold)).foregroundColor(.cyan)
+                            .font(.system(size: 14.5, weight: .semibold)).foregroundColor(.cyan)
                         Spacer()
                         if showCopy {
                             CopyButton(text: output, copied: $copied)
@@ -744,7 +857,7 @@ struct SubAgentResultBubble: View {
                 .buttonStyle(.plain)
                 if expanded {
                     Text(output.count > 800 ? String(output.prefix(800)) + "…" : output)
-                        .font(.system(size: 11, design: .monospaced))
+                        .font(.system(size: 13.5, design: .monospaced))
                         .foregroundColor(.secondary)
                         .textSelection(.enabled)
                         .padding(8)
@@ -774,7 +887,7 @@ struct ThinkingPanelBubble: View {
     init(entries: [ThinkingEntry], isLive: Bool) {
         self.entries = entries
         self.isLive = isLive
-        // Live (active) panels start expanded, old messages start collapsed
+        // Live panels are ALWAYS expanded; old messages start collapsed
         self._expanded = State(initialValue: isLive)
     }
 
@@ -786,16 +899,21 @@ struct ThinkingPanelBubble: View {
         HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 0) {
                 // Header — collapsible toggle
-                Button(action: { withAnimation(.easeInOut(duration: 0.2)) { expanded.toggle() } }) {
+                Button(action: {
+                    // Live panels stay expanded, only allow collapse for old messages
+                    if !isLive {
+                        withAnimation(.easeInOut(duration: 0.2)) { expanded.toggle() }
+                    }
+                }) {
                     HStack(spacing: 6) {
                         Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                            .font(.system(size: 9, weight: .bold))
+                            .font(.system(size: 11.5, weight: .bold))
                             .foregroundColor(.koboldGold)
                         Image(systemName: "brain")
-                            .font(.system(size: 11))
+                            .font(.system(size: 13.5))
                             .foregroundColor(.koboldGold)
                         Text(isLive ? "Denkt... (\(entries.count) Schritte)" : "\(entries.count) Schritte")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(.system(size: 14.5, weight: .semibold))
                             .foregroundColor(.koboldGold)
                         if isLive {
                             ProgressView()
@@ -806,7 +924,7 @@ struct ThinkingPanelBubble: View {
                         if !isLive {
                             Button(action: { copyAllSteps() }) {
                                 Image(systemName: "doc.on.doc")
-                                    .font(.system(size: 10))
+                                    .font(.system(size: 12.5))
                                     .foregroundColor(.secondary)
                             }
                             .buttonStyle(.plain)
@@ -816,30 +934,43 @@ struct ThinkingPanelBubble: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .onChange(of: entries.count) {
-                    // Auto-expand when sub-agent events arrive
-                    if hasSubAgentActivity && !expanded {
-                        withAnimation(.easeInOut(duration: 0.2)) { expanded = true }
-                    }
-                }
 
                 if expanded {
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 4) {
-                            ForEach(entries) { entry in
-                                thinkingRow(entry)
+                    ScrollViewReader { scrollProxy in
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 4) {
+                                ForEach(entries) { entry in
+                                    thinkingRow(entry)
+                                        .id(entry.id)
+                                }
+                            }
+                            .padding(.top, 6)
+                        }
+                        .frame(maxHeight: isLive ? 500 : 300)
+                        .onChange(of: entries.count) {
+                            // Keep live panels always expanded
+                            if isLive && !expanded {
+                                withAnimation(.easeInOut(duration: 0.2)) { expanded = true }
+                            }
+                            // Auto-expand when sub-agent events arrive
+                            if hasSubAgentActivity && !expanded {
+                                withAnimation(.easeInOut(duration: 0.2)) { expanded = true }
+                            }
+                            // Auto-scroll to latest entry during live generation
+                            if isLive, let lastEntry = entries.last {
+                                withAnimation(.easeOut(duration: 0.15)) {
+                                    scrollProxy.scrollTo(lastEntry.id, anchor: .bottom)
+                                }
                             }
                         }
-                        .padding(.top, 6)
                     }
-                    .frame(maxHeight: 300)
                 }
             }
             .padding(.horizontal, 12).padding(.vertical, 8)
             .background(
                 RoundedRectangle(cornerRadius: 12)
-                    .fill(Color.koboldGold.opacity(0.06))
-                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.koboldGold.opacity(0.2), lineWidth: 0.5))
+                    .fill(Color.koboldGold.opacity(isLive ? 0.08 : 0.06))
+                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.koboldGold.opacity(isLive ? 0.3 : 0.2), lineWidth: isLive ? 1 : 0.5))
             )
             Spacer(minLength: 80)
         }
@@ -849,17 +980,19 @@ struct ThinkingPanelBubble: View {
     func thinkingRow(_ entry: ThinkingEntry) -> some View {
         HStack(alignment: .top, spacing: 6) {
             Image(systemName: entry.icon)
-                .font(.system(size: 10))
+                .font(.system(size: 12.5))
                 .foregroundColor(colorFor(entry))
                 .frame(width: 14)
             VStack(alignment: .leading, spacing: 2) {
                 if !entry.toolName.isEmpty {
                     Text(entry.toolName)
-                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .font(.system(size: 12.5, weight: .bold, design: .monospaced))
                         .foregroundColor(colorFor(entry))
                 }
-                Text(entry.content.count > 200 ? String(entry.content.prefix(200)) + "..." : entry.content)
-                    .font(.system(size: 11, design: .monospaced))
+                Text(isLive
+                     ? entry.content
+                     : (entry.content.count > 200 ? String(entry.content.prefix(200)) + "..." : entry.content))
+                    .font(.system(size: 13.5, design: .monospaced))
                     .foregroundColor(.secondary)
                     .textSelection(.enabled)
             }
@@ -907,15 +1040,15 @@ struct NotificationPopover: View {
             // Header
             HStack {
                 Image(systemName: "bell.fill")
-                    .font(.system(size: 13))
+                    .font(.system(size: 15.5))
                     .foregroundColor(.koboldGold)
                 Text("Benachrichtigungen")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 15.5, weight: .semibold))
                 Spacer()
                 if !viewModel.notifications.isEmpty {
                     Button(action: { viewModel.clearNotifications() }) {
                         Text("Alle löschen")
-                            .font(.system(size: 11))
+                            .font(.system(size: 13.5))
                             .foregroundColor(.secondary)
                     }
                     .buttonStyle(.plain)
@@ -928,7 +1061,7 @@ struct NotificationPopover: View {
             if viewModel.notifications.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "bell.slash")
-                        .font(.system(size: 24))
+                        .font(.system(size: 25))
                         .foregroundColor(.secondary.opacity(0.5))
                     Text("Keine Benachrichtigungen")
                         .font(.caption)
@@ -968,25 +1101,25 @@ struct NotificationRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: notification.icon)
-                .font(.system(size: 14))
+                .font(.system(size: 16.5))
                 .foregroundColor(notification.color)
                 .frame(width: 20)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(notification.title)
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.system(size: 14.5, weight: .semibold))
                     .foregroundColor(.primary)
                 Text(notification.message)
-                    .font(.system(size: 11))
+                    .font(.system(size: 13.5))
                     .foregroundColor(.secondary)
                     .lineLimit(3)
                 HStack(spacing: 4) {
                     Text(notification.timestamp, style: .relative)
-                        .font(.system(size: 9))
+                        .font(.system(size: 11.5))
                         .foregroundColor(.secondary.opacity(0.7))
                     if notification.navigationTarget != nil {
                         Image(systemName: "arrow.right.circle.fill")
-                            .font(.system(size: 9))
+                            .font(.system(size: 11.5))
                             .foregroundColor(.koboldEmerald.opacity(0.6))
                     }
                 }
@@ -997,7 +1130,7 @@ struct NotificationRow: View {
             if isHovered {
                 Button(action: onDismiss) {
                     Image(systemName: "xmark")
-                        .font(.system(size: 9))
+                        .font(.system(size: 11.5))
                         .foregroundColor(.secondary)
                 }
                 .buttonStyle(.plain)
@@ -1024,10 +1157,10 @@ struct ToolStatusRow: View {
         HStack(spacing: 10) {
             Image(systemName: isEnabled ? "checkmark.circle.fill" : "xmark.circle.fill")
                 .foregroundColor(isEnabled ? .koboldEmerald : .red.opacity(0.7))
-                .font(.system(size: 14))
+                .font(.system(size: 16.5))
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(name).font(.system(size: 13, weight: .semibold))
+                Text(name).font(.system(size: 15.5, weight: .semibold))
                 Text(description).font(.caption).foregroundColor(.secondary)
             }
 
@@ -1057,12 +1190,12 @@ struct ThinkingPlaceholderBubble: View {
         HStack(alignment: .top) {
             HStack(spacing: 8) {
                 Image(systemName: "brain")
-                    .font(.system(size: 13))
+                    .font(.system(size: 15.5))
                     .foregroundColor(.koboldGold)
                     .scaleEffect(pulse ? 1.15 : 0.9)
                     .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: pulse)
                 Text("Denkt...")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.system(size: 14.5, weight: .semibold))
                     .foregroundColor(.koboldGold)
                 ProgressView()
                     .controlSize(.mini)
@@ -1101,10 +1234,10 @@ struct SubAgentActivityBanner: View {
                         .controlSize(.mini)
                         .scaleEffect(0.7)
                     Image(systemName: "person.2.fill")
-                        .font(.system(size: 10))
+                        .font(.system(size: 12.5))
                         .foregroundColor(.cyan)
                     Text("Sub-Agent aktiv: \(agent.toolName.capitalized)")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.system(size: 13.5, weight: .semibold))
                         .foregroundColor(.cyan)
                     Spacer()
                 }
@@ -1199,27 +1332,38 @@ private func parseRichBlocks(_ text: String) -> [RichBlock] {
 }
 
 /// Render a markdown text block as AttributedString (supports bold, italic, code, links)
+/// PERF: Skips expensive markdown parsing for strings >4KB to prevent Main Thread freeze.
 private func markdownAttributedString(_ text: String, isUser: Bool) -> AttributedString {
+    // Skip markdown parsing for large strings — it's O(n²) and blocks Main Thread
+    if text.count > 4000 {
+        var attr = AttributedString(text)
+        attr.font = .system(size: 16.5)
+        attr.foregroundColor = isUser ? .white : .primary
+        return attr
+    }
     do {
         var attr = try AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))
-        attr.font = .system(size: 14)
+        attr.font = .system(size: 16.5)
         attr.foregroundColor = isUser ? .white : .primary
         return attr
     } catch {
         var attr = AttributedString(text)
-        attr.font = .system(size: 14)
+        attr.font = .system(size: 16.5)
         attr.foregroundColor = isUser ? .white : .primary
         return attr
     }
 }
 
 /// Rich text view that renders markdown blocks including code, images, and formatted text
+/// PERF: Blocks are cached via @State so parseRichBlocks isn't re-called on every SwiftUI rerender.
 struct RichTextView: View {
     let text: String
     let isUser: Bool
+    @State private var cachedBlocks: [RichBlock] = []
+    @State private var cachedText: String = ""
 
     var body: some View {
-        let blocks = parseRichBlocks(text)
+        let blocks = cachedBlocks
         VStack(alignment: .leading, spacing: 8) {
             ForEach(blocks) { block in
                 switch block {
@@ -1237,7 +1381,7 @@ struct RichTextView: View {
                         // Header bar
                         HStack {
                             Text(lang.isEmpty ? "Code" : lang)
-                                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                .font(.system(size: 12.5, weight: .semibold, design: .monospaced))
                                 .foregroundColor(.secondary)
                             Spacer()
                             Button(action: {
@@ -1245,7 +1389,7 @@ struct RichTextView: View {
                                 NSPasteboard.general.setString(code, forType: .string)
                             }) {
                                 Image(systemName: "doc.on.doc")
-                                    .font(.system(size: 10))
+                                    .font(.system(size: 12.5))
                                     .foregroundColor(.secondary)
                             }
                             .buttonStyle(.plain)
@@ -1257,7 +1401,7 @@ struct RichTextView: View {
                         // Code content
                         ScrollView(.horizontal, showsIndicators: false) {
                             Text(code)
-                                .font(.system(size: 12, design: .monospaced))
+                                .font(.system(size: 14.5, design: .monospaced))
                                 .foregroundColor(Color(red: 0.85, green: 0.85, blue: 0.9))
                                 .textSelection(.enabled)
                                 .padding(10)
@@ -1292,7 +1436,7 @@ struct RichTextView: View {
                                 Image(systemName: "photo.badge.exclamationmark")
                                     .foregroundColor(.secondary)
                                 Link(alt.isEmpty ? url.lastPathComponent : alt, destination: url)
-                                    .font(.system(size: 12))
+                                    .font(.system(size: 14.5))
                             }
                         default:
                             ProgressView()
@@ -1302,6 +1446,14 @@ struct RichTextView: View {
                 }
             }
         }
+        .onAppear { reparse() }
+        .onChange(of: text) { reparse() }
+    }
+
+    private func reparse() {
+        guard text != cachedText else { return }
+        cachedText = text
+        cachedBlocks = parseRichBlocks(text)
     }
 }
 

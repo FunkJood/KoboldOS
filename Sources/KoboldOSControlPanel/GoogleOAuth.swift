@@ -71,28 +71,28 @@ final class GoogleOAuth: NSObject, @unchecked Sendable {
     private func getRefreshTokenRaw() -> String { lock.withLock { _refreshToken } }
     private func getTokenExpiry() -> Date { lock.withLock { _tokenExpiry } }
 
-    // Hardcoded OAuth client for KoboldOS (Desktop installed app — public client)
-    let clientId = "1000137948067-qiu8bq7sepj75viib7im5tdmbsjdau6a.apps.googleusercontent.com"
-    let clientSecret = "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"
+    // OAuth client loaded from Settings (Verbindungen → Google)
+    var clientId: String { UserDefaults.standard.string(forKey: "kobold.google.clientId") ?? "" }
+    var clientSecret: String { UserDefaults.standard.string(forKey: "kobold.google.clientSecret") ?? "" }
 
     private override init() {
         super.init()
-        Task { await restoreFromKeychain() }
+        restoreFromDefaults()
     }
 
-    // MARK: - Restore from Keychain
+    // MARK: - Restore from UserDefaults (avoids Keychain password prompts)
 
-    private func restoreFromKeychain() async {
-        let store = SecretStore.shared
-        if let access = await store.get("google.access_token"),
-           let refresh = await store.get("google.refresh_token"),
-           let expiryStr = await store.get("google.token_expiry"),
-           let expiryInterval = Double(expiryStr) {
+    private func restoreFromDefaults() {
+        let d = UserDefaults.standard
+        if let access = d.string(forKey: "kobold.google.accessToken"),
+           let refresh = d.string(forKey: "kobold.google.refreshToken"),
+           d.double(forKey: "kobold.google.tokenExpiry") > 0 {
+            let expiryInterval = d.double(forKey: "kobold.google.tokenExpiry")
             setAccessToken(access)
             setRefreshToken(refresh)
             setTokenExpiry(Date(timeIntervalSince1970: expiryInterval))
             setConnected(true)
-            if let email = await store.get("google.user_email") {
+            if let email = d.string(forKey: "kobold.google.email") {
                 setUserEmail(email)
             }
             print("[GoogleOAuth] Restored session for \(userEmail)")
@@ -340,14 +340,13 @@ final class GoogleOAuth: NSObject, @unchecked Sendable {
             setTokenExpiry(expiry)
             setConnected(true)
 
-            let store = SecretStore.shared
-            await store.set(accessToken, forKey: "google.access_token")
-            await store.set(refreshToken, forKey: "google.refresh_token")
-            await store.set(String(expiry.timeIntervalSince1970), forKey: "google.token_expiry")
+            let d = UserDefaults.standard
+            d.set(accessToken, forKey: "kobold.google.accessToken")
+            d.set(refreshToken, forKey: "kobold.google.refreshToken")
+            d.set(expiry.timeIntervalSince1970, forKey: "kobold.google.tokenExpiry")
+            d.set(true, forKey: "kobold.google.connected")
 
             await fetchUserEmail(accessToken: accessToken)
-
-            UserDefaults.standard.set(true, forKey: "kobold.google.connected")
             print("[GoogleOAuth] Sign-in successful")
         } catch {
             print("[GoogleOAuth] Token exchange error: \(error)")
@@ -386,9 +385,8 @@ final class GoogleOAuth: NSObject, @unchecked Sendable {
             setAccessToken(accessToken)
             setTokenExpiry(expiry)
 
-            let store = SecretStore.shared
-            await store.set(accessToken, forKey: "google.access_token")
-            await store.set(String(expiry.timeIntervalSince1970), forKey: "google.token_expiry")
+            UserDefaults.standard.set(accessToken, forKey: "kobold.google.accessToken")
+            UserDefaults.standard.set(expiry.timeIntervalSince1970, forKey: "kobold.google.tokenExpiry")
 
             return true
         } catch {
@@ -428,14 +426,12 @@ final class GoogleOAuth: NSObject, @unchecked Sendable {
         setUserEmail("")
         setConnected(false)
 
-        let store = SecretStore.shared
-        await store.delete("google.access_token")
-        await store.delete("google.refresh_token")
-        await store.delete("google.token_expiry")
-        await store.delete("google.user_email")
-
-        UserDefaults.standard.set(false, forKey: "kobold.google.connected")
-        UserDefaults.standard.removeObject(forKey: "kobold.google.email")
+        let d = UserDefaults.standard
+        d.removeObject(forKey: "kobold.google.accessToken")
+        d.removeObject(forKey: "kobold.google.refreshToken")
+        d.removeObject(forKey: "kobold.google.tokenExpiry")
+        d.removeObject(forKey: "kobold.google.email")
+        d.set(false, forKey: "kobold.google.connected")
         print("[GoogleOAuth] Signed out")
     }
 
@@ -453,7 +449,6 @@ final class GoogleOAuth: NSObject, @unchecked Sendable {
             if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                let email = json["email"] as? String {
                 setUserEmail(email)
-                await SecretStore.shared.set(email, forKey: "google.user_email")
                 UserDefaults.standard.set(email, forKey: "kobold.google.email")
                 print("[GoogleOAuth] User: \(email)")
             }

@@ -2,7 +2,7 @@ import SwiftUI
 import CoreLocation
 
 // MARK: - WeatherManager
-// OpenWeatherMap integration for Dashboard weather widget
+// Open-Meteo integration for Dashboard weather widget (no API key needed)
 
 @MainActor
 class WeatherManager: NSObject, ObservableObject, CLLocationManagerDelegate {
@@ -19,7 +19,6 @@ class WeatherManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     private let cacheInterval: TimeInterval = 1800 // 30 min
     private var locationManager: CLLocationManager?
 
-    @AppStorage("kobold.weather.apiKey") var apiKey: String = ""
     @AppStorage("kobold.weather.city") var manualCity: String = ""
 
     override init() {
@@ -27,23 +26,18 @@ class WeatherManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     }
 
     func fetchWeatherIfNeeded() {
-        guard !apiKey.isEmpty else { return }
         if let last = lastFetch, Date().timeIntervalSince(last) < cacheInterval { return }
         fetchWeather()
     }
 
     func fetchWeather() {
-        guard !apiKey.isEmpty else {
-            lastError = "Kein API-Key"
-            return
-        }
         isLoading = true
         lastError = nil
 
         if !manualCity.isEmpty {
-            fetchByCity(manualCity)
+            geocodeAndFetch(manualCity)
         } else {
-            // Try CoreLocation
+            // Use CoreLocation for automatic detection
             locationManager = CLLocationManager()
             locationManager?.delegate = self
             locationManager?.desiredAccuracy = kCLLocationAccuracyKilometer
@@ -52,39 +46,74 @@ class WeatherManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         }
     }
 
-    private func fetchByCity(_ city: String) {
-        let encoded = city.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? city
-        let urlStr = "https://api.openweathermap.org/data/2.5/weather?q=\(encoded)&units=metric&lang=de&appid=\(apiKey)"
-        guard let url = URL(string: urlStr) else { return }
-        performRequest(url)
+    // MARK: - Geocoding (city name -> lat/lon via Apple CLGeocoder)
+
+    private func geocodeAndFetch(_ city: String) {
+        let geocoder = CLGeocoder()
+        geocoder.geocodeAddressString(city) { [weak self] placemarks, error in
+            Task { @MainActor in
+                guard let self = self else { return }
+                if let error = error {
+                    self.lastError = "Geocoding fehlgeschlagen: \(error.localizedDescription)"
+                    self.isLoading = false
+                    return
+                }
+                guard let placemark = placemarks?.first,
+                      let location = placemark.location else {
+                    self.lastError = "Stadt nicht gefunden: \(city)"
+                    self.isLoading = false
+                    return
+                }
+                let resolvedCity = placemark.locality ?? placemark.name ?? city
+                self.fetchByLocation(
+                    lat: location.coordinate.latitude,
+                    lon: location.coordinate.longitude,
+                    resolvedCity: resolvedCity
+                )
+            }
+        }
     }
 
-    private func fetchByLocation(lat: Double, lon: Double) {
-        let urlStr = "https://api.openweathermap.org/data/2.5/weather?lat=\(lat)&lon=\(lon)&units=metric&lang=de&appid=\(apiKey)"
-        guard let url = URL(string: urlStr) else { return }
-        performRequest(url)
-    }
+    // MARK: - Open-Meteo API Request
 
-    private func performRequest(_ url: URL) {
+    private func fetchByLocation(lat: Double, lon: Double, resolvedCity: String? = nil) {
+        let urlStr = "https://api.open-meteo.com/v1/forecast?latitude=\(lat)&longitude=\(lon)&current=temperature_2m,weather_code,is_day,wind_speed_10m&timezone=auto"
+        guard let url = URL(string: urlStr) else {
+            lastError = "Ungültige URL"
+            isLoading = false
+            return
+        }
+
         Task {
             do {
                 let (data, _) = try await URLSession.shared.data(from: url)
-                if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                    if let main = json["main"] as? [String: Any],
-                       let temp = main["temp"] as? Double {
-                        self.temperature = temp
-                    }
-                    if let weather = json["weather"] as? [[String: Any]],
-                       let first = weather.first {
-                        self.weatherDescription = (first["weatherDescription"] as? String) ?? ""
-                        let iconCode = (first["icon"] as? String) ?? ""
-                        self.iconName = mapWeatherIcon(iconCode)
-                    }
-                    if let name = json["name"] as? String {
-                        self.cityName = name
-                    }
-                    self.lastFetch = Date()
+                guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let current = json["current"] as? [String: Any] else {
+                    self.lastError = "Ungültige API-Antwort"
+                    self.isLoading = false
+                    return
                 }
+
+                // Parse temperature
+                if let temp = current["temperature_2m"] as? Double {
+                    self.temperature = temp
+                }
+
+                // Parse weather code and is_day
+                let weatherCode = current["weather_code"] as? Int ?? -1
+                let isDay = (current["is_day"] as? Int ?? 1) == 1
+
+                self.weatherDescription = wmoDescription(for: weatherCode)
+                self.iconName = wmoIcon(for: weatherCode, isDay: isDay)
+
+                // Set city name: use resolved city or reverse-geocode
+                if let city = resolvedCity, !city.isEmpty {
+                    self.cityName = city
+                } else {
+                    self.reverseGeocodeCity(lat: lat, lon: lon)
+                }
+
+                self.lastFetch = Date()
             } catch {
                 self.lastError = error.localizedDescription
             }
@@ -92,7 +121,23 @@ class WeatherManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         }
     }
 
-    // CLLocationManagerDelegate
+    // MARK: - Reverse Geocoding (lat/lon -> city name)
+
+    private func reverseGeocodeCity(lat: Double, lon: Double) {
+        let location = CLLocation(latitude: lat, longitude: lon)
+        let geocoder = CLGeocoder()
+        geocoder.reverseGeocodeLocation(location) { [weak self] placemarks, _ in
+            Task { @MainActor in
+                guard let self = self else { return }
+                if let placemark = placemarks?.first {
+                    self.cityName = placemark.locality ?? placemark.name ?? ""
+                }
+            }
+        }
+    }
+
+    // MARK: - CLLocationManagerDelegate
+
     nonisolated func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let loc = locations.first else { return }
         Task { @MainActor in
@@ -103,29 +148,75 @@ class WeatherManager: NSObject, ObservableObject, CLLocationManagerDelegate {
 
     nonisolated func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
         Task { @MainActor in
-            // Fallback: try Berlin if no location
             if self.manualCity.isEmpty {
-                self.fetchByCity("Berlin")
+                // Fallback: Berlin coordinates
+                self.fetchByLocation(lat: 52.52, lon: 13.405, resolvedCity: "Berlin")
             }
             self.locationManager = nil
         }
     }
 
-    private func mapWeatherIcon(_ code: String) -> String {
+    // MARK: - WMO Weather Code Mapping
+
+    private func wmoDescription(for code: Int) -> String {
         switch code {
-        case "01d": return "sun.max.fill"
-        case "01n": return "moon.fill"
-        case "02d": return "cloud.sun.fill"
-        case "02n": return "cloud.moon.fill"
-        case "03d", "03n": return "cloud.fill"
-        case "04d", "04n": return "smoke.fill"
-        case "09d", "09n": return "cloud.drizzle.fill"
-        case "10d": return "cloud.sun.rain.fill"
-        case "10n": return "cloud.moon.rain.fill"
-        case "11d", "11n": return "cloud.bolt.fill"
-        case "13d", "13n": return "cloud.snow.fill"
-        case "50d", "50n": return "cloud.fog.fill"
-        default: return "cloud.fill"
+        case 0:
+            return "Klarer Himmel"
+        case 1:
+            return "Überwiegend klar"
+        case 2:
+            return "Teilweise bewölkt"
+        case 3:
+            return "Bedeckt"
+        case 45, 48:
+            return "Nebel"
+        case 51, 53, 55:
+            return "Nieselregen"
+        case 61, 63:
+            return "Regen"
+        case 65:
+            return "Starker Regen"
+        case 71, 73, 75, 77:
+            return "Schnee"
+        case 80:
+            return "Leichte Schauer"
+        case 81, 82:
+            return "Schauer"
+        case 95, 96, 99:
+            return "Gewitter"
+        default:
+            return "Unbekannt"
+        }
+    }
+
+    private func wmoIcon(for code: Int, isDay: Bool) -> String {
+        switch code {
+        case 0:
+            return isDay ? "sun.max.fill" : "moon.stars.fill"
+        case 1:
+            return isDay ? "sun.min.fill" : "moon.fill"
+        case 2:
+            return isDay ? "cloud.sun.fill" : "cloud.moon.fill"
+        case 3:
+            return "cloud.fill"
+        case 45, 48:
+            return "cloud.fog.fill"
+        case 51, 53, 55:
+            return "cloud.drizzle.fill"
+        case 61, 63:
+            return "cloud.rain.fill"
+        case 65:
+            return "cloud.heavyrain.fill"
+        case 71, 73, 75, 77:
+            return "cloud.snow.fill"
+        case 80:
+            return isDay ? "cloud.sun.rain.fill" : "cloud.moon.rain.fill"
+        case 81, 82:
+            return "cloud.rain.fill"
+        case 95, 96, 99:
+            return "cloud.bolt.fill"
+        default:
+            return "cloud.fill"
         }
     }
 }

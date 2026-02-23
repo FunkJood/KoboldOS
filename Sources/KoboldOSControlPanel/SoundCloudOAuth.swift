@@ -38,22 +38,22 @@ final class SoundCloudOAuth: NSObject, @unchecked Sendable {
 
     private override init() {
         super.init()
-        Task { await restoreFromKeychain() }
+        restoreFromDefaults()
     }
 
-    // MARK: - Restore
+    // MARK: - Restore from UserDefaults (avoids Keychain password prompts)
 
-    private func restoreFromKeychain() async {
-        let store = SecretStore.shared
-        if let access = await store.get("soundcloud.access_token"),
-           let refresh = await store.get("soundcloud.refresh_token"),
-           let expiryStr = await store.get("soundcloud.token_expiry"),
-           let expiryInterval = Double(expiryStr) {
+    private func restoreFromDefaults() {
+        let d = UserDefaults.standard
+        if let access = d.string(forKey: "kobold.soundcloud.accessToken"),
+           let refresh = d.string(forKey: "kobold.soundcloud.refreshToken"),
+           d.double(forKey: "kobold.soundcloud.tokenExpiry") > 0 {
+            let expiryInterval = d.double(forKey: "kobold.soundcloud.tokenExpiry")
             setAccessToken(access)
             setRefreshToken(refresh)
             setTokenExpiry(Date(timeIntervalSince1970: expiryInterval))
             setConnected(true)
-            if let name = await store.get("soundcloud.user_name") {
+            if let name = d.string(forKey: "kobold.soundcloud.username") {
                 setUserName(name)
             }
             print("[SoundCloud] Restored session for \(userName)")
@@ -242,15 +242,15 @@ final class SoundCloudOAuth: NSObject, @unchecked Sendable {
             setTokenExpiry(expiry)
             setConnected(true)
 
-            let store = SecretStore.shared
-            await store.set(accessToken, forKey: "soundcloud.access_token")
+            let d = UserDefaults.standard
+            d.set(accessToken, forKey: "kobold.soundcloud.accessToken")
             if !refreshToken.isEmpty {
-                await store.set(refreshToken, forKey: "soundcloud.refresh_token")
+                d.set(refreshToken, forKey: "kobold.soundcloud.refreshToken")
             }
-            await store.set(String(expiry.timeIntervalSince1970), forKey: "soundcloud.token_expiry")
+            d.set(expiry.timeIntervalSince1970, forKey: "kobold.soundcloud.tokenExpiry")
+            d.set(true, forKey: "kobold.soundcloud.connected")
 
             await fetchUserInfo(accessToken: accessToken)
-            UserDefaults.standard.set(true, forKey: "kobold.soundcloud.connected")
             print("[SoundCloud] Sign-in successful")
         } catch {
             print("[SoundCloud] Token exchange error: \(error)")
@@ -287,13 +287,12 @@ final class SoundCloudOAuth: NSObject, @unchecked Sendable {
             setAccessToken(accessToken)
             setTokenExpiry(expiry)
 
-            let store = SecretStore.shared
-            await store.set(accessToken, forKey: "soundcloud.access_token")
-            await store.set(String(expiry.timeIntervalSince1970), forKey: "soundcloud.token_expiry")
+            UserDefaults.standard.set(accessToken, forKey: "kobold.soundcloud.accessToken")
+            UserDefaults.standard.set(expiry.timeIntervalSince1970, forKey: "kobold.soundcloud.tokenExpiry")
 
             if let newRefresh = json["refresh_token"] as? String, !newRefresh.isEmpty {
                 setRefreshToken(newRefresh)
-                await store.set(newRefresh, forKey: "soundcloud.refresh_token")
+                UserDefaults.standard.set(newRefresh, forKey: "kobold.soundcloud.refreshToken")
             }
             return true
         } catch {
@@ -322,14 +321,12 @@ final class SoundCloudOAuth: NSObject, @unchecked Sendable {
         setUserName("")
         setConnected(false)
 
-        let store = SecretStore.shared
-        await store.delete("soundcloud.access_token")
-        await store.delete("soundcloud.refresh_token")
-        await store.delete("soundcloud.token_expiry")
-        await store.delete("soundcloud.user_name")
-
-        UserDefaults.standard.set(false, forKey: "kobold.soundcloud.connected")
-        UserDefaults.standard.removeObject(forKey: "kobold.soundcloud.username")
+        let d = UserDefaults.standard
+        d.removeObject(forKey: "kobold.soundcloud.accessToken")
+        d.removeObject(forKey: "kobold.soundcloud.refreshToken")
+        d.removeObject(forKey: "kobold.soundcloud.tokenExpiry")
+        d.removeObject(forKey: "kobold.soundcloud.username")
+        d.set(false, forKey: "kobold.soundcloud.connected")
         print("[SoundCloud] Signed out")
     }
 
@@ -344,7 +341,6 @@ final class SoundCloudOAuth: NSObject, @unchecked Sendable {
             if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                let username = json["username"] as? String {
                 setUserName(username)
-                await SecretStore.shared.set(username, forKey: "soundcloud.user_name")
                 UserDefaults.standard.set(username, forKey: "kobold.soundcloud.username")
                 print("[SoundCloud] User: \(username)")
             }

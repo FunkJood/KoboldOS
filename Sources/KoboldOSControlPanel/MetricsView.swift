@@ -9,7 +9,7 @@ struct MetricsView: View {
                 // Header
                 HStack(spacing: 10) {
                     Image(systemName: "chart.bar.fill")
-                        .font(.system(size: 18, weight: .semibold))
+                        .font(.system(size: 19, weight: .semibold))
                         .foregroundColor(.koboldEmerald)
                     Text("Metrics").font(.title2.bold())
                     Spacer()
@@ -23,11 +23,11 @@ struct MetricsView: View {
                     MetricCard(title: "Chat Requests", value: "\(viewModel.metrics.chatRequests)",
                                subtitle: "Total sent", icon: "message.fill", color: .koboldEmerald)
                     MetricCard(title: "Tool Calls", value: "\(viewModel.metrics.toolCalls)",
-                               subtitle: "Executed", icon: "wrench.fill", color: .blue)
+                               subtitle: "Executed", icon: "wrench.fill", color: .koboldEmerald)
                     MetricCard(title: "Errors", value: "\(viewModel.metrics.errors)",
                                subtitle: "Failed", icon: "exclamationmark.triangle.fill", color: .red)
                     MetricCard(title: "Tokens", value: "\(viewModel.metrics.tokensTotal)",
-                               subtitle: "Generated", icon: "text.alignleft", color: .purple)
+                               subtitle: "Generated", icon: "text.alignleft", color: .koboldGold)
                     MetricCard(title: "Uptime", value: formatUptime(viewModel.metrics.uptimeSeconds),
                                subtitle: "Running", icon: "clock.fill", color: .koboldGold)
                     MetricCard(title: "Cache Hits", value: "\(viewModel.metrics.cacheHits)",
@@ -39,7 +39,7 @@ struct MetricsView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         GlassSectionHeader(title: "Runtime Status", icon: "server.rack")
                         HStack {
-                            Text("Daemon").font(.system(size: 13))
+                            Text("Daemon").font(.system(size: 15.5))
                             Spacer()
                             GlassStatusBadge(
                                 label: viewModel.isConnected ? "Running" : "Stopped",
@@ -47,7 +47,7 @@ struct MetricsView: View {
                             )
                         }
                         HStack {
-                            Text("Ollama").font(.system(size: 13))
+                            Text("Ollama").font(.system(size: 15.5))
                             Spacer()
                             GlassStatusBadge(
                                 label: viewModel.ollamaStatus,
@@ -56,7 +56,7 @@ struct MetricsView: View {
                         }
                         if !viewModel.activeOllamaModel.isEmpty {
                             HStack {
-                                Text("Active Model").font(.system(size: 13))
+                                Text("Active Model").font(.system(size: 15.5))
                                 Spacer()
                                 Text(viewModel.activeOllamaModel)
                                     .font(.system(.caption, design: .monospaced))
@@ -68,7 +68,7 @@ struct MetricsView: View {
             }
             .padding(20)
         }
-        .background(Color.koboldBackground)
+        .background(ZStack { Color.koboldBackground; LinearGradient(colors: [Color.koboldEmerald.opacity(0.015), .clear, Color.koboldGold.opacity(0.01)], startPoint: .topLeading, endPoint: .bottomTrailing) })
         .task { await viewModel.loadMetrics(); await viewModel.checkOllamaStatus() }
     }
 

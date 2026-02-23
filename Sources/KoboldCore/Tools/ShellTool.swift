@@ -127,7 +127,9 @@ public struct ShellTool: Tool, Sendable {
         let command = arguments["command"] ?? ""
         let workdir = arguments["workdir"] ?? NSTemporaryDirectory()
         let timeoutStr = arguments["timeout"] ?? "30"
-        let timeout = min(Double(timeoutStr) ?? 30.0, 120.0)
+        let hardCap = Double(UserDefaults.standard.integer(forKey: "kobold.shell.timeout"))
+        let maxTimeout = hardCap > 0 ? hardCap : 300.0
+        let timeout = min(Double(timeoutStr) ?? 60.0, maxTimeout)
 
         try validateCommand(command)
 
@@ -253,11 +255,15 @@ public struct ShellTool: Tool, Sendable {
             nonisolated(unsafe) var stderrData = Data()
             let dataLock = NSLock()
 
+            let maxOutputBytes = 2_000_000 // 2MB cap — generous for large outputs
+
             stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
                 let chunk = handle.availableData
                 if !chunk.isEmpty {
                     dataLock.lock()
-                    stdoutData.append(chunk)
+                    if stdoutData.count < maxOutputBytes {
+                        stdoutData.append(chunk.prefix(maxOutputBytes - stdoutData.count))
+                    }
                     dataLock.unlock()
                 }
             }
@@ -265,7 +271,9 @@ public struct ShellTool: Tool, Sendable {
                 let chunk = handle.availableData
                 if !chunk.isEmpty {
                     dataLock.lock()
-                    stderrData.append(chunk)
+                    if stderrData.count < maxOutputBytes {
+                        stderrData.append(chunk.prefix(maxOutputBytes - stderrData.count))
+                    }
                     dataLock.unlock()
                 }
             }

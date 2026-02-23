@@ -5,9 +5,25 @@ import Foundation
 private actor SubAgentCache {
     static let shared = SubAgentCache()
     private var agents: [String: AgentLoop] = [:]
+    private var activeCount: Int = 0
+
+    /// Max concurrent sub-agents, configurable via Settings (default 3)
+    private var maxConcurrent: Int {
+        let v = UserDefaults.standard.integer(forKey: "kobold.subagent.maxConcurrent")
+        return v > 0 ? v : 3
+    }
 
     func get(_ profile: String) -> AgentLoop? { agents[profile] }
     func set(_ profile: String, agent: AgentLoop) { agents[profile] = agent }
+
+    /// Try to acquire a slot for a new sub-agent. Returns false if at capacity.
+    func acquireSlot() -> Bool {
+        guard activeCount < maxConcurrent else { return false }
+        activeCount += 1
+        return true
+    }
+    func releaseSlot() { activeCount = max(0, activeCount - 1) }
+    func currentActive() -> Int { activeCount }
 }
 
 // MARK: - Profile → AgentType mapping
@@ -79,29 +95,46 @@ public struct DelegateTaskTool: Tool, Sendable {
     public func execute(arguments: [String: String]) async throws -> String {
         let profile = arguments["profile"] ?? "general"
         let message = arguments["message"] ?? ""
-        let reset = arguments["reset"]?.lowercased() != "false"
+        let _ = arguments["reset"] // reserved for future use
 
         guard !message.isEmpty else {
             throw ToolError.missingRequired("message")
         }
 
+        // Concurrency limit: max 3 sub-agents at once
+        guard await SubAgentCache.shared.acquireSlot() else {
+            return "⚠️ Max. 3 Sub-Agenten gleichzeitig erlaubt. Warte bis ein anderer fertig ist."
+        }
+        defer { Task { await SubAgentCache.shared.releaseSlot() } }
+
         let agentType = SubAgentProfile.agentType(for: profile)
 
-        // Get or create sub-agent (actor-safe cache)
-        let subAgent: AgentLoop
-        if !reset, let existing = await SubAgentCache.shared.get(profile) {
-            subAgent = existing
-        } else {
-            subAgent = AgentLoop(agentID: "sub-\(profile)")
-            // Inherit parent memory so sub-agent knows context
-            if let parent = parentMemory {
-                await subAgent.coreMemory.inheritFrom(parent)
-            }
-            await SubAgentCache.shared.set(profile, agent: subAgent)
+        // Always create fresh agent to prevent state contamination between calls
+        let subAgent = AgentLoop(agentID: "sub-\(profile)-\(UUID().uuidString.prefix(6))")
+        if let parent = parentMemory {
+            await subAgent.coreMemory.inheritFrom(parent)
         }
 
-        // Run sub-agent with inherited provider config
-        let result = try await subAgent.run(userMessage: message, agentType: agentType, providerConfig: providerConfig)
+        // Run sub-agent with configurable timeout (default 5 min)
+        let timeoutSecs = UserDefaults.standard.integer(forKey: "kobold.subagent.timeout")
+        let timeoutNs = UInt64(timeoutSecs > 0 ? timeoutSecs : 300) * 1_000_000_000
+        let result: AgentResult
+        do {
+            result = try await withThrowingTaskGroup(of: AgentResult.self) { group in
+                group.addTask {
+                    try await subAgent.run(userMessage: message, agentType: agentType, providerConfig: self.providerConfig)
+                }
+                group.addTask {
+                    try await Task.sleep(nanoseconds: timeoutNs)
+                    throw ToolError.executionFailed("Sub-Agent Timeout nach \(timeoutSecs > 0 ? timeoutSecs : 300) Sekunden")
+                }
+                let first = try await group.next()!
+                group.cancelAll()
+                return first
+            }
+        } catch {
+            return "⚠️ Sub-Agent (\(profile)) fehlgeschlagen: \(error.localizedDescription)"
+        }
 
         // Build summary of steps for the instructor
         var stepsSummary = ""
@@ -215,24 +248,42 @@ public struct DelegateParallelTool: Tool, Sendable {
             throw ToolError.executionFailed("Leeres Aufgaben-Array.")
         }
 
+        // Hard limit: max 4 parallel sub-agents
+        let cappedTasks = Array(tasks.prefix(4))
+        if tasks.count > 4 {
+            print("[DelegateParallel] Capped \(tasks.count) tasks to 4")
+        }
+
         let parentConfig = self.providerConfig
         let parentMem = self.parentMemory
 
-        // Run all tasks in parallel using TaskGroup
+        // Run tasks in parallel with configurable timeout per agent
+        let parTimeoutSecs = UserDefaults.standard.integer(forKey: "kobold.subagent.timeout")
+        let parTimeoutNs = UInt64(parTimeoutSecs > 0 ? parTimeoutSecs : 300) * 1_000_000_000
         let results = await withTaskGroup(of: (Int, String, String).self, returning: [(Int, String, String)].self) { group in
-            for (index, task) in tasks.enumerated() {
+            for (index, task) in cappedTasks.enumerated() {
                 let profile = task["profile"] ?? "general"
                 let message = task["message"] ?? ""
 
                 group.addTask {
                     let agentType = SubAgentProfile.agentType(for: profile)
-                    let subAgent = AgentLoop(agentID: "parallel-\(profile)-\(index)")
-                    // Inherit parent memory
+                    let subAgent = AgentLoop(agentID: "par-\(profile)-\(index)-\(UUID().uuidString.prefix(4))")
                     if let parent = parentMem {
                         await subAgent.coreMemory.inheritFrom(parent)
                     }
                     do {
-                        let result = try await subAgent.run(userMessage: message, agentType: agentType, providerConfig: parentConfig)
+                        let result = try await withThrowingTaskGroup(of: AgentResult.self) { tg in
+                            tg.addTask {
+                                try await subAgent.run(userMessage: message, agentType: agentType, providerConfig: parentConfig)
+                            }
+                            tg.addTask {
+                                try await Task.sleep(nanoseconds: parTimeoutNs)
+                                throw ToolError.executionFailed("Timeout nach \(parTimeoutSecs > 0 ? parTimeoutSecs : 300) Sek.")
+                            }
+                            let first = try await tg.next()!
+                            tg.cancelAll()
+                            return first
+                        }
                         return (index, profile, result.finalOutput)
                     } catch {
                         return (index, profile, "Fehler: \(error.localizedDescription)")

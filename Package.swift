@@ -13,6 +13,7 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.2.0"),
         .package(url: "https://github.com/exPHAT/SwiftWhisper.git", branch: "master"),
         .package(url: "https://github.com/apple/ml-stable-diffusion.git", branch: "main"),
+        .package(url: "https://github.com/apple/swift-crypto.git", "1.0.0"..<"5.0.0"),
     ],
     targets: [
         // MARK: - CLI
@@ -20,7 +21,8 @@ let package = Package(
             name: "KoboldCLI",
             dependencies: [
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
-                "KoboldCore"
+                "KoboldCore",
+                .target(name: "WebGUI", condition: .when(platforms: [.linux]))
             ],
             path: "Sources/KoboldCLI",
             swiftSettings: [
@@ -50,7 +52,9 @@ let package = Package(
         // MARK: - Core Library
         .target(
             name: "KoboldCore",
-            dependencies: [],
+            dependencies: [
+                .product(name: "Crypto", package: "swift-crypto", condition: .when(platforms: [.linux]))
+            ],
             path: "Sources/KoboldCore",
             exclude: [
                 // Multi-agent message bus system (not needed for GUI)
@@ -60,6 +64,16 @@ let package = Package(
                 "Agent/ToolEngine.swift",
                 "Agent/OllamaAgent.swift",
             ]
+        ),
+        // MARK: - Web GUI (Linux/Docker support)
+        .target(
+            name: "WebGUI",
+            dependencies: [
+                "KoboldCore",
+                .product(name: "ArgumentParser", package: "swift-argument-parser")
+            ],
+            path: "Sources/WebGUI",
+            swiftSettings: [.define("WEB_GUI")]
         ),
 
         // MARK: - Tests

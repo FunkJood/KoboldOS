@@ -20,7 +20,7 @@ struct StoreView: View {
                 GlassCard {
                     VStack(spacing: 20) {
                         Image(systemName: "bag.fill")
-                            .font(.system(size: 48))
+                            .font(.system(size: 49))
                             .foregroundColor(.koboldGold)
 
                         Text("Bald verfügbar")
@@ -63,10 +63,10 @@ struct StoreView: View {
     private func storeFeatureCard(icon: String, title: String, description: String) -> some View {
         VStack(spacing: 8) {
             Image(systemName: icon)
-                .font(.system(size: 24))
+                .font(.system(size: 25))
                 .foregroundColor(.koboldEmerald)
             Text(title)
-                .font(.system(size: 13, weight: .semibold))
+                .font(.system(size: 15.5, weight: .semibold))
             Text(description)
                 .font(.caption)
                 .foregroundColor(.secondary)

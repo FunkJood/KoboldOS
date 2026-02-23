@@ -37,7 +37,7 @@ struct ModelsView: View {
                             ForEach(Array(backendHealth.keys).sorted(), id: \.self) { backend in
                                 HStack {
                                     Circle()
-                                        .fill(backendHealth[backend] == true ? Color.green : Color.red)
+                                        .fill(backendHealth[backend] == true ? Color.koboldEmerald : Color.red)
                                         .frame(width: 12, height: 12)
                                     Text(backend)
                                     Spacer()
@@ -49,6 +49,7 @@ struct ModelsView: View {
                         .padding()
                         .background(Color.koboldSurface)
                         .cornerRadius(12)
+                        .overlay(RoundedRectangle(cornerRadius: 12).stroke(LinearGradient(colors: [Color.koboldEmerald.opacity(0.12), Color.koboldGold.opacity(0.08)], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 0.5))
                     }
                 }
 
@@ -135,6 +136,7 @@ struct ModelsView: View {
                         .padding()
                         .background(Color.koboldPanel)
                         .cornerRadius(12)
+                        .overlay(RoundedRectangle(cornerRadius: 12).stroke(LinearGradient(colors: [Color.koboldEmerald.opacity(0.12), Color.koboldGold.opacity(0.08)], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 0.5))
                     }
                 }
 
@@ -142,6 +144,7 @@ struct ModelsView: View {
             }
             .padding()
         }
+        .background(ZStack { Color.koboldBackground; LinearGradient(colors: [Color.koboldEmerald.opacity(0.015), .clear, Color.koboldGold.opacity(0.01)], startPoint: .topLeading, endPoint: .bottomTrailing) })
         .onAppear {
             Task {
                 await loadBackendHealth()
@@ -187,6 +190,7 @@ struct ModelCardView: View {
         .padding(12)
         .background(Color.koboldSurface)
         .cornerRadius(12)
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(LinearGradient(colors: [Color.koboldEmerald.opacity(0.12), Color.koboldGold.opacity(0.08)], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 0.5))
     }
 
     private func timeAgo(_ date: Date) -> String {

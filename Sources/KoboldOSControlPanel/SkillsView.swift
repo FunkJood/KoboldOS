@@ -35,7 +35,7 @@ struct SkillsView: View {
             }
             .padding(24)
         }
-        .background(Color.koboldBackground)
+        .background(ZStack { Color.koboldBackground; LinearGradient(colors: [Color.koboldEmerald.opacity(0.015), .clear, Color.koboldGold.opacity(0.01)], startPoint: .topLeading, endPoint: .bottomTrailing) })
         .onAppear { loadSkills() }
         .sheet(item: $selectedSkill) { skill in
             SkillDetailSheet(skill: skill)
@@ -95,7 +95,7 @@ struct SkillsView: View {
     var emptyState: some View {
         VStack(spacing: 16) {
             Image(systemName: "sparkles")
-                .font(.system(size: 48))
+                .font(.system(size: 49))
                 .foregroundColor(.secondary)
             Text("Keine Skills gefunden")
                 .font(.title3.bold())
@@ -169,9 +169,9 @@ struct SkillCard: View {
                 HStack {
                     Image(systemName: "sparkles")
                         .font(.title3)
-                        .foregroundColor(skill.isEnabled ? .orange : .secondary)
+                        .foregroundColor(skill.isEnabled ? .koboldGold : .secondary)
                     Text(skill.name)
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.system(size: 16.5, weight: .semibold))
                         .lineLimit(1)
                     Spacer()
                     Toggle("", isOn: Binding(
@@ -183,7 +183,7 @@ struct SkillCard: View {
                 }
 
                 Text(skillPreview)
-                    .font(.system(size: 11))
+                    .font(.system(size: 13.5))
                     .foregroundColor(.secondary)
                     .lineLimit(3)
 
@@ -219,7 +219,7 @@ struct SkillDetailSheet: View {
             HStack {
                 Image(systemName: "sparkles")
                     .font(.title2)
-                    .foregroundColor(.orange)
+                    .foregroundColor(.koboldGold)
                 Text(skill.name)
                     .font(.title2.bold())
                 Spacer()
@@ -239,7 +239,7 @@ struct SkillDetailSheet: View {
 
             ScrollView {
                 Text(skill.content)
-                    .font(.system(size: 13, design: .monospaced))
+                    .font(.system(size: 15.5, design: .monospaced))
                     .foregroundColor(.primary)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -255,6 +255,6 @@ struct SkillDetailSheet: View {
         }
         .padding(24)
         .frame(minWidth: 600, minHeight: 400)
-        .background(Color.koboldBackground)
+        .background(ZStack { Color.koboldBackground; LinearGradient(colors: [Color.koboldEmerald.opacity(0.015), .clear, Color.koboldGold.opacity(0.01)], startPoint: .topLeading, endPoint: .bottomTrailing) })
     }
 }

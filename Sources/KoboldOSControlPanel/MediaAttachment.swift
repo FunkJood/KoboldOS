@@ -100,7 +100,7 @@ struct AttachmentThumbnail: View {
                                 .foregroundColor(attachment.accentColor)
                             if !compact {
                                 Text(attachment.name)
-                                    .font(.system(size: 8))
+                                    .font(.system(size: 9))
                                     .foregroundColor(.secondary)
                                     .lineLimit(1)
                                     .frame(width: 64)
@@ -117,7 +117,7 @@ struct AttachmentThumbnail: View {
             if let onRemove {
                 Button(action: onRemove) {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 14))
+                        .font(.system(size: 16.5))
                         .foregroundColor(.white)
                         .background(Circle().fill(Color.black.opacity(0.6)))
                 }
@@ -179,7 +179,7 @@ struct AttachmentBubble: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(attachment.name)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.system(size: 14.5, weight: .medium))
                     .lineLimit(1)
                 Text(attachment.formattedSize)
                     .font(.caption)
@@ -210,7 +210,7 @@ struct AttachmentBubble: View {
                 .cornerRadius(8)
             VStack(alignment: .leading, spacing: 2) {
                 Text(attachment.name)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.system(size: 14.5, weight: .medium))
                     .lineLimit(1)
                 Text(attachment.formattedSize)
                     .font(.caption)

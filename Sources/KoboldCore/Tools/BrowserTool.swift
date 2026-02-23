@@ -82,7 +82,7 @@ public struct BrowserTool: Tool, Sendable {
         }
         let action = arguments["action"] ?? ""
         let timeoutStr = arguments["timeout"] ?? "15"
-        let timeout = min(Double(timeoutStr) ?? 15.0, 60.0)
+        let timeout = min(Double(timeoutStr) ?? 30.0, 120.0)  // Default 30s, Hard cap 2min
         let method = arguments["method"]?.uppercased() ?? "GET"
         let headersJSON = arguments["headers"]
         let body = arguments["body"]

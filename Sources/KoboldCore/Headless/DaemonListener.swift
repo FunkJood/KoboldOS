@@ -28,8 +28,9 @@ public actor DaemonListener {
 
     private func recordLatency(_ ms: Double) {
         latencySamples.append((Date(), ms))
-        if latencySamples.count > maxLatencySamples {
-            latencySamples.removeFirst(latencySamples.count - maxLatencySamples)
+        if latencySamples.count > maxLatencySamples * 2 {
+            // Efficient: only trim when double the limit, remove half at once
+            latencySamples = Array(latencySamples.suffix(maxLatencySamples))
         }
     }
 
@@ -45,14 +46,15 @@ public actor DaemonListener {
     private let maxTraceEntries = 50
 
     private func addTrace(event: String, detail: String) {
+        let ts = ISO8601DateFormatter().string(from: Date())
         let entry: [String: Any] = [
             "event": event,
             "detail": detail,
-            "timestamp": ISO8601DateFormatter().string(from: Date())
+            "timestamp": ts
         ]
         traceTimeline.append(entry)
-        if traceTimeline.count > maxTraceEntries {
-            traceTimeline.removeFirst(traceTimeline.count - maxTraceEntries)
+        if traceTimeline.count > maxTraceEntries * 2 {
+            traceTimeline = Array(traceTimeline.suffix(maxTraceEntries))
         }
     }
 
@@ -181,7 +183,7 @@ public actor DaemonListener {
 
     private func routeRequest(method: String, path: String, body: Data?) async -> String {
         requestLog.append((Date(), path, "200"))
-        if requestLog.count > 500 { requestLog.removeFirst() }
+        if requestLog.count > 1000 { requestLog = Array(requestLog.suffix(500)) }
 
         switch path {
         case "/health":

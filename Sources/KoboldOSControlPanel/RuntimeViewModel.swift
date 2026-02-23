@@ -127,8 +127,17 @@ class RuntimeViewModel: ObservableObject {
     private var metricsPollingTask: Task<Void, Never>?
     var isMetricsPollingActive: Bool = false
 
-    /// Message cap per session to prevent memory leak
-    private let maxMessagesPerSession = 500
+    /// Message cap per session (generous — 2000 messages before trimming)
+    private let maxMessagesPerSession = 2000
+
+    // Workflow Execution
+    @Published var workflowLastResponse: String? = nil
+
+    // Context Management
+    @Published var contextPromptTokens: Int = 0
+    @Published var contextCompletionTokens: Int = 0
+    @Published var contextUsagePercent: Double = 0.0
+    @Published var contextWindowSize: Int = 150_000
 
     // Notifications
     @Published var notifications: [KoboldNotification] = []
@@ -200,6 +209,7 @@ class RuntimeViewModel: ObservableObject {
         } else if storedToken.isEmpty {
             storedToken = UUID().uuidString
         }
+        loadTopics()
         loadSessions()
         loadTaskSessions()
         loadWorkflowSessions()
@@ -613,26 +623,53 @@ class RuntimeViewModel: ObservableObject {
 
     /// Append a message to the correct session, even if the user has switched away.
     /// If the origin session is currently displayed, append to `messages` (live UI).
-    /// Otherwise, append to the session array directly (background save).
+    /// Otherwise, append to the session array directly (debounced save).
+    /// All paths enforce maxMessagesPerSession to prevent unbounded RAM growth.
     private func appendToSession(_ msg: ChatMessage, originSession: UUID) {
         if currentSessionId == originSession {
             messages.append(msg)
+            if messages.count > maxMessagesPerSession + 50 {
+                messages = Array(messages.suffix(maxMessagesPerSession))
+            }
         } else {
-            // User has switched — write to session array in background
             guard let codable = ChatMessageCodable(from: msg) else { return }
             if let idx = sessions.firstIndex(where: { $0.id == originSession }) {
                 sessions[idx].messages.append(codable)
                 sessions[idx].hasUnread = true
-                saveSessions()
+                if sessions[idx].messages.count > maxMessagesPerSession {
+                    sessions[idx].messages = Array(sessions[idx].messages.suffix(maxMessagesPerSession))
+                }
             } else if let idx = taskSessions.firstIndex(where: { $0.id == originSession }) {
                 taskSessions[idx].messages.append(codable)
                 taskSessions[idx].hasUnread = true
-                saveTaskSessions()
+                if taskSessions[idx].messages.count > maxMessagesPerSession {
+                    taskSessions[idx].messages = Array(taskSessions[idx].messages.suffix(maxMessagesPerSession))
+                }
             } else if let idx = workflowSessions.firstIndex(where: { $0.id == originSession }) {
                 workflowSessions[idx].messages.append(codable)
                 workflowSessions[idx].hasUnread = true
-                saveWorkflowSessions()
+                if workflowSessions[idx].messages.count > maxMessagesPerSession {
+                    workflowSessions[idx].messages = Array(workflowSessions[idx].messages.suffix(maxMessagesPerSession))
+                }
             }
+            // Debounced save — NOT per message (prevents disk I/O storms)
+            debouncedSaveAllSessions()
+        }
+    }
+
+    // MARK: - Debounced Session Persistence (prevents I/O storms during agent runs)
+
+    private var sessionSaveDebounceTask: Task<Void, Never>?
+
+    /// Save all session arrays at most once every 3 seconds (coalesces rapid writes)
+    func debouncedSaveAllSessions() {
+        sessionSaveDebounceTask?.cancel()
+        sessionSaveDebounceTask = Task {
+            try? await Task.sleep(nanoseconds: 3_000_000_000) // 3 seconds
+            guard !Task.isCancelled else { return }
+            saveSessions()
+            saveTaskSessions()
+            saveWorkflowSessions()
         }
     }
 
@@ -662,7 +699,7 @@ class RuntimeViewModel: ObservableObject {
 
     func sendWithAgent(message: String, attachments: [MediaAttachment] = []) async {
         agentLoading = true
-        let originChatSession = currentSessionId  // Capture which session initiated this request
+        let originChatSession = currentSessionId
         activeAgentOriginSession = originChatSession
         let sessionId = UUID()
         let session = ActiveAgentSession(
@@ -671,10 +708,9 @@ class RuntimeViewModel: ObservableObject {
             prompt: String(message.prefix(100)),
             status: .running, stepCount: 0, currentTool: ""
         )
-        // Remove old completed sessions before adding new one
-        activeSessions.removeAll { $0.status == ActiveAgentSession.SessionStatus.completed || $0.status == ActiveAgentSession.SessionStatus.error }
+        // Keep completed/error sessions visible for 60s, then auto-remove
         activeSessions.insert(session, at: 0)
-        if activeSessions.count > 5 { activeSessions = Array(activeSessions.prefix(5)) }
+        if activeSessions.count > 20 { activeSessions = Array(activeSessions.prefix(20)) }
 
         defer {
             agentLoading = false
@@ -684,11 +720,14 @@ class RuntimeViewModel: ObservableObject {
                     activeSessions[idx].status = .completed
                 }
             }
-            // Remove inactive sessions immediately (active ones stay visible)
-            activeSessions.removeAll { $0.id == sessionId && $0.status != .running }
+            // Auto-remove completed sessions after 60 seconds
+            let sid = sessionId
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 60_000_000_000)
+                activeSessions.removeAll { $0.id == sid && $0.status != .running }
+            }
         }
 
-        // Collect base64 images for vision
         let imageBase64s = attachments.compactMap { $0.base64 }
 
         var payload: [String: Any] = [
@@ -699,15 +738,11 @@ class RuntimeViewModel: ObservableObject {
             payload["images"] = imageBase64s
         }
 
-        // Look up per-agent config for provider/model/apiKey
         let agentConfig = AgentsStore.shared.configs.first(where: { $0.id == agentTypeStr })
         if let cfg = agentConfig {
             payload["provider"] = cfg.provider
-            if !cfg.modelName.isEmpty {
-                payload["model"] = cfg.modelName
-            }
+            if !cfg.modelName.isEmpty { payload["model"] = cfg.modelName }
             payload["temperature"] = cfg.temperature
-            // Resolve API key from UserDefaults for cloud providers
             if cfg.provider != "ollama" {
                 let keyName = "kobold.provider.\(cfg.provider).key"
                 if let key = UserDefaults.standard.string(forKey: keyName), !key.isEmpty {
@@ -716,13 +751,11 @@ class RuntimeViewModel: ObservableObject {
             }
         }
 
-        // If images, use non-streaming /agent endpoint
         if !imageBase64s.isEmpty {
             await sendWithAgentNonStreaming(payload: payload, originSession: originChatSession)
             return
         }
 
-        // Use SSE streaming
         guard let url = URL(string: baseURL + "/agent/stream") else {
             appendToSession(ChatMessage(kind: .assistant(text: "Invalid URL"), timestamp: Date()), originSession: originChatSession)
             return
@@ -738,117 +771,151 @@ class RuntimeViewModel: ObservableObject {
             guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else {
                 let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
                 appendToSession(ChatMessage(kind: .assistant(text: "HTTP Error \(code)"), timestamp: Date()), originSession: originChatSession)
-                SoundManager.shared.play(.error)
+                SoundManager.shared.play(chatMode == .workflow ? .workflowFail : .error)
                 return
             }
 
+            // ── FIX: Batched UI updates — SSE stream parsed inline but UI only updated every 300ms ──
+            // JSON parsing happens on Main Actor (required by URLSession.bytes),
+            // but @Published vars are ONLY touched in coalesced 300ms batches to prevent render thrashing.
+
             var lastFinalAnswer = ""
             var lastConfidence: Double? = nil
-            activeThinkingSteps = []
-            // Batch buffer for thinking steps — prevents 10-20 re-renders/sec
             var pendingSteps: [ThinkingEntry] = []
-            var lastFlush = DispatchTime.now()
-            let flushInterval: UInt64 = 200_000_000 // 200ms
+            var lastUIFlush = DispatchTime.now()
+            let uiFlushInterval: UInt64 = 300_000_000  // 300ms between UI updates (was 50ms!)
+            var toolStepCount = 0
+            activeThinkingSteps = []
 
             for try await line in bytes.lines {
                 if Task.isCancelled { break }
-                if line.hasPrefix("data: ") {
-                    let jsonStr = String(line.dropFirst(6))
-                    guard let data = jsonStr.data(using: .utf8),
-                          let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
+                guard line.hasPrefix("data: ") else { continue }
 
-                    let stepType = json["type"] as? String ?? ""
-                    let content = json["content"] as? String ?? ""
-                    let toolName = json["tool"] as? String ?? ""
-                    let success = json["success"] as? Bool ?? true
+                let jsonStr = String(line.dropFirst(6))
+                guard let data = jsonStr.data(using: .utf8),
+                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
+
+                let stepType = json["type"] as? String ?? ""
+                let content = json["content"] as? String ?? ""
+                let toolName = json["tool"] as? String ?? ""
+                let success = json["success"] as? Bool ?? true
+                if let c = json["confidence"] as? Double { lastConfidence = c }
+
+                switch stepType {
+                case "think":
+                    pendingSteps.append(ThinkingEntry(type: .thought, content: String(content.prefix(2000)), toolName: "", success: true))
+                case "toolCall":
+                    pendingSteps.append(ThinkingEntry(type: .toolCall, content: String(content.prefix(2000)), toolName: toolName, success: true))
+                    toolStepCount += 1
+                case "toolResult":
+                    let truncated = content.count > 8000 ? String(content.prefix(7997)) + "..." : content
+                    pendingSteps.append(ThinkingEntry(type: .toolResult, content: truncated, toolName: toolName, success: success))
+                case "finalAnswer":
+                    lastFinalAnswer = content
                     if let c = json["confidence"] as? Double { lastConfidence = c }
-
-                    switch stepType {
-                    case "think":
-                        pendingSteps.append(ThinkingEntry(type: .thought, content: content, toolName: "", success: true))
-                        SoundManager.shared.play(.typing)
-                    case "toolCall":
-                        pendingSteps.append(ThinkingEntry(type: .toolCall, content: content, toolName: toolName, success: true))
-                        SoundManager.shared.play(.toolCall)
-                        // Update active session with current tool
-                        if let idx = activeSessions.firstIndex(where: { $0.id == sessionId }) {
-                            activeSessions[idx].currentTool = toolName
-                            activeSessions[idx].stepCount += 1
-                        }
-                    case "toolResult":
-                        pendingSteps.append(ThinkingEntry(type: .toolResult, content: content, toolName: toolName, success: success))
-                    case "finalAnswer":
-                        lastFinalAnswer = content
-                        if let c = json["confidence"] as? Double { lastConfidence = c }
-                        SoundManager.shared.play(.success)
-                    case "subAgentSpawn":
-                        let profile = json["subAgent"] as? String ?? "agent"
-                        pendingSteps.append(ThinkingEntry(type: .subAgentSpawn, content: content, toolName: profile, success: true))
-                    case "subAgentResult":
-                        let profile = json["subAgent"] as? String ?? "agent"
-                        pendingSteps.append(ThinkingEntry(type: .subAgentResult, content: content, toolName: profile, success: success))
-                    case "notify":
-                        let title = json["title"] as? String ?? "Benachrichtigung"
-                        addNotification(title: title, message: content, type: .info)
-                        SoundManager.shared.play(.notification)
-                    case "error":
-                        appendToSession(ChatMessage(kind: .assistant(text: "⚠️ \(content)"), timestamp: Date()), originSession: originChatSession)
+                case "subAgentSpawn":
+                    let profile = json["subAgent"] as? String ?? "agent"
+                    pendingSteps.append(ThinkingEntry(type: .subAgentSpawn, content: String(content.prefix(1000)), toolName: profile, success: true))
+                case "subAgentResult":
+                    let profile = json["subAgent"] as? String ?? "agent"
+                    let truncated = content.count > 4000 ? String(content.prefix(3997)) + "..." : content
+                    pendingSteps.append(ThinkingEntry(type: .subAgentResult, content: truncated, toolName: profile, success: success))
+                case "context_info":
+                    if let promptT = json["prompt_tokens"] as? Int { self.contextPromptTokens = promptT }
+                    if let compT = json["completion_tokens"] as? Int { self.contextCompletionTokens = compT }
+                    if let pct = json["usage_percent"] as? Double { self.contextUsagePercent = pct }
+                    if let ws = json["context_window"] as? Int { self.contextWindowSize = ws }
+                case "error":
+                    appendToSession(ChatMessage(kind: .assistant(text: "⚠️ \(content)"), timestamp: Date()), originSession: originChatSession)
+                    if chatMode == .workflow {
+                        SoundManager.shared.play(.workflowFail)
+                        addNotification(title: "Workflow fehlgeschlagen", message: String(content.prefix(100)), type: .error, target: .chat(sessionId: originChatSession))
+                    } else if chatMode == .task {
+                        SoundManager.shared.play(.workflowFail)
+                        addNotification(title: "Aufgabe fehlgeschlagen", message: String(content.prefix(100)), type: .error, target: .chat(sessionId: originChatSession))
+                    } else {
                         addNotification(title: "Fehler", message: content, type: .error)
-                        SoundManager.shared.play(.error)
-                    default:
-                        break
                     }
+                default:
+                    break
+                }
 
-                    // Flush pending steps to UI at most every 200ms (prevents re-render thrashing)
-                    let now = DispatchTime.now()
-                    if !pendingSteps.isEmpty && (now.uptimeNanoseconds - lastFlush.uptimeNanoseconds) > flushInterval {
-                        activeThinkingSteps.append(contentsOf: pendingSteps)
-                        pendingSteps.removeAll()
-                        lastFlush = now
+                // Hard cap pending buffer (generous — 500 steps before trimming)
+                if pendingSteps.count > 500 {
+                    pendingSteps = Array(pendingSteps.suffix(400))
+                }
+
+                // ── COALESCED UI UPDATE every 300ms (not per-step!) ──
+                let now = DispatchTime.now()
+                if !pendingSteps.isEmpty && (now.uptimeNanoseconds - lastUIFlush.uptimeNanoseconds) > uiFlushInterval {
+                    activeThinkingSteps.append(contentsOf: pendingSteps)
+                    pendingSteps.removeAll()
+                    lastUIFlush = now
+                    // Hard cap UI array (generous — keeps last 800 of 1000)
+                    if activeThinkingSteps.count > 1000 {
+                        activeThinkingSteps = Array(activeThinkingSteps.suffix(800))
+                    }
+                    // Update session info (coalesced, not per-step)
+                    if let idx = activeSessions.firstIndex(where: { $0.id == sessionId }) {
+                        activeSessions[idx].stepCount = toolStepCount
                     }
                 }
             }
+
             // Flush remaining
             if !pendingSteps.isEmpty {
                 activeThinkingSteps.append(contentsOf: pendingSteps)
+                if activeThinkingSteps.count > 1000 {
+                    activeThinkingSteps = Array(activeThinkingSteps.suffix(800))
+                }
             }
 
-            // Count tool steps BEFORE clearing (fix: was always 0 because cleared first)
-            let toolStepCount = activeThinkingSteps.filter { $0.type == .toolCall }.count
+            // Play sounds once (not per-step!) — workflow-aware
+            if toolStepCount > 0 {
+                SoundManager.shared.play(chatMode == .workflow ? .workflowStep : .toolCall)
+            }
 
-            // Compact all thinking steps into a single message
+            // Compact thinking steps into single message
             let hadToolSteps = !activeThinkingSteps.isEmpty
             if hadToolSteps && showAgentSteps {
                 appendToSession(ChatMessage(kind: .thinking(entries: activeThinkingSteps), timestamp: Date()), originSession: originChatSession)
             }
             activeThinkingSteps = []
 
-            // Append final answer with confidence + auto-detect media
+            // Final answer
             if !lastFinalAnswer.isEmpty {
                 var msg = ChatMessage(kind: .assistant(text: lastFinalAnswer), timestamp: Date(), confidence: lastConfidence)
-                // Auto-embed: detect file paths in response and attach as media
                 let autoEmbed = UserDefaults.standard.bool(forKey: "kobold.chat.autoEmbed")
-                if autoEmbed {
-                    msg.attachments = Self.extractMediaAttachments(from: lastFinalAnswer)
-                }
+                if autoEmbed { msg.attachments = Self.extractMediaAttachments(from: lastFinalAnswer) }
                 appendToSession(msg, originSession: originChatSession)
-                // Only notify for multi-step tasks (>=3 tool calls), not simple responses
-                if toolStepCount >= 3 {
-                    let preview = lastFinalAnswer.count > 80 ? String(lastFinalAnswer.prefix(77)) + "..." : lastFinalAnswer
+                SoundManager.shared.play(chatMode == .workflow ? .workflowDone : .success)
+                let preview = lastFinalAnswer.count > 80 ? String(lastFinalAnswer.prefix(77)) + "..." : lastFinalAnswer
+                if chatMode == .workflow {
+                    addNotification(
+                        title: "Workflow abgeschlossen",
+                        message: preview,
+                        type: .success,
+                        target: .chat(sessionId: originChatSession)
+                    )
+                } else if chatMode == .task {
+                    addNotification(
+                        title: "Aufgabe abgeschlossen",
+                        message: preview,
+                        type: .success,
+                        target: .chat(sessionId: originChatSession)
+                    )
+                } else if toolStepCount >= 3 {
                     addNotification(title: "Aufgabe erledigt", message: preview, type: .success, target: .chat(sessionId: originChatSession))
                 }
             }
-            // Only trim/upsert if user is still in the origin session
+
+            // Persist once at end (NOT per-step!)
             if currentSessionId == originChatSession {
                 trimMessages()
                 upsertCurrentSession()
                 saveChatHistory()
             }
-            // Always persist session arrays (appendToSession already wrote to correct array)
-            saveSessions()
-            saveTaskSessions()
-            saveWorkflowSessions()
-            Task { await loadMetrics() }  // fire-and-forget, don't block UI
+            debouncedSaveAllSessions()
         } catch {
             if !Task.isCancelled {
                 appendToSession(ChatMessage(
@@ -1037,36 +1104,44 @@ class RuntimeViewModel: ObservableObject {
         }
     }
 
-    /// Atomically ensure the current session is in the correct sessions list based on chatMode
+    /// Atomically ensure the current session is in the correct sessions list based on chatMode.
+    /// PERF: Only converts new messages to Codable (incremental update, not full rebuild).
     private func upsertCurrentSession() {
         guard !messages.isEmpty else { return }
+        let codables = messages.compactMap { ChatMessageCodable(from: $0) }
         let title: String
         switch chatMode {
         case .normal:
             title = generateSessionTitle(from: messages)
             if let idx = sessions.firstIndex(where: { $0.id == currentSessionId }) {
-                sessions[idx] = ChatSession(id: currentSessionId, title: title, messages: messages)
+                sessions[idx].title = title
+                sessions[idx].messages = codables
+                if let tid = activeTopicId { sessions[idx].topicId = tid }
             } else {
-                sessions.insert(ChatSession(id: currentSessionId, title: title, messages: messages), at: 0)
+                var session = ChatSession(id: currentSessionId, title: title, messages: [], topicId: activeTopicId)
+                session.messages = codables
+                sessions.insert(session, at: 0)
             }
         case .task:
             title = taskChatLabel.isEmpty ? generateSessionTitle(from: messages) : taskChatLabel
-            var session = ChatSession(id: currentSessionId, title: title, messages: messages)
-            session.linkedId = taskChatId
             if let idx = taskSessions.firstIndex(where: { $0.id == currentSessionId }) {
-                taskSessions[idx] = session
+                taskSessions[idx].title = title
+                taskSessions[idx].messages = codables
             } else {
+                var session = ChatSession(id: currentSessionId, title: title, messages: [], linkedId: taskChatId)
+                session.messages = codables
                 taskSessions.insert(session, at: 0)
             }
-            saveTaskSessions()
         case .workflow:
             title = workflowChatLabel.isEmpty ? generateSessionTitle(from: messages) : workflowChatLabel
             if let idx = workflowSessions.firstIndex(where: { $0.id == currentSessionId }) {
-                workflowSessions[idx] = ChatSession(id: currentSessionId, title: title, messages: messages)
+                workflowSessions[idx].title = title
+                workflowSessions[idx].messages = codables
             } else {
-                workflowSessions.insert(ChatSession(id: currentSessionId, title: title, messages: messages), at: 0)
+                var session = ChatSession(id: currentSessionId, title: title, messages: [])
+                session.messages = codables
+                workflowSessions.insert(session, at: 0)
             }
-            saveWorkflowSessions()
         }
     }
 
@@ -1203,7 +1278,95 @@ class RuntimeViewModel: ObservableObject {
         saveWorkflowDefinitionsSync()
     }
 
-    func newSession() {
+    // MARK: - Topic Management (AgentZero-style project folders)
+
+    @Published var topics: [ChatTopic] = []
+    @Published var activeTopicId: UUID? = nil  // Topic assigned to current chat
+
+    private var topicsURL: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("KoboldOS/chat_topics.json")
+    }
+
+    func loadTopics() {
+        guard let data = try? Data(contentsOf: topicsURL),
+              let loaded = try? JSONDecoder().decode([ChatTopic].self, from: data) else { return }
+        topics = loaded
+    }
+
+    func saveTopics() {
+        let dir = topicsURL.deletingLastPathComponent()
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        if let data = try? JSONEncoder().encode(topics) {
+            try? data.write(to: topicsURL, options: .atomic)
+        }
+    }
+
+    func createTopic(name: String, color: String = "#34d399") {
+        let topic = ChatTopic(name: name, color: color)
+        topics.insert(topic, at: 0)
+        saveTopics()
+    }
+
+    func deleteTopic(_ topic: ChatTopic) {
+        // Unlink all sessions from this topic
+        for i in sessions.indices where sessions[i].topicId == topic.id {
+            sessions[i].topicId = nil
+        }
+        topics.removeAll { $0.id == topic.id }
+        saveTopics()
+        saveSessions()
+    }
+
+    func renameTopic(_ topic: ChatTopic, newName: String) {
+        guard let idx = topics.firstIndex(where: { $0.id == topic.id }) else { return }
+        topics[idx].name = newName
+        saveTopics()
+    }
+
+    func updateTopicColor(_ topic: ChatTopic, color: String) {
+        guard let idx = topics.firstIndex(where: { $0.id == topic.id }) else { return }
+        topics[idx].color = color
+        saveTopics()
+    }
+
+    func updateTopic(_ updated: ChatTopic) {
+        guard let idx = topics.firstIndex(where: { $0.id == updated.id }) else { return }
+        topics[idx] = updated
+        saveTopics()
+    }
+
+    func toggleTopicExpanded(_ topic: ChatTopic) {
+        guard let idx = topics.firstIndex(where: { $0.id == topic.id }) else { return }
+        topics[idx].isExpanded.toggle()
+        saveTopics()
+    }
+
+    func assignSessionToTopic(sessionId: UUID, topicId: UUID?) {
+        if let idx = sessions.firstIndex(where: { $0.id == sessionId }) {
+            sessions[idx].topicId = topicId
+            saveSessions()
+        }
+        // Update active topic if current session
+        if sessionId == currentSessionId {
+            activeTopicId = topicId
+        }
+    }
+
+    func topicForSession(_ session: ChatSession) -> ChatTopic? {
+        guard let tid = session.topicId else { return nil }
+        return topics.first { $0.id == tid }
+    }
+
+    /// Get topic-specific instructions for the current session (injected into system prompt)
+    func activeTopicInstructions() -> String? {
+        guard let tid = activeTopicId,
+              let topic = topics.first(where: { $0.id == tid }),
+              !topic.instructions.isEmpty else { return nil }
+        return topic.instructions
+    }
+
+    func newSession(topicId: UUID? = nil) {
         // Save current session before creating new one (atomic upsert prevents duplicates)
         upsertCurrentSession()
         saveSessions()
@@ -1213,6 +1376,7 @@ class RuntimeViewModel: ObservableObject {
         taskChatLabel = ""
         currentSessionId = UUID()
         messages = []
+        activeTopicId = topicId
         saveChatHistory()
     }
 
@@ -1253,9 +1417,9 @@ class RuntimeViewModel: ObservableObject {
     }
 
     func switchToSession(_ session: ChatSession) {
-        // Save current session before switching (atomic upsert prevents duplicates)
+        // Save current session before switching (debounced, not blocking)
         upsertCurrentSession()
-        saveSessions()
+        debouncedSaveAllSessions()
 
         // Detect which type this session belongs to
         if taskSessions.contains(where: { $0.id == session.id }) {
@@ -1272,8 +1436,9 @@ class RuntimeViewModel: ObservableObject {
             taskChatLabel = ""
         }
 
-        // Switch to new session — clear unread marker
+        // Switch to new session — clear unread marker + set active topic
         currentSessionId = session.id
+        activeTopicId = session.topicId
         if let idx = sessions.firstIndex(where: { $0.id == session.id }) {
             sessions[idx].hasUnread = false
         } else if let idx = taskSessions.firstIndex(where: { $0.id == session.id }) {
@@ -1281,8 +1446,19 @@ class RuntimeViewModel: ObservableObject {
         } else if let idx = workflowSessions.firstIndex(where: { $0.id == session.id }) {
             workflowSessions[idx].hasUnread = false
         }
-        messages = restoreMessages(from: session.messages)
-        // Sync chat_history.json to match current view
+
+        // Clear UI first (instant response), then restore messages
+        // This prevents SwiftUI from trying to diff a huge old array against a huge new array
+        messages = []
+        activeThinkingSteps = []
+
+        // Restore on next run loop tick so the UI can clear first
+        let codables = session.messages
+        DispatchQueue.main.async { [weak self] in
+            self?.messages = self?.restoreMessages(from: codables) ?? []
+        }
+
+        // Sync chat_history.json (debounced)
         saveChatHistory()
     }
 
@@ -1600,6 +1776,47 @@ enum ModelRole: String, CaseIterable {
     case embedding  = "Embedding"
 }
 
+// MARK: - ChatTopic (AgentZero-style project/folder for chats)
+
+struct ChatTopic: Identifiable, Codable {
+    var id: UUID
+    var name: String
+    var color: String          // Hex color, e.g. "#7b2cbf"
+    var instructions: String   // Topic-specific system instructions injected into agent prompt
+    var projectPath: String    // Local folder path for this topic (e.g. ~/Projects/MyApp)
+    var useOwnMemory: Bool     // true = isolated memory, false = global
+    var isExpanded: Bool       // Sidebar disclosure state
+    var createdAt: Date
+
+    init(id: UUID = UUID(), name: String, color: String = "#34d399",
+         instructions: String = "", projectPath: String = "", useOwnMemory: Bool = false) {
+        self.id = id
+        self.name = name
+        self.color = color
+        self.instructions = instructions
+        self.projectPath = projectPath
+        self.useOwnMemory = useOwnMemory
+        self.isExpanded = true
+        self.createdAt = Date()
+    }
+
+    var swiftUIColor: Color {
+        color.isEmpty ? .koboldEmerald : Color(hex: color)
+    }
+
+    /// Display-friendly path (~ for home dir)
+    var displayPath: String {
+        guard !projectPath.isEmpty else { return "" }
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        return projectPath.hasPrefix(home) ? projectPath.replacingOccurrences(of: home, with: "~") : projectPath
+    }
+
+    static let defaultColors: [String] = [
+        "#34d399", "#60a5fa", "#a78bfa", "#f472b6", "#fbbf24",
+        "#fb923c", "#f87171", "#2dd4bf", "#818cf8", "#c084fc"
+    ]
+}
+
 // MARK: - ChatSession
 
 struct ChatSession: Identifiable, Codable {
@@ -1609,14 +1826,16 @@ struct ChatSession: Identifiable, Codable {
     var createdAt: Date
     var linkedId: String?  // Links to task ID or workflow node name
     var hasUnread: Bool = false
+    var topicId: UUID?     // Links to ChatTopic (nil = ungrouped)
 
-    init(id: UUID = UUID(), title: String, messages: [ChatMessage] = [], linkedId: String? = nil) {
+    init(id: UUID = UUID(), title: String, messages: [ChatMessage] = [], linkedId: String? = nil, topicId: UUID? = nil) {
         self.id = id
         self.title = title.isEmpty ? "Gespräch" : title
         self.messages = messages.compactMap { ChatMessageCodable(from: $0) }
         self.createdAt = Date()
         self.linkedId = linkedId
         self.hasUnread = false
+        self.topicId = topicId
     }
 
     var formattedDate: String {

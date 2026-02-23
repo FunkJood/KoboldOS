@@ -70,6 +70,11 @@ struct SettingsView: View {
     @State private var a2aRemoteToken: String = ""
     @State private var a2aConnectedClients: [A2AConnectedClient] = []
 
+    // Context Management
+    @AppStorage("kobold.context.windowSize") private var contextWindowSize: Int = 150_000
+    @AppStorage("kobold.context.autoCompress") private var contextAutoCompress: Bool = true
+    @AppStorage("kobold.context.threshold") private var contextThreshold: Double = 0.8
+
     // Memory settings (AgentZero-style)
     @AppStorage("kobold.memory.recallEnabled") private var memoryRecallEnabled: Bool = true
     @AppStorage("kobold.memory.recallInterval") private var memoryRecallInterval: Int = 3
@@ -97,8 +102,9 @@ struct SettingsView: View {
     @AppStorage("kobold.google.clientId") private var googleClientId: String = ""
     @AppStorage("kobold.google.connected") private var googleConnected: Bool = false
     @State private var googleEmail: String = ""
+    @State private var showSecretsManager: Bool = false
 
-    private let sections = ["Konto", "Allgemein", "Agent", "Modelle", "Gedächtnis", "Berechtigungen", "Datenschutz & Sicherheit", "Verbindungen", "Wetter", "Sprache", "Fähigkeiten", "Über"]
+    private let sections = ["Konto", "Allgemein", "Persönlichkeit", "Agenten", "Modelle", "Gedächtnis", "Berechtigungen", "Datenschutz & Sicherheit", "Verbindungen", "Sprache & Audio", "Fähigkeiten", "Über"]
 
     var body: some View {
         HStack(spacing: 0) {
@@ -137,14 +143,14 @@ struct SettingsView: View {
                     switch selectedSection {
                     case "Konto":                   profileSection()
                     case "Allgemein":                generalSection()
-                    case "Agent":                    memoryPolicySection(); agentPersonalitySection()
+                    case "Persönlichkeit":           memoryPolicySection(); agentPersonalitySection()
+                    case "Agenten":                  agentsSettingsSection()
                     case "Modelle":                  modelsSection()
                     case "Gedächtnis":               memorySettingsSection()
                     case "Berechtigungen":           permissionsSection()
                     case "Datenschutz & Sicherheit": securitySection()
                     case "Verbindungen":             connectionsSection()
-                    case "Wetter":                   weatherSettingsSection()
-                    case "Sprache":                  speechSettingsSection()
+                    case "Sprache & Audio":          speechAndAudioSection()
                     case "Fähigkeiten":              skillsSettingsSection()
                     default:                         aboutSection()
                     }
@@ -161,14 +167,14 @@ struct SettingsView: View {
         switch s {
         case "Konto":                   return "person.crop.circle.fill"
         case "Allgemein":               return "gear"
-        case "Agent":                   return "person.fill.viewfinder"
+        case "Persönlichkeit":          return "person.fill.viewfinder"
+        case "Agenten":                 return "person.3.fill"
         case "Modelle":                 return "cpu.fill"
         case "Gedächtnis":              return "brain.head.profile"
         case "Berechtigungen":          return "shield.lefthalf.filled"
         case "Datenschutz & Sicherheit": return "lock.shield.fill"
         case "Verbindungen":            return "link.circle.fill"
-        case "Wetter":                  return "cloud.sun.fill"
-        case "Sprache":                 return "waveform"
+        case "Sprache & Audio":         return "waveform"
         case "Fähigkeiten":            return "sparkles"
         default:                        return "info.circle.fill"
         }
@@ -193,9 +199,9 @@ struct SettingsView: View {
             }) {
                 HStack(spacing: 6) {
                     Image(systemName: saveConfirmed == section ? "checkmark.circle.fill" : "square.and.arrow.down")
-                        .font(.system(size: 12))
+                        .font(.system(size: 14.5))
                     Text(saveConfirmed == section ? "Gespeichert" : "Speichern")
-                        .font(.system(size: 13, weight: .medium))
+                        .font(.system(size: 15.5, weight: .medium))
                 }
                 .foregroundColor(saveConfirmed == section ? .koboldEmerald : .primary)
                 .padding(.horizontal, 16)
@@ -220,7 +226,7 @@ struct SettingsView: View {
             HStack(spacing: 20) {
                 // Avatar
                 Image(systemName: profileAvatar)
-                    .font(.system(size: 48))
+                    .font(.system(size: 49))
                     .foregroundStyle(
                         LinearGradient(colors: [.koboldGold, .koboldEmerald], startPoint: .top, endPoint: .bottom)
                     )
@@ -295,164 +301,109 @@ struct SettingsView: View {
     private func generalSection() -> some View {
         sectionTitle("Allgemeine Einstellungen")
 
-        // Sprache + Updates nebeneinander
-        HStack(alignment: .top, spacing: 16) {
-            GroupBox {
-                VStack(alignment: .leading, spacing: 10) {
-                    Label("Sprache", systemImage: "globe").font(.subheadline.bold())
-                    Text("Interface- und Antwortsprache.")
-                        .font(.caption).foregroundColor(.secondary)
-                    Picker("", selection: Binding(
-                        get: { l10n.language },
-                        set: { l10n.language = $0 }
-                    )) {
-                        ForEach(AppLanguage.allCases, id: \.self) { lang in
-                            Text(lang.displayName).tag(lang)
-                        }
-                    }
-                    .pickerStyle(.menu)
+        // Row 0: Updates + Verbindung + Darstellung
+        HStack(alignment: .top, spacing: 12) {
+            FuturisticBox(icon: "arrow.down.circle.fill", title: "Updates", accent: .koboldEmerald) {
+                HStack {
+                    Text("Version")
+                    Spacer()
+                    Text("Alpha v\(UpdateManager.currentVersion)")
+                        .foregroundColor(.koboldEmerald).fontWeight(.medium)
                 }
-                .padding()
+
+                Toggle("Auto-Check beim Start", isOn: $autoCheckUpdates)
+                    .toggleStyle(.switch)
+
+                switch updateManager.state {
+                case .idle:
+                    EmptyView()
+                case .checking:
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text("Suche…").font(.caption).foregroundColor(.secondary)
+                    }
+                case .upToDate:
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark.circle.fill").foregroundColor(.green)
+                        Text("Aktuell").font(.caption).foregroundColor(.green)
+                    }
+                case .available(let version):
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.down.circle.fill").foregroundColor(.koboldGold)
+                            Text("v\(version) verfügbar")
+                                .font(.caption).fontWeight(.medium).foregroundColor(.koboldGold)
+                        }
+                        if let notes = updateManager.releaseNotes, !notes.isEmpty {
+                            Text(notes).font(.system(size: 12.5)).foregroundColor(.secondary).lineLimit(3)
+                        }
+                        Button("Installieren") {
+                            Task { await updateManager.downloadAndInstall() }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.koboldEmerald)
+                        .controlSize(.small)
+                    }
+                case .downloading(let percent):
+                    ProgressView(value: percent).tint(.koboldEmerald)
+                case .installing:
+                    HStack(spacing: 4) {
+                        ProgressView().controlSize(.small)
+                        Text("Installiere…").font(.caption).foregroundColor(.koboldGold)
+                    }
+                case .error(let msg):
+                    Text(msg).font(.system(size: 12.5)).foregroundColor(.red).lineLimit(2)
+                }
+
+                Button("Nach Updates suchen") {
+                    Task { await updateManager.checkForUpdates() }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(updateManager.state == .checking)
             }
             .frame(maxHeight: .infinity, alignment: .top)
 
-            GroupBox {
-                VStack(alignment: .leading, spacing: 12) {
-                    Label("Updates", systemImage: "arrow.down.circle.fill").font(.subheadline.bold())
-
-                    HStack {
-                        Text("Version")
-                        Spacer()
-                        Text("Alpha v\(UpdateManager.currentVersion)")
-                            .foregroundColor(.koboldEmerald).fontWeight(.medium)
+            FuturisticBox(icon: "network", title: "Verbindung", accent: .koboldGold) {
+                HStack {
+                    Text("Daemon-Port")
+                    Spacer()
+                    Text("\(daemonPort)").foregroundColor(.secondary)
+                }
+                HStack {
+                    Text("Status")
+                    Spacer()
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(viewModel.isConnected ? Color.koboldEmerald : Color.red)
+                            .frame(width: 8, height: 8)
+                            .shadow(color: (viewModel.isConnected ? Color.koboldEmerald : Color.red).opacity(0.6), radius: 4)
+                        Text(viewModel.isConnected ? "Verbunden" : "Getrennt")
+                            .foregroundColor(viewModel.isConnected ? .koboldEmerald : .red)
                     }
-
-                    Toggle("Auto-Check beim Start", isOn: $autoCheckUpdates)
-                        .toggleStyle(.switch)
-
-                    switch updateManager.state {
-                    case .idle:
-                        EmptyView()
-                    case .checking:
-                        HStack(spacing: 6) {
-                            ProgressView().controlSize(.small)
-                            Text("Suche…").font(.caption).foregroundColor(.secondary)
-                        }
-                    case .upToDate:
-                        HStack(spacing: 6) {
-                            Image(systemName: "checkmark.circle.fill").foregroundColor(.green)
-                            Text("Aktuell").font(.caption).foregroundColor(.green)
-                        }
-                    case .available(let version):
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack(spacing: 4) {
-                                Image(systemName: "arrow.down.circle.fill").foregroundColor(.koboldGold)
-                                Text("v\(version) verfügbar")
-                                    .font(.caption).fontWeight(.medium).foregroundColor(.koboldGold)
-                            }
-                            if let notes = updateManager.releaseNotes, !notes.isEmpty {
-                                Text(notes).font(.system(size: 10)).foregroundColor(.secondary).lineLimit(3)
-                            }
-                            Button("Installieren") {
-                                Task { await updateManager.downloadAndInstall() }
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .tint(.koboldEmerald)
-                            .controlSize(.small)
-                        }
-                    case .downloading(let percent):
-                        ProgressView(value: percent).tint(.koboldEmerald)
-                    case .installing:
-                        HStack(spacing: 4) {
-                            ProgressView().controlSize(.small)
-                            Text("Installiere…").font(.caption).foregroundColor(.koboldGold)
-                        }
-                    case .error(let msg):
-                        Text(msg).font(.system(size: 10)).foregroundColor(.red).lineLimit(2)
-                    }
-
-                    Button("Nach Updates suchen") {
-                        Task { await updateManager.checkForUpdates() }
-                    }
+                }
+                Button("Verbindung prüfen") { Task { await viewModel.testHealth() } }
                     .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .disabled(updateManager.state == .checking)
-                }
-                .padding()
+            }
+            .frame(maxHeight: .infinity, alignment: .top)
+
+            FuturisticBox(icon: "paintbrush.fill", title: "Darstellung", accent: .koboldGold) {
+                Toggle("Erweiterte Statistiken", isOn: $showAdvancedStats)
+                    .toggleStyle(.switch)
+                Toggle("Medien einbetten", isOn: AppStorageToggle("kobold.chat.autoEmbed", default: true))
+                    .toggleStyle(.switch)
+                Text("Bilder, Audio und Videos inline anzeigen.")
+                    .font(.caption2).foregroundColor(.secondary)
             }
             .frame(maxHeight: .infinity, alignment: .top)
         }
 
-        // Row 1: Verbindung + Darstellung + Sounds
-        HStack(alignment: .top, spacing: 16) {
-            GroupBox {
-                VStack(alignment: .leading, spacing: 10) {
-                    Label("Verbindung", systemImage: "network").font(.subheadline.bold())
-                    HStack {
-                        Text("Daemon-Port")
-                        Spacer()
-                        Text("\(daemonPort)").foregroundColor(.secondary)
-                    }
-                    HStack {
-                        Text("Status")
-                        Spacer()
-                        HStack(spacing: 4) {
-                            Circle()
-                                .fill(viewModel.isConnected ? Color.koboldEmerald : Color.red)
-                                .frame(width: 8, height: 8)
-                            Text(viewModel.isConnected ? "Verbunden" : "Getrennt")
-                                .foregroundColor(viewModel.isConnected ? .koboldEmerald : .red)
-                        }
-                    }
-                    Button("Verbindung prüfen") { Task { await viewModel.testHealth() } }
-                        .buttonStyle(.bordered)
-                }
-                .padding()
-            }
-            .frame(maxHeight: .infinity, alignment: .top)
-
-            GroupBox {
-                VStack(alignment: .leading, spacing: 12) {
-                    Label("Darstellung", systemImage: "paintbrush.fill").font(.subheadline.bold())
-                    Toggle("Erweiterte Statistiken", isOn: $showAdvancedStats)
-                        .toggleStyle(.switch)
-                    Toggle("Medien automatisch einbetten", isOn: AppStorageToggle("kobold.chat.autoEmbed", default: true))
-                        .toggleStyle(.switch)
-                    Text("Bilder, Audio und Videos in Agent-Antworten inline anzeigen.")
-                        .font(.caption2).foregroundColor(.secondary)
-                }
-                .padding()
-            }
-            .frame(maxHeight: .infinity, alignment: .top)
-
-            GroupBox {
-                VStack(alignment: .leading, spacing: 12) {
-                    Label("Sounds", systemImage: "speaker.wave.2.fill").font(.subheadline.bold())
-                    Toggle("Systemsounds", isOn: $soundsEnabled)
-                        .toggleStyle(.switch)
-                    if soundsEnabled {
-                        HStack {
-                            Image(systemName: "speaker.fill").foregroundColor(.secondary)
-                            Slider(value: $soundsVolume, in: 0.1...1.0, step: 0.1)
-                            Image(systemName: "speaker.wave.3.fill").foregroundColor(.secondary)
-                            Text("\(Int(soundsVolume * 100))%")
-                                .font(.caption).foregroundColor(.secondary)
-                                .frame(width: 35, alignment: .trailing)
-                        }
-                    }
-                }
-                .padding()
-            }
-            .frame(maxHeight: .infinity, alignment: .top)
-        }
-
-        // Row 2: Arbeitsverzeichnis
-        GroupBox {
-            VStack(alignment: .leading, spacing: 10) {
-                Label("Standard-Arbeitsverzeichnis", systemImage: "folder.fill").font(.subheadline.bold())
+        // Row 2: Arbeitsverzeichnis + Wetter
+        HStack(alignment: .top, spacing: 12) {
+            FuturisticBox(icon: "folder.fill", title: "Arbeitsverzeichnis", accent: .koboldGold) {
                 HStack {
                     Text(defaultWorkDir)
-                        .font(.system(.body, design: .monospaced))
+                        .font(.system(.caption, design: .monospaced))
                         .lineLimit(1)
                         .truncationMode(.middle)
                         .foregroundColor(.secondary)
@@ -469,6 +420,7 @@ struct SettingsView: View {
                         }
                     }
                     .buttonStyle(.bordered)
+                    .controlSize(.small)
                     Button("Öffnen") {
                         let expanded = NSString(string: defaultWorkDir).expandingTildeInPath
                         let url = URL(fileURLWithPath: expanded)
@@ -476,79 +428,89 @@ struct SettingsView: View {
                         NSWorkspace.shared.open(url)
                     }
                     .buttonStyle(.bordered)
+                    .controlSize(.small)
                 }
             }
-            .padding()
+            .frame(maxHeight: .infinity, alignment: .top)
+
+            FuturisticBox(icon: "cloud.sun.fill", title: "Wetter-Widget", accent: .koboldGold) {
+                Text("Open-Meteo (kostenlos, kein API-Key nötig)")
+                    .font(.caption).foregroundColor(.secondary)
+                HStack {
+                    Text("Stadt").font(.caption).foregroundColor(.secondary)
+                    TextField("Leer = automatisch", text: $weatherMgr.manualCity)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 14.5))
+                }
+                if let temp = weatherMgr.temperature {
+                    HStack(spacing: 6) {
+                        Image(systemName: weatherMgr.iconName)
+                            .foregroundColor(.koboldGold)
+                            .shadow(color: .koboldGold.opacity(0.5), radius: 4)
+                        Text(String(format: "%.0f°C", temp)).font(.system(size: 15.5, weight: .semibold))
+                        if !weatherMgr.cityName.isEmpty {
+                            Text(weatherMgr.cityName).font(.caption).foregroundColor(.secondary)
+                        }
+                    }
+                }
+                Button("Wetter abrufen") { weatherMgr.fetchWeather() }
+                    .buttonStyle(.bordered).controlSize(.small)
+            }
+            .frame(maxHeight: .infinity, alignment: .top)
         }
 
         // Row 3: Menüleiste + Autostart + Einrichtungsassistent + Debug (4 columns)
-        HStack(alignment: .top, spacing: 16) {
-            GroupBox {
-                VStack(alignment: .leading, spacing: 10) {
-                    Label("Menüleiste", systemImage: "menubar.rectangle").font(.subheadline.bold())
-                    Toggle("Anzeigen", isOn: Binding(
-                        get: { menuBarEnabled },
-                        set: { enabled in
-                            if enabled { MenuBarController.shared.enable() }
-                            else { MenuBarController.shared.disable() }
-                            menuBarEnabled = enabled
-                        }
-                    ))
-                    .toggleStyle(.switch)
-                    if menuBarEnabled {
-                        Toggle("Minimieren", isOn: $menuBarHideOnClose)
-                            .toggleStyle(.switch)
+        HStack(alignment: .top, spacing: 12) {
+            FuturisticBox(icon: "menubar.rectangle", title: "Menüleiste", accent: .koboldGold) {
+                Toggle("Anzeigen", isOn: Binding(
+                    get: { menuBarEnabled },
+                    set: { enabled in
+                        if enabled { MenuBarController.shared.enable() }
+                        else { MenuBarController.shared.disable() }
+                        menuBarEnabled = enabled
                     }
-                }
-                .padding()
-            }
-            .frame(maxHeight: .infinity, alignment: .top)
-
-            GroupBox {
-                VStack(alignment: .leading, spacing: 10) {
-                    Label("Autostart", systemImage: "power").font(.subheadline.bold())
-                    Toggle("Mit macOS starten", isOn: Binding(
-                        get: { launchAgent.isEnabled },
-                        set: { enabled in
-                            if enabled { launchAgent.enable() } else { launchAgent.disable() }
-                        }
-                    ))
-                    .toggleStyle(.switch)
-                    if launchAgent.status == .requiresApproval {
-                        Label("Genehmigung nötig", systemImage: "exclamationmark.triangle.fill")
-                            .font(.caption).foregroundColor(.orange)
-                    }
-                }
-                .padding()
-            }
-            .frame(maxHeight: .infinity, alignment: .top)
-
-            GroupBox {
-                VStack(alignment: .leading, spacing: 10) {
-                    Label("Onboarding", systemImage: "wand.and.stars").font(.subheadline.bold())
-                    Text("Wizard erneut zeigen")
-                        .font(.caption).foregroundColor(.secondary)
-                    Button("Zurücksetzen") {
-                        UserDefaults.standard.set(false, forKey: "kobold.hasOnboarded")
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                }
-                .padding()
-            }
-            .frame(maxHeight: .infinity, alignment: .top)
-
-            GroupBox {
-                VStack(alignment: .leading, spacing: 10) {
-                    Label("Debug", systemImage: "ladybug.fill").font(.subheadline.bold())
-                    Toggle("Verbose Logging",
-                           isOn: AppStorageToggle("kobold.log.verbose", default: false))
-                        .toggleStyle(.switch)
-                    Toggle("Raw Prompts",
-                           isOn: AppStorageToggle("kobold.dev.showRawPrompts", default: false))
+                ))
+                .toggleStyle(.switch)
+                if menuBarEnabled {
+                    Toggle("Minimieren", isOn: $menuBarHideOnClose)
                         .toggleStyle(.switch)
                 }
-                .padding()
+            }
+            .frame(maxHeight: .infinity, alignment: .top)
+
+            FuturisticBox(icon: "power", title: "Autostart", accent: .koboldEmerald) {
+                Toggle("Mit macOS starten", isOn: Binding(
+                    get: { launchAgent.isEnabled },
+                    set: { enabled in
+                        if enabled { launchAgent.enable() } else { launchAgent.disable() }
+                    }
+                ))
+                .toggleStyle(.switch)
+                if launchAgent.status == .requiresApproval {
+                    Label("Genehmigung nötig", systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption).foregroundColor(.orange)
+                }
+            }
+            .frame(maxHeight: .infinity, alignment: .top)
+
+            FuturisticBox(icon: "wand.and.stars", title: "Onboarding", accent: .koboldGold) {
+                Text("Wizard erneut zeigen")
+                    .font(.caption).foregroundColor(.secondary)
+                Button("Zurücksetzen") {
+                    UserDefaults.standard.set(false, forKey: "kobold.hasOnboarded")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+            .frame(maxHeight: .infinity, alignment: .top)
+
+            FuturisticBox(icon: "ladybug.fill", title: "Debug", accent: .red) {
+                Toggle("Verbose Logging",
+                       isOn: AppStorageToggle("kobold.log.verbose", default: false))
+                    .toggleStyle(.switch)
+                Toggle("Raw Prompts",
+                       isOn: AppStorageToggle("kobold.dev.showRawPrompts", default: false))
+                    .toggleStyle(.switch)
             }
             .frame(maxHeight: .infinity, alignment: .top)
         }
@@ -580,9 +542,9 @@ struct SettingsView: View {
                                 VStack(alignment: .leading, spacing: 1) {
                                     Text(tool.name).font(.caption).fontWeight(.medium)
                                     if let ver = tool.version {
-                                        Text(ver).font(.system(size: 9)).foregroundColor(.secondary).lineLimit(1)
+                                        Text(ver).font(.system(size: 11.5)).foregroundColor(.secondary).lineLimit(1)
                                     } else if !tool.isAvailable {
-                                        Text("Nicht installiert").font(.system(size: 9)).foregroundColor(.secondary)
+                                        Text("Nicht installiert").font(.system(size: 11.5)).foregroundColor(.secondary)
                                     }
                                 }
                                 Spacer()
@@ -598,7 +560,7 @@ struct SettingsView: View {
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Python 3.12 herunterladen").font(.caption).fontWeight(.medium)
-                            Text("Standalone Python (~17 MB) in App Support installieren").font(.system(size: 9)).foregroundColor(.secondary)
+                            Text("Standalone Python (~17 MB) in App Support installieren").font(.system(size: 11.5)).foregroundColor(.secondary)
                         }
                         Spacer()
                         if let progress = toolEnv.pythonDownloadProgress {
@@ -662,9 +624,7 @@ struct SettingsView: View {
         sectionTitle("Modelle & Backend")
 
         // Ollama connection
-        GroupBox {
-            VStack(alignment: .leading, spacing: 12) {
-                Label("Ollama Backend", systemImage: "server.rack").font(.subheadline.bold())
+        FuturisticBox(icon: "server.rack", title: "Ollama Backend", accent: .koboldGold) {
                 HStack {
                     Text("Status")
                     Spacer()
@@ -695,14 +655,10 @@ struct SettingsView: View {
                     }
                     .buttonStyle(.bordered)
                 }
-            }
-            .padding()
         }
 
         // Quick Model Downloads
-        GroupBox {
-            VStack(alignment: .leading, spacing: 12) {
-                Label("Empfohlene Modelle", systemImage: "arrow.down.circle.fill").font(.subheadline.bold())
+        FuturisticBox(icon: "arrow.down.circle.fill", title: "Empfohlene Modelle", accent: .koboldEmerald) {
                 Text("Lade die empfohlenen Modelle mit einem Klick herunter.")
                     .font(.caption).foregroundColor(.secondary)
 
@@ -713,15 +669,20 @@ struct SettingsView: View {
                             Image(systemName: ModelDownloadManager.shared.chatModelInstalled ? "checkmark.circle.fill" : "cpu.fill")
                                 .foregroundColor(ModelDownloadManager.shared.chatModelInstalled ? .koboldEmerald : .koboldGold)
                             Text("Chat: \(ModelDownloadManager.shared.recommendedChatModel)")
-                                .font(.system(size: 12, weight: .medium))
+                                .font(.system(size: 14.5, weight: .medium))
                         }
                         if ModelDownloadManager.shared.isDownloadingChat {
                             GlassProgressBar(value: ModelDownloadManager.shared.chatProgress, label: ModelDownloadManager.shared.chatStatus)
-                        } else if !ModelDownloadManager.shared.chatModelInstalled {
-                            Button("Herunterladen") { ModelDownloadManager.shared.downloadChatModel() }
-                                .buttonStyle(.bordered)
                         } else {
-                            Text("Installiert").font(.caption).foregroundColor(.koboldEmerald)
+                            HStack(spacing: 8) {
+                                if ModelDownloadManager.shared.chatModelInstalled {
+                                    Text("Installiert").font(.caption).foregroundColor(.koboldEmerald)
+                                }
+                                Button(ModelDownloadManager.shared.chatModelInstalled ? "Erneut herunterladen" : "Herunterladen") {
+                                    ModelDownloadManager.shared.downloadChatModel()
+                                }
+                                .buttonStyle(.bordered)
+                            }
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -734,15 +695,20 @@ struct SettingsView: View {
                             Image(systemName: ModelDownloadManager.shared.sdModelInstalled ? "checkmark.circle.fill" : "photo.fill")
                                 .foregroundColor(ModelDownloadManager.shared.sdModelInstalled ? .koboldEmerald : .purple)
                             Text("Bild: Stable Diffusion 2.1")
-                                .font(.system(size: 12, weight: .medium))
+                                .font(.system(size: 14.5, weight: .medium))
                         }
                         if ModelDownloadManager.shared.isDownloadingSD {
                             GlassProgressBar(value: ModelDownloadManager.shared.sdProgress, label: ModelDownloadManager.shared.sdStatus)
-                        } else if !ModelDownloadManager.shared.sdModelInstalled {
-                            Button("Herunterladen (~1.5 GB)") { ModelDownloadManager.shared.downloadSDModel() }
-                                .buttonStyle(.bordered)
                         } else {
-                            Text("Installiert").font(.caption).foregroundColor(.koboldEmerald)
+                            HStack(spacing: 8) {
+                                if ModelDownloadManager.shared.sdModelInstalled {
+                                    Text("Installiert").font(.caption).foregroundColor(.koboldEmerald)
+                                }
+                                Button(ModelDownloadManager.shared.sdModelInstalled ? "Erneut herunterladen" : "Herunterladen (~1.5 GB)") {
+                                    ModelDownloadManager.shared.downloadSDModel(force: ModelDownloadManager.shared.sdModelInstalled)
+                                }
+                                .buttonStyle(.bordered)
+                            }
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -758,25 +724,21 @@ struct SettingsView: View {
                     Button(action: { ModelDownloadManager.shared.openModelsFolder() }) {
                         HStack(spacing: 6) {
                             Image(systemName: "folder.fill")
-                                .font(.system(size: 12))
+                                .font(.system(size: 14.5))
                             Text("Modell-Ordner öffnen")
-                                .font(.system(size: 12))
+                                .font(.system(size: 14.5))
                         }
                     }
                     .buttonStyle(.bordered)
                     .help("Öffnet den Ordner mit heruntergeladenen Modellen — hier kannst du Modelle manuell austauschen")
 
                     Text("Eigene CoreML-Modelle in den Ordner legen, um sie zu verwenden.")
-                        .font(.system(size: 10)).foregroundColor(.secondary)
+                        .font(.system(size: 12.5)).foregroundColor(.secondary)
                 }
-            }
-            .padding()
         }
 
         // Per-agent model pickers
-        GroupBox {
-            VStack(alignment: .leading, spacing: 14) {
-                Label("Modell pro Agent", systemImage: "person.3.fill").font(.subheadline.bold())
+        FuturisticBox(icon: "person.3.fill", title: "Modell pro Agent", accent: .koboldEmerald) {
                 Text("Jeder Agent kann ein eigenes Modell nutzen. Leer = primäres Modell.")
                     .font(.caption).foregroundColor(.secondary)
 
@@ -784,7 +746,7 @@ struct SettingsView: View {
                     HStack(spacing: 10) {
                         Text(config.emoji).font(.title3)
                         Text(config.displayName)
-                            .font(.system(size: 12, weight: .medium))
+                            .font(.system(size: 14.5, weight: .medium))
                             .frame(width: 80, alignment: .leading)
 
                         // Provider picker (compact)
@@ -835,7 +797,7 @@ struct SettingsView: View {
                         // Provider badge
                         if config.provider != "ollama" {
                             Text(config.provider.uppercased())
-                                .font(.system(size: 8, weight: .bold))
+                                .font(.system(size: 9, weight: .bold))
                                 .foregroundColor(.white)
                                 .padding(.horizontal, 4).padding(.vertical, 2)
                                 .background(providerBadgeColor(config.provider))
@@ -854,8 +816,6 @@ struct SettingsView: View {
                         Divider()
                     }
                 }
-            }
-            .padding()
         }
 
         // Cloud API Provider
@@ -867,7 +827,7 @@ struct SettingsView: View {
         providerCard(
             name: "OpenAI",
             icon: "brain.head.profile",
-            color: .green,
+            color: .koboldEmerald,
             keyBinding: $openaiKey,
             baseURLBinding: $openaiBaseURL,
             defaultURL: "https://api.openai.com",
@@ -879,7 +839,7 @@ struct SettingsView: View {
         providerCard(
             name: "Anthropic",
             icon: "sparkles",
-            color: .orange,
+            color: .koboldGold,
             keyBinding: $anthropicKey,
             baseURLBinding: $anthropicBaseURL,
             defaultURL: "https://api.anthropic.com",
@@ -891,13 +851,99 @@ struct SettingsView: View {
         providerCard(
             name: "Groq",
             icon: "bolt.fill",
-            color: .blue,
+            color: .koboldEmerald,
             keyBinding: $groqKey,
             baseURLBinding: $groqBaseURL,
             defaultURL: "https://api.groq.com",
             models: ["llama-3.3-70b-versatile", "mixtral-8x7b-32768", "gemma2-9b-it"],
             provider: "groq"
         )
+        // Bildgenerierung (Stable Diffusion)
+        Text("Bildgenerierung").font(.headline).padding(.top, 8)
+        FuturisticBox(icon: "photo.artframe", title: "Stable Diffusion (CoreML)", accent: .koboldEmerald) {
+                Text("Generiere Bilder lokal auf deinem Mac. Sage z.B. 'Erstelle ein Bild von...' im Chat.")
+                    .font(.caption).foregroundColor(.secondary)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Master-Prompt (wird jedem Prompt vorangestellt)").font(.caption.bold()).foregroundColor(.secondary)
+                    TextField("z.B. masterpiece, best quality, highly detailed",
+                              text: AppStorageBinding("kobold.sd.masterPrompt", default: "masterpiece, best quality, highly detailed"))
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 14.5))
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Standard Negative Prompt").font(.caption.bold()).foregroundColor(.secondary)
+                    TextField("z.B. ugly, blurry, distorted",
+                              text: AppStorageBinding("kobold.sd.negativePrompt", default: "ugly, blurry, distorted, low quality, deformed"))
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 14.5))
+                }
+
+                HStack(spacing: 20) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Schritte: \(UserDefaults.standard.integer(forKey: "kobold.sd.steps") == 0 ? 30 : UserDefaults.standard.integer(forKey: "kobold.sd.steps"))")
+                            .font(.caption.bold()).foregroundColor(.secondary)
+                        Slider(value: AppStorageDoubleBinding("kobold.sd.steps", default: 30), in: 10...80, step: 5)
+                            .tint(.koboldEmerald)
+                            .frame(width: 150)
+                    }
+                    VStack(alignment: .leading, spacing: 4) {
+                        let gv = UserDefaults.standard.float(forKey: "kobold.sd.guidanceScale")
+                        Text("Guidance: \(String(format: "%.1f", gv > 0 ? gv : 7.5))")
+                            .font(.caption.bold()).foregroundColor(.secondary)
+                        Slider(value: AppStorageDoubleBinding("kobold.sd.guidanceScale", default: 7.5), in: 1.0...20.0, step: 0.5)
+                            .tint(.koboldEmerald)
+                            .frame(width: 150)
+                    }
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Compute").font(.caption.bold()).foregroundColor(.secondary)
+                        Picker("", selection: AppStorageBinding("kobold.sd.computeUnits", default: "cpuAndGPU")) {
+                            Text("CPU + GPU").tag("cpuAndGPU")
+                            Text("Alle (+ ANE)").tag("all")
+                            Text("Nur CPU").tag("cpuOnly")
+                        }
+                        .pickerStyle(.menu)
+                        .frame(width: 130)
+                    }
+                }
+
+                HStack(spacing: 12) {
+                    if ImageGenManager.shared.isModelLoaded {
+                        HStack(spacing: 6) {
+                            Circle().fill(Color.koboldEmerald).frame(width: 8, height: 8)
+                            Text("Model '\(ImageGenManager.shared.currentModelName)' geladen")
+                                .font(.system(size: 13.5, weight: .medium)).foregroundColor(.koboldEmerald)
+                        }
+                    } else {
+                        HStack(spacing: 6) {
+                            Image(systemName: "info.circle.fill").font(.caption).foregroundColor(.orange)
+                            Text("CoreML SD-Model nach ~/Library/Application Support/KoboldOS/sd-models/ legen")
+                                .font(.system(size: 12.5)).foregroundColor(.secondary)
+                        }
+                    }
+                    Spacer()
+                    Button("Models-Ordner öffnen") {
+                        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+                            .appendingPathComponent("KoboldOS/sd-models")
+                        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                        NSWorkspace.shared.open(dir)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+
+                if ImageGenManager.shared.isGenerating {
+                    HStack(spacing: 8) {
+                        ProgressView(value: ImageGenManager.shared.generationProgress)
+                            .tint(.koboldEmerald)
+                        Text("\(Int(ImageGenManager.shared.generationProgress * 100))%")
+                            .font(.system(size: 13.5, weight: .bold, design: .monospaced))
+                            .foregroundColor(.koboldEmerald)
+                    }
+                }
+        }
+
         settingsSaveButton(section: "Modelle")
     }
 
@@ -915,13 +961,8 @@ struct SettingsView: View {
     private func providerCard(name: String, icon: String, color: Color,
                                keyBinding: Binding<String>, baseURLBinding: Binding<String>,
                                defaultURL: String, models: [String], provider: String) -> some View {
-        GroupBox {
-            VStack(alignment: .leading, spacing: 12) {
+        FuturisticBox(icon: icon, title: name, accent: color) {
                 HStack {
-                    Image(systemName: icon)
-                        .foregroundColor(color)
-                        .frame(width: 20)
-                    Label(name, systemImage: "").font(.subheadline.bold())
                     Spacer()
                     // Status badge
                     if keyBinding.wrappedValue.isEmpty {
@@ -949,7 +990,7 @@ struct SettingsView: View {
                     Text("Modelle:").font(.caption).foregroundColor(.secondary)
                     ForEach(models, id: \.self) { m in
                         Text(m)
-                            .font(.system(size: 9, design: .monospaced))
+                            .font(.system(size: 11.5, design: .monospaced))
                             .padding(.horizontal, 6).padding(.vertical, 2)
                             .background(Color.koboldSurface)
                             .cornerRadius(4)
@@ -972,8 +1013,6 @@ struct SettingsView: View {
                             .foregroundColor(providerTestResult.contains("OK") ? .koboldEmerald : .red)
                     }
                 }
-            }
-            .padding()
         }
     }
 
@@ -1003,9 +1042,7 @@ struct SettingsView: View {
         sectionTitle("Berechtigungen & Autonomie")
 
         // Autonomy level
-        GroupBox {
-            VStack(alignment: .leading, spacing: 14) {
-                Label("Autonomie-Level", systemImage: "dial.high.fill").font(.subheadline.bold())
+        FuturisticBox(icon: "dial.high.fill", title: "Autonomie-Level", accent: .koboldGold) {
                 Text("Bestimmt, was der Agent ohne Rückfrage ausführen darf.")
                     .font(.caption).foregroundColor(.secondary)
 
@@ -1028,14 +1065,10 @@ struct SettingsView: View {
                                  desc: "Alle Tools aktiv. Fragt nur bei destruktiven Aktionen.",
                                  color: .red)
                 }
-            }
-            .padding()
         }
 
         // Individual permissions
-        GroupBox {
-            VStack(alignment: .leading, spacing: 12) {
-                Label("Einzelne Berechtigungen", systemImage: "checklist").font(.subheadline.bold())
+        FuturisticBox(icon: "checklist", title: "Einzelne Berechtigungen", accent: .koboldGold) {
                 Text("Überschreibt den Autonomie-Level für spezifische Bereiche.")
                     .font(.caption).foregroundColor(.secondary)
 
@@ -1103,15 +1136,11 @@ struct SettingsView: View {
                            detail: "Fragt nach bei sudo, rm -rf, kritischen Aktionen",
                            icon: "exclamationmark.shield.fill", color: .red,
                            binding: $permConfirmAdmin)
-            }
-            .padding()
         }
 
         // Apple System Permissions — Request macOS access
         // macOS System-Berechtigungen (zusammengelegt)
-        GroupBox {
-            VStack(alignment: .leading, spacing: 14) {
-                Label("macOS System-Berechtigungen", systemImage: "apple.logo").font(.subheadline.bold())
+        FuturisticBox(icon: "apple.logo", title: "macOS System-Berechtigungen", accent: .red) {
                 Text("Fordere macOS-Systemzugriff an. Diese Berechtigungen werden vom Betriebssystem verwaltet.")
                     .font(.caption).foregroundColor(.secondary)
 
@@ -1159,14 +1188,10 @@ struct SettingsView: View {
                     }
                     .font(.caption).buttonStyle(.link)
                 }
-            }
-            .padding()
         }
 
         // Shell Permissions — 3 Tier Toggles (Blacklist-System)
-        GroupBox {
-            VStack(alignment: .leading, spacing: 14) {
-                Label("Shell-Berechtigungen (Blacklist)", systemImage: "terminal.fill").font(.subheadline.bold())
+        FuturisticBox(icon: "terminal.fill", title: "Shell-Berechtigungen (Blacklist)", accent: .red) {
                 Text("Tiers bestimmen den Zugriffslevel. Power-Tier erlaubt alles ausser Blacklist (sudo, rm -rf /, etc.).")
                     .font(.caption).foregroundColor(.secondary)
 
@@ -1194,15 +1219,11 @@ struct SettingsView: View {
                     description: "Voller Zugriff (nur Blacklist-Schutz)",
                     isOn: $shellPowerTier
                 )
-            }
-            .padding()
         }
 
         // Custom blacklist + whitelist
         HStack(alignment: .top, spacing: 16) {
-            GroupBox {
-                VStack(alignment: .leading, spacing: 8) {
-                    Label("Benutzerdefinierte Blacklist", systemImage: "xmark.shield.fill").font(.subheadline.bold())
+            FuturisticBox(icon: "xmark.shield.fill", title: "Benutzerdefinierte Blacklist", accent: .red) {
                     Text("Zusätzlich blockierte Befehle (kommagetrennt).")
                         .font(.caption).foregroundColor(.secondary)
                     TextField("z.B. docker, terraform, ansible", text: Binding(
@@ -1211,14 +1232,10 @@ struct SettingsView: View {
                     ))
                         .textFieldStyle(.roundedBorder)
                         .font(.system(.caption, design: .monospaced))
-                }
-                .padding()
             }
             .frame(maxHeight: .infinity, alignment: .top)
 
-            GroupBox {
-                VStack(alignment: .leading, spacing: 8) {
-                    Label("Benutzerdefinierte Whitelist", systemImage: "checkmark.shield.fill").font(.subheadline.bold())
+            FuturisticBox(icon: "checkmark.shield.fill", title: "Benutzerdefinierte Whitelist", accent: .koboldEmerald) {
                     Text("Zusätzlich erlaubte Befehle (kommagetrennt).")
                         .font(.caption).foregroundColor(.secondary)
                     TextField("z.B. python3, node, cargo, docker", text: Binding(
@@ -1227,8 +1244,6 @@ struct SettingsView: View {
                     ))
                         .textFieldStyle(.roundedBorder)
                         .font(.system(.caption, design: .monospaced))
-                }
-                .padding()
             }
             .frame(maxHeight: .infinity, alignment: .top)
         }
@@ -1246,11 +1261,11 @@ struct SettingsView: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 15.5, weight: .semibold))
                 Text(description)
                     .font(.caption).foregroundColor(.secondary)
                 Text(commands)
-                    .font(.system(size: 9, design: .monospaced))
+                    .font(.system(size: 11.5, design: .monospaced))
                     .foregroundColor(.secondary)
                     .lineLimit(2)
             }
@@ -1271,7 +1286,7 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text("\(level)").font(.title2.bold()).foregroundColor(color)
-                Text(title).font(.system(size: 12, weight: .semibold))
+                Text(title).font(.system(size: 14.5, weight: .semibold))
             }
             Text(desc).font(.caption).foregroundColor(.secondary).fixedSize(horizontal: false, vertical: true)
         }
@@ -1289,7 +1304,7 @@ struct SettingsView: View {
                 .foregroundColor(color)
                 .frame(width: 20)
             VStack(alignment: .leading, spacing: 1) {
-                Text(title).font(.system(size: 13))
+                Text(title).font(.system(size: 15.5))
                 Text(detail).font(.caption).foregroundColor(.secondary)
             }
             Spacer()
@@ -1303,7 +1318,7 @@ struct SettingsView: View {
         HStack(spacing: 12) {
             Image(systemName: icon).frame(width: 20).foregroundColor(.secondary)
             VStack(alignment: .leading, spacing: 1) {
-                Text(title).font(.system(size: 13))
+                Text(title).font(.system(size: 15.5))
                 Text(detail).font(.caption).foregroundColor(.secondary)
             }
             Spacer()
@@ -1334,11 +1349,11 @@ struct SettingsView: View {
     private func systemPermRow(title: String, icon: String, color: Color, detail: String, action: @escaping () -> Void) -> some View {
         HStack(spacing: 12) {
             Image(systemName: icon)
-                .font(.system(size: 16))
+                .font(.system(size: 18.5))
                 .foregroundColor(color)
                 .frame(width: 24)
             VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.system(size: 13, weight: .medium))
+                Text(title).font(.system(size: 15.5, weight: .medium))
                 Text(detail).font(.caption).foregroundColor(.secondary)
             }
             Spacer()
@@ -1391,9 +1406,7 @@ struct SettingsView: View {
         sectionTitle("Datenschutz & Sicherheit")
 
         // Datenpersistenz
-        GroupBox {
-            VStack(alignment: .leading, spacing: 12) {
-                Label("Datenpersistenz", systemImage: "externaldrive.fill").font(.subheadline.bold())
+        FuturisticBox(icon: "externaldrive.fill", title: "Datenpersistenz", accent: .koboldGold) {
                 Text("Steuere ob Daten (Gedächtnis, Chat-Verlauf, Skills) auch nach dem Löschen der App erhalten bleiben.")
                     .font(.caption).foregroundColor(.secondary)
                 Toggle("Daten über App-Löschung hinaus speichern", isOn: $persistDataAfterDelete)
@@ -1402,14 +1415,10 @@ struct SettingsView: View {
                      ? "Daten bleiben in ~/Library/Application Support/KoboldOS/ erhalten."
                      : "Alle Daten werden beim Deinstallieren der App entfernt.")
                     .font(.caption2).foregroundColor(.secondary)
-            }
-            .padding()
         }
 
         // Safe Mode
-        GroupBox {
-            VStack(alignment: .leading, spacing: 12) {
-                Label("Safe Mode", systemImage: "lock.shield.fill").font(.subheadline.bold())
+        FuturisticBox(icon: "lock.shield.fill", title: "Safe Mode", accent: .red) {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Status: \(viewModel.safeModeActive ? "Aktiv" : "Deaktiviert")")
@@ -1423,14 +1432,10 @@ struct SettingsView: View {
                         .fill(viewModel.safeModeActive ? Color.red : Color.koboldEmerald)
                         .frame(width: 10, height: 10)
                 }
-            }
-            .padding()
         }
 
         // Daemon Auth
-        GroupBox {
-            VStack(alignment: .leading, spacing: 10) {
-                Label("Daemon-Authentifizierung", systemImage: "key.fill").font(.subheadline.bold())
+        FuturisticBox(icon: "key.fill", title: "Daemon-Authentifizierung", accent: .red) {
                 Text("Bearer-Token für API-Anfragen an den lokalen Daemon.")
                     .font(.caption).foregroundColor(.secondary)
                 HStack {
@@ -1454,14 +1459,10 @@ struct SettingsView: View {
                     .buttonStyle(.bordered)
                     .help("Token kopieren")
                 }
-            }
-            .padding()
         }
 
         // Cloud API Keys (quick access — also editable under Modelle)
-        GroupBox {
-            VStack(alignment: .leading, spacing: 12) {
-                Label("Cloud API-Keys", systemImage: "cloud.fill").font(.subheadline.bold())
+        FuturisticBox(icon: "cloud.fill", title: "Cloud API-Keys", accent: .red) {
                 Text("API-Keys für Cloud-Provider. Werden lokal in UserDefaults gespeichert.")
                     .font(.caption).foregroundColor(.secondary)
 
@@ -1494,17 +1495,25 @@ struct SettingsView: View {
                             .font(.system(.caption, design: .monospaced))
                     }
                 }
-            }
-            .padding()
         }
 
-        // Secrets
-        GroupBox {
-            VStack(alignment: .leading, spacing: 8) {
-                Label("Secrets & API-Keys", systemImage: "lock.rectangle.stack.fill").font(.subheadline.bold())
-                SecretsManagementView()
-            }
-            .padding()
+        // Secrets (lazy loaded — avoids Keychain prompts when section appears)
+        FuturisticBox(icon: "lock.rectangle.stack.fill", title: "Secrets & API-Keys", accent: .red) {
+                if showSecretsManager {
+                    SecretsManagementView()
+                } else {
+                    VStack(spacing: 8) {
+                        Text("Keychain-basierter Passwort-Manager für API-Keys, Tokens und Zugangsdaten.")
+                            .font(.caption).foregroundColor(.secondary)
+                        Button(action: { showSecretsManager = true }) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "lock.open.fill")
+                                Text("Secrets-Manager öffnen")
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                }
         }
 
         // Datensicherung (merged from former standalone tab)
@@ -1516,9 +1525,7 @@ struct SettingsView: View {
     @ViewBuilder
     private func backupContent() -> some View {
         // Create backup
-        GroupBox {
-            VStack(alignment: .leading, spacing: 12) {
-                Label("Backup erstellen", systemImage: "arrow.down.doc.fill").font(.subheadline.bold())
+        FuturisticBox(icon: "arrow.down.doc.fill", title: "Backup erstellen", accent: .koboldEmerald) {
                 Text("Wähle aus, welche Daten gesichert werden sollen:")
                     .font(.caption).foregroundColor(.secondary)
 
@@ -1533,7 +1540,7 @@ struct SettingsView: View {
                     Toggle("Workflows", isOn: $backupWorkflows)
                 }
                 .toggleStyle(.checkbox)
-                .font(.system(size: 12))
+                .font(.system(size: 14.5))
 
                 HStack(spacing: 12) {
                     Button(action: createBackup) {
@@ -1567,14 +1574,10 @@ struct SettingsView: View {
                             .font(.caption).foregroundColor(backupStatusMessage.contains("Fehler") ? .red : .koboldEmerald)
                     }
                 }
-            }
-            .padding()
         }
 
         // Existing backups
-        GroupBox {
-            VStack(alignment: .leading, spacing: 12) {
-                Label("Vorhandene Backups", systemImage: "clock.arrow.circlepath").font(.subheadline.bold())
+        FuturisticBox(icon: "clock.arrow.circlepath", title: "Vorhandene Backups", accent: .koboldGold) {
 
                 if backups.isEmpty {
                     Text("Keine Backups vorhanden.")
@@ -1588,7 +1591,7 @@ struct SettingsView: View {
                                 .frame(width: 20)
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(backup.name)
-                                    .font(.system(size: 13, weight: .medium))
+                                    .font(.system(size: 15.5, weight: .medium))
                                 Text(backup.formattedDate)
                                     .font(.caption).foregroundColor(.secondary)
                             }
@@ -1607,8 +1610,6 @@ struct SettingsView: View {
                         if backup.id != backups.last?.id { Divider() }
                     }
                 }
-            }
-            .padding()
         }
         .onAppear { loadBackups() }
     }
@@ -1618,10 +1619,10 @@ struct SettingsView: View {
     private func a2aPermToggle(title: String, icon: String, color: Color, isOn: Binding<Bool>) -> some View {
         HStack(spacing: 8) {
             Image(systemName: icon)
-                .font(.system(size: 12))
+                .font(.system(size: 14.5))
                 .foregroundColor(isOn.wrappedValue ? color : .secondary)
                 .frame(width: 18)
-            Text(title).font(.system(size: 11))
+            Text(title).font(.system(size: 13.5))
             Spacer()
             Toggle("", isOn: isOn)
                 .toggleStyle(.switch)
@@ -1641,62 +1642,11 @@ struct SettingsView: View {
     @StateObject private var weatherMgr = WeatherManager.shared
 
     @ViewBuilder
-    private func weatherSettingsSection() -> some View {
-        sectionTitle("Wetter-Widget")
-
-        GlassCard {
-            VStack(alignment: .leading, spacing: 16) {
-                GlassSectionHeader(title: "OpenWeatherMap", icon: "cloud.sun.fill")
-
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("API-Key").font(.caption).foregroundColor(.secondary)
-                    GlassTextField(text: $weatherMgr.apiKey, placeholder: "OpenWeatherMap API-Key eingeben")
-                    Text("Kostenlos auf openweathermap.org erhältlich")
-                        .font(.system(size: 10)).foregroundColor(.secondary)
-                }
-
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Standort (Stadt)").font(.caption).foregroundColor(.secondary)
-                    GlassTextField(text: $weatherMgr.manualCity, placeholder: "z.B. Stuttgart (leer = automatisch)")
-                    Text("Leer lassen für automatische Standortbestimmung")
-                        .font(.system(size: 10)).foregroundColor(.secondary)
-                }
-
-                HStack(spacing: 12) {
-                    GlassButton(title: "Wetter abrufen", icon: "arrow.clockwise", isPrimary: true) {
-                        weatherMgr.fetchWeather()
-                    }
-
-                    if let temp = weatherMgr.temperature {
-                        HStack(spacing: 6) {
-                            Image(systemName: weatherMgr.iconName)
-                                .foregroundColor(.koboldGold)
-                            Text(String(format: "%.0f°C", temp))
-                                .font(.system(size: 14, weight: .semibold))
-                            if !weatherMgr.cityName.isEmpty {
-                                Text(weatherMgr.cityName)
-                                    .font(.caption).foregroundColor(.secondary)
-                            }
-                        }
-                    }
-
-                    if let error = weatherMgr.lastError {
-                        Text(error)
-                            .font(.caption).foregroundColor(.red)
-                    }
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
     private func connectionsSection() -> some View {
         sectionTitle("Verbindungen")
 
         // Standardnachrichtenkanal
-        GroupBox {
-            VStack(alignment: .leading, spacing: 10) {
-                Label("Standardnachrichtenkanal", systemImage: "bell.badge.fill").font(.subheadline.bold())
+        FuturisticBox(icon: "bell.badge.fill", title: "Standardnachrichtenkanal", accent: .koboldGold) {
                 Text("Wähle wo Updates und Benachrichtigungen ankommen.")
                     .font(.caption).foregroundColor(.secondary)
 
@@ -1714,8 +1664,6 @@ struct SettingsView: View {
                             .font(.caption).foregroundColor(.orange)
                     }
                 }
-            }
-            .padding()
         }
 
         // Row 1: Google + SoundCloud
@@ -1737,26 +1685,30 @@ struct SettingsView: View {
         }
 
         // Weitere Integrationen
-        GroupBox {
-            VStack(alignment: .leading, spacing: 10) {
-                Label("Weitere Integrationen", systemImage: "puzzlepiece.extension.fill").font(.subheadline.bold())
+        FuturisticBox(icon: "puzzlepiece.extension.fill", title: "Weitere Integrationen", accent: .koboldGold) {
                 Text("Kommende Verbindungen — du kannst bereits jetzt APIs über das Shell- und Web-Tool nutzen.")
                     .font(.caption).foregroundColor(.secondary)
-            }.padding()
         }
 
         let connectionItems: [(String, AnyView, Color, String, Bool)] = [
-            ("GitHub",      AnyView(brandLogoGitHub), .purple,   "Repos, Issues, PRs",          true),
-            ("Microsoft",   AnyView(brandLogoMicrosoft), .blue,  "OneDrive, Outlook, Teams",     true),
-            ("Hugging Face",AnyView(brandLogoHuggingFace), .orange, "AI-Inference, Modelle",     true),
-            ("Slack",       AnyView(brandLogoSlack), .green,     "Nachrichten, Kanäle",          true),
-            ("Notion",      AnyView(brandLogoNotion), .primary,  "Seiten lesen/bearbeiten",      true),
-            ("Discord",     AnyView(brandLogoDiscord), .indigo,  "Server, Nachrichten",          false),
-            ("Dropbox",     AnyView(brandLogoDropbox), .cyan,    "Dateien synchronisieren",      false),
-            ("Spotify",     AnyView(brandLogoSpotify), .green,   "Playlists, Wiedergabe",        false),
-            ("Linear",      AnyView(brandLogoLinear), .purple,   "Issues, Projekte",             false),
-            ("Todoist",     AnyView(brandLogoTodoist), .red,     "Tasks, Projekte",              false),
-            ("LinkedIn",    AnyView(brandLogoLinkedIn), .blue,   "Profil, Netzwerk",             false),
+            ("GitHub",       AnyView(brandLogoGitHub), .purple,    "Repos, Issues, PRs",          true),
+            ("Microsoft",    AnyView(brandLogoMicrosoft), .blue,   "OneDrive, Outlook, Teams",     true),
+            ("Hugging Face", AnyView(brandLogoHuggingFace), .orange, "AI-Inference, Modelle",     true),
+            ("Slack",        AnyView(brandLogoSlack), .green,      "Nachrichten, Kanäle",          true),
+            ("Notion",       AnyView(brandLogoNotion), .primary,   "Seiten lesen/bearbeiten",      true),
+            ("E-Mail",       AnyView(Image(systemName: "envelope.fill").font(.title2).foregroundColor(.blue)), .blue, "SMTP/IMAP E-Mail senden", true),
+            ("SMS (Twilio)", AnyView(Image(systemName: "message.fill").font(.title2).foregroundColor(.red)), .red, "SMS via Twilio API", true),
+            ("WhatsApp",     AnyView(Image(systemName: "phone.bubble.fill").font(.title2).foregroundColor(.green)), .green, "Nachrichten via API", true),
+            ("Webhook",      AnyView(Image(systemName: "antenna.radiowaves.left.and.right").font(.title2).foregroundColor(.orange)), .orange, "HTTP Webhooks empfangen/senden", true),
+            ("CalDAV",       AnyView(Image(systemName: "calendar").font(.title2).foregroundColor(.red)), .red, "Kalender synchronisieren", true),
+            ("MQTT",         AnyView(Image(systemName: "sensor.fill").font(.title2).foregroundColor(.teal)), .teal, "IoT / Smart Home", true),
+            ("RSS",          AnyView(Image(systemName: "dot.radiowaves.left.and.right").font(.title2).foregroundColor(.orange)), .orange, "Feeds abonnieren", true),
+            ("Discord",      AnyView(brandLogoDiscord), .indigo,   "Server, Nachrichten",          false),
+            ("Dropbox",      AnyView(brandLogoDropbox), .cyan,     "Dateien synchronisieren",      false),
+            ("Spotify",      AnyView(brandLogoSpotify), .green,    "Playlists, Wiedergabe",        false),
+            ("Linear",       AnyView(brandLogoLinear), .purple,    "Issues, Projekte",             false),
+            ("Todoist",      AnyView(brandLogoTodoist), .red,      "Tasks, Projekte",              false),
+            ("LinkedIn",     AnyView(brandLogoLinkedIn), .blue,    "Profil, Netzwerk",             false),
         ]
 
         LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
@@ -1767,9 +1719,9 @@ struct SettingsView: View {
                             .frame(width: 32, height: 32)
                         VStack(alignment: .leading, spacing: 1) {
                             Text(item.0)
-                                .font(.system(size: 12, weight: .semibold))
+                                .font(.system(size: 14.5, weight: .semibold))
                             Text(item.3)
-                                .font(.system(size: 10)).foregroundColor(.secondary).lineLimit(1)
+                                .font(.system(size: 12.5)).foregroundColor(.secondary).lineLimit(1)
                         }
                         Spacer()
                     }
@@ -1778,7 +1730,7 @@ struct SettingsView: View {
                 }
                 .overlay(alignment: .topTrailing) {
                     Text(item.4 ? "Phase 1" : "Geplant")
-                        .font(.system(size: 8, weight: .bold))
+                        .font(.system(size: 9, weight: .bold))
                         .foregroundColor(item.4 ? .koboldEmerald : .secondary)
                         .padding(.horizontal, 5).padding(.vertical, 2)
                         .background(Capsule().fill((item.4 ? Color.koboldEmerald : Color.secondary).opacity(0.15)))
@@ -1803,19 +1755,19 @@ struct SettingsView: View {
                                 LinearGradient(colors: [Color.purple, Color.indigo], startPoint: .topLeading, endPoint: .bottomTrailing)
                             )
                             Image(systemName: "arrow.left.arrow.right")
-                                .font(.system(size: 18, weight: .bold))
+                                .font(.system(size: 19, weight: .bold))
                                 .foregroundColor(.white)
                         }
                         .frame(width: 36, height: 36)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("A2A Server").font(.system(size: 15, weight: .bold))
-                            Text("Agent-zu-Agent Protokoll").font(.system(size: 11)).foregroundColor(.secondary)
+                            Text("A2A Server").font(.system(size: 17.5, weight: .bold))
+                            Text("Agent-zu-Agent Protokoll").font(.system(size: 13.5)).foregroundColor(.secondary)
                         }
                         Spacer()
                         if a2aEnabled {
                             HStack(spacing: 5) {
                                 Circle().fill(Color.koboldEmerald).frame(width: 7, height: 7)
-                                Text("Aktiv").font(.system(size: 10, weight: .semibold)).foregroundColor(.koboldEmerald)
+                                Text("Aktiv").font(.system(size: 12.5, weight: .semibold)).foregroundColor(.koboldEmerald)
                             }
                         }
                     }
@@ -1827,7 +1779,7 @@ struct SettingsView: View {
                         .tint(.koboldEmerald)
 
                     HStack(spacing: 8) {
-                        Text("Port:").font(.system(size: 11)).foregroundColor(.secondary)
+                        Text("Port:").font(.system(size: 13.5)).foregroundColor(.secondary)
                         TextField("8081", value: $a2aPort, format: .number)
                             .textFieldStyle(.roundedBorder)
                             .frame(width: 70)
@@ -1838,7 +1790,7 @@ struct SettingsView: View {
                         HStack(spacing: 6) {
                             Circle().fill(Color.koboldEmerald).frame(width: 6, height: 6)
                             Text("http://localhost:\(a2aPort)")
-                                .font(.system(size: 10, design: .monospaced))
+                                .font(.system(size: 12.5, design: .monospaced))
                                 .foregroundColor(.koboldEmerald)
                                 .textSelection(.enabled)
                         }
@@ -1848,20 +1800,20 @@ struct SettingsView: View {
                             Divider().opacity(0.3)
                             VStack(alignment: .leading, spacing: 6) {
                                 Text("Verbundene Clients (\(a2aConnectedClients.count))")
-                                    .font(.system(size: 10, weight: .semibold)).foregroundColor(.secondary)
+                                    .font(.system(size: 12.5, weight: .semibold)).foregroundColor(.secondary)
                                 ForEach(a2aConnectedClients, id: \.id) { client in
                                     HStack(spacing: 8) {
                                         Circle().fill(Color.koboldEmerald).frame(width: 5, height: 5)
                                         VStack(alignment: .leading, spacing: 1) {
                                             Text(client.name)
-                                                .font(.system(size: 11, weight: .medium))
+                                                .font(.system(size: 13.5, weight: .medium))
                                             Text(client.url)
-                                                .font(.system(size: 9, design: .monospaced))
+                                                .font(.system(size: 11.5, design: .monospaced))
                                                 .foregroundColor(.secondary)
                                         }
                                         Spacer()
                                         Text(client.lastSeen)
-                                            .font(.system(size: 9)).foregroundColor(.secondary)
+                                            .font(.system(size: 11.5)).foregroundColor(.secondary)
                                         Button(action: {
                                             a2aConnectedClients.removeAll { $0.id == client.id }
                                             // Notify daemon to reject this client
@@ -1871,7 +1823,7 @@ struct SettingsView: View {
                                             )
                                         }) {
                                             Image(systemName: "xmark.circle.fill")
-                                                .font(.system(size: 12))
+                                                .font(.system(size: 14.5))
                                                 .foregroundColor(.red.opacity(0.7))
                                         }
                                         .buttonStyle(.plain)
@@ -1881,7 +1833,7 @@ struct SettingsView: View {
                             }
                         } else {
                             Text("Keine Clients verbunden")
-                                .font(.system(size: 10)).foregroundColor(.secondary.opacity(0.6))
+                                .font(.system(size: 12.5)).foregroundColor(.secondary.opacity(0.6))
                         }
                     }
                 }
@@ -1916,13 +1868,13 @@ struct SettingsView: View {
                                 LinearGradient(colors: [Color.orange, Color.red], startPoint: .topLeading, endPoint: .bottomTrailing)
                             )
                             Image(systemName: "shield.lefthalf.filled")
-                                .font(.system(size: 18, weight: .bold))
+                                .font(.system(size: 19, weight: .bold))
                                 .foregroundColor(.white)
                         }
                         .frame(width: 36, height: 36)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("A2A Berechtigungen").font(.system(size: 15, weight: .bold))
-                            Text("Zugriff externer Agenten").font(.system(size: 11)).foregroundColor(.secondary)
+                            Text("A2A Berechtigungen").font(.system(size: 17.5, weight: .bold))
+                            Text("Zugriff externer Agenten").font(.system(size: 13.5)).foregroundColor(.secondary)
                         }
                         Spacer()
                     }
@@ -1945,16 +1897,14 @@ struct SettingsView: View {
         // Row: Token-Austausch + Vertrauenswürdige Agenten
         HStack(alignment: .top, spacing: 12) {
             // Token Exchange
-            GroupBox {
-                VStack(alignment: .leading, spacing: 10) {
-                    Label("Schnellverbindung (Token)", systemImage: "link.badge.plus").font(.subheadline.bold())
+            FuturisticBox(icon: "link.badge.plus", title: "Schnellverbindung (Token)", accent: .koboldGold) {
 
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("Dein Token").font(.system(size: 10, weight: .medium)).foregroundColor(.secondary)
+                        Text("Dein Token").font(.system(size: 12.5, weight: .medium)).foregroundColor(.secondary)
                         HStack(spacing: 6) {
                             TextField("Token...", text: $a2aToken)
                                 .textFieldStyle(.roundedBorder)
-                                .font(.system(size: 10, design: .monospaced))
+                                .font(.system(size: 12.5, design: .monospaced))
                                 .disabled(true)
                             Button("Generieren") {
                                 a2aToken = UUID().uuidString.lowercased().replacingOccurrences(of: "-", with: "").prefix(24).description
@@ -1972,11 +1922,11 @@ struct SettingsView: View {
                     }
 
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("Remote-Token").font(.system(size: 10, weight: .medium)).foregroundColor(.secondary)
+                        Text("Remote-Token").font(.system(size: 12.5, weight: .medium)).foregroundColor(.secondary)
                         HStack(spacing: 6) {
                             TextField("Token einfügen...", text: $a2aRemoteToken)
                                 .textFieldStyle(.roundedBorder)
-                                .font(.system(size: 10, design: .monospaced))
+                                .font(.system(size: 12.5, design: .monospaced))
                             Button("Verbinden") {
                                 if !a2aRemoteToken.isEmpty {
                                     let existing = a2aTrustedAgents.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1988,33 +1938,31 @@ struct SettingsView: View {
                             .disabled(a2aRemoteToken.isEmpty)
                         }
                     }
-                }
-                .padding()
             }
             .frame(maxWidth: .infinity, alignment: .top)
 
             // Vertrauenswürdige Agenten
-            GroupBox {
-                VStack(alignment: .leading, spacing: 10) {
-                    Label("Vertrauenswürdige Agenten", systemImage: "checkmark.shield.fill").font(.subheadline.bold())
+            FuturisticBox(icon: "checkmark.shield.fill", title: "Vertrauenswürdige Agenten", accent: .koboldEmerald) {
                     Text("URLs/Tokens die sich ohne Bestätigung verbinden dürfen (eine pro Zeile).")
                         .font(.caption).foregroundColor(.secondary)
                     TextEditor(text: $a2aTrustedAgents)
-                        .font(.system(size: 10, design: .monospaced))
+                        .font(.system(size: 12.5, design: .monospaced))
                         .frame(height: 60)
                         .padding(4)
                         .background(Color.black.opacity(0.2))
                         .cornerRadius(6)
                         .scrollContentBackground(.hidden)
                     Text("z.B. http://192.168.1.100:8081")
-                        .font(.system(size: 9)).foregroundColor(.secondary)
-                }
-                .padding()
+                        .font(.system(size: 11.5)).foregroundColor(.secondary)
             }
             .frame(maxWidth: .infinity, alignment: .top)
         }
 
         settingsSaveButton(section: "A2A")
+
+        // MCP Server (Model Context Protocol)
+        mcpServersSection()
+            .onAppear { Task { await loadMCPServers() } }
     }
 
     // MARK: - Brand Logos (SwiftUI drawn)
@@ -2025,7 +1973,7 @@ struct SettingsView: View {
                 .fill(Color.white)
             // Google multi-color "G"
             Text("G")
-                .font(.system(size: 20, weight: .bold, design: .rounded))
+                .font(.system(size: 21, weight: .bold, design: .rounded))
                 .foregroundStyle(
                     .linearGradient(
                         colors: [Color(red: 0.918, green: 0.259, blue: 0.208), Color(red: 0.984, green: 0.737, blue: 0.02), Color(red: 0.204, green: 0.659, blue: 0.325), Color(red: 0.259, green: 0.522, blue: 0.957)],
@@ -2041,7 +1989,7 @@ struct SettingsView: View {
                 .fill(Color(red: 1.0, green: 0.333, blue: 0.0)) // SoundCloud orange
             // Cloud + sound waves
             Image(systemName: "cloud.fill")
-                .font(.system(size: 16, weight: .bold))
+                .font(.system(size: 18.5, weight: .bold))
                 .foregroundColor(.white)
         }
     }
@@ -2054,7 +2002,7 @@ struct SettingsView: View {
                                    startPoint: .top, endPoint: .bottom)
                 )
             Image(systemName: "paperplane.fill")
-                .font(.system(size: 15, weight: .semibold))
+                .font(.system(size: 17.5, weight: .semibold))
                 .foregroundColor(.white)
                 .offset(x: -1, y: 1)
         }
@@ -2068,7 +2016,7 @@ struct SettingsView: View {
                                    startPoint: .top, endPoint: .bottom)
                 )
             Image(systemName: "message.fill")
-                .font(.system(size: 16, weight: .semibold))
+                .font(.system(size: 18.5, weight: .semibold))
                 .foregroundColor(.white)
         }
     }
@@ -2079,7 +2027,7 @@ struct SettingsView: View {
                 .fill(Color(red: 0.14, green: 0.15, blue: 0.16))
             // Octocat approximation
             Image(systemName: "cat.fill")
-                .font(.system(size: 15, weight: .semibold))
+                .font(.system(size: 17.5, weight: .semibold))
                 .foregroundColor(.white)
         }
     }
@@ -2107,7 +2055,7 @@ struct SettingsView: View {
             RoundedRectangle(cornerRadius: 8)
                 .fill(Color(red: 1.0, green: 0.827, blue: 0.0))
             Text("🤗")
-                .font(.system(size: 18))
+                .font(.system(size: 19))
         }
     }
 
@@ -2116,7 +2064,7 @@ struct SettingsView: View {
             RoundedRectangle(cornerRadius: 8)
                 .fill(Color(red: 0.286, green: 0.114, blue: 0.333))
             Image(systemName: "number")
-                .font(.system(size: 16, weight: .bold))
+                .font(.system(size: 18.5, weight: .bold))
                 .foregroundColor(.white)
         }
     }
@@ -2126,7 +2074,7 @@ struct SettingsView: View {
             RoundedRectangle(cornerRadius: 8)
                 .fill(Color.white)
             Text("N")
-                .font(.system(size: 18, weight: .bold, design: .serif))
+                .font(.system(size: 19, weight: .bold, design: .serif))
                 .foregroundColor(.black)
         }
     }
@@ -2136,7 +2084,7 @@ struct SettingsView: View {
             RoundedRectangle(cornerRadius: 8)
                 .fill(Color(red: 0.345, green: 0.396, blue: 0.949))
             Image(systemName: "gamecontroller.fill")
-                .font(.system(size: 14, weight: .semibold))
+                .font(.system(size: 16.5, weight: .semibold))
                 .foregroundColor(.white)
         }
     }
@@ -2146,7 +2094,7 @@ struct SettingsView: View {
             RoundedRectangle(cornerRadius: 8)
                 .fill(Color(red: 0.004, green: 0.388, blue: 1.0))
             Image(systemName: "shippingbox.fill")
-                .font(.system(size: 14, weight: .semibold))
+                .font(.system(size: 16.5, weight: .semibold))
                 .foregroundColor(.white)
         }
     }
@@ -2175,7 +2123,7 @@ struct SettingsView: View {
                                    startPoint: .topLeading, endPoint: .bottomTrailing)
                 )
             Image(systemName: "circle.lefthalf.filled")
-                .font(.system(size: 16, weight: .semibold))
+                .font(.system(size: 18.5, weight: .semibold))
                 .foregroundColor(.white)
         }
     }
@@ -2185,7 +2133,7 @@ struct SettingsView: View {
             RoundedRectangle(cornerRadius: 8)
                 .fill(Color(red: 0.882, green: 0.286, blue: 0.243))
             Image(systemName: "checkmark")
-                .font(.system(size: 16, weight: .bold))
+                .font(.system(size: 18.5, weight: .bold))
                 .foregroundColor(.white)
         }
     }
@@ -2195,7 +2143,7 @@ struct SettingsView: View {
             RoundedRectangle(cornerRadius: 8)
                 .fill(Color(red: 0.0, green: 0.467, blue: 0.71))
             Text("in")
-                .font(.system(size: 17, weight: .bold, design: .serif))
+                .font(.system(size: 19.5, weight: .bold, design: .serif))
                 .foregroundColor(.white)
         }
     }
@@ -2204,36 +2152,147 @@ struct SettingsView: View {
 
     @ViewBuilder
     private func memorySettingsSection() -> some View {
+        // MARK: Context Management
+        sectionTitle("Kontext-Management")
+
+        HStack(alignment: .top, spacing: 16) {
+            FuturisticBox(icon: "text.line.last.and.arrowtriangle.forward", title: "Kontextfenster", accent: .koboldEmerald) {
+                Text("Definiert wie viel Text der Agent gleichzeitig im Gedächtnis halten kann.")
+                    .font(.caption).foregroundColor(.secondary)
+
+                Picker("Kontextgröße", selection: $contextWindowSize) {
+                    Text("8K").tag(8192)
+                    Text("16K").tag(16384)
+                    Text("32K").tag(32768)
+                    Text("64K").tag(65536)
+                    Text("128K").tag(131072)
+                    Text("150K (Standard)").tag(150_000)
+                    Text("200K").tag(200_000)
+                }
+                .pickerStyle(.menu)
+
+                Toggle("Auto-Komprimierung", isOn: $contextAutoCompress)
+                    .toggleStyle(.switch).tint(.koboldEmerald)
+                Text("Komprimiert automatisch ältere Nachrichten wenn der Kontext voll wird.")
+                    .font(.caption2).foregroundColor(.secondary)
+            }
+            .frame(maxHeight: .infinity, alignment: .top)
+
+            FuturisticBox(icon: "gauge.with.dots.needle.bottom.50percent", title: "Kompressions-Schwelle", accent: .koboldGold) {
+                Text("Ab welcher Auslastung wird komprimiert: \(Int(contextThreshold * 100))%")
+                    .font(.caption).foregroundColor(.secondary)
+
+                Slider(value: $contextThreshold, in: 0.5...0.95, step: 0.05)
+                    .tint(.koboldGold)
+
+                HStack {
+                    Text("50%").font(.caption2).foregroundColor(.secondary)
+                    Spacer()
+                    Text("95%").font(.caption2).foregroundColor(.secondary)
+                }
+
+                Text("Niedrigere Werte = früher komprimieren (sparsamer). Höhere Werte = mehr Kontext behalten (akkurater).")
+                    .font(.caption2).foregroundColor(.secondary)
+            }
+            .frame(maxHeight: .infinity, alignment: .top)
+        }
+
+        sectionTitle("Agent-Leistung")
+
+        HStack(alignment: .top, spacing: 16) {
+            FuturisticBox(icon: "bolt.fill", title: "Schritte & Limits", accent: .orange) {
+                Text("Max. Schritte die der Agent pro Anfrage ausführen darf.")
+                    .font(.caption).foregroundColor(.secondary)
+
+                Picker("Researcher", selection: Binding(
+                    get: { UserDefaults.standard.integer(forKey: "kobold.agent.researcherSteps").nonZero ?? 50 },
+                    set: { UserDefaults.standard.set($0, forKey: "kobold.agent.researcherSteps") }
+                )) {
+                    Text("20 Schritte").tag(20)
+                    Text("50 (Standard)").tag(50)
+                    Text("80 Schritte").tag(80)
+                    Text("100 Schritte").tag(100)
+                }.pickerStyle(.menu)
+
+                Picker("Coder", selection: Binding(
+                    get: { UserDefaults.standard.integer(forKey: "kobold.agent.coderSteps").nonZero ?? 40 },
+                    set: { UserDefaults.standard.set($0, forKey: "kobold.agent.coderSteps") }
+                )) {
+                    Text("15 Schritte").tag(15)
+                    Text("40 (Standard)").tag(40)
+                    Text("60 Schritte").tag(60)
+                    Text("80 Schritte").tag(80)
+                }.pickerStyle(.menu)
+
+                Picker("Allgemein", selection: Binding(
+                    get: { UserDefaults.standard.integer(forKey: "kobold.agent.generalSteps").nonZero ?? 25 },
+                    set: { UserDefaults.standard.set($0, forKey: "kobold.agent.generalSteps") }
+                )) {
+                    Text("10 Schritte").tag(10)
+                    Text("25 (Standard)").tag(25)
+                    Text("40 Schritte").tag(40)
+                    Text("60 Schritte").tag(60)
+                }.pickerStyle(.menu)
+            }
+            .frame(maxHeight: .infinity, alignment: .top)
+
+            FuturisticBox(icon: "timer", title: "Timeouts", accent: .orange) {
+                Text("Max. Laufzeit für Shell-Befehle und Sub-Agenten.")
+                    .font(.caption).foregroundColor(.secondary)
+
+                Picker("Shell-Timeout", selection: Binding(
+                    get: { UserDefaults.standard.integer(forKey: "kobold.shell.timeout").nonZero ?? 300 },
+                    set: { UserDefaults.standard.set($0, forKey: "kobold.shell.timeout") }
+                )) {
+                    Text("60 Sek.").tag(60)
+                    Text("2 Min.").tag(120)
+                    Text("5 Min. (Standard)").tag(300)
+                    Text("10 Min.").tag(600)
+                }.pickerStyle(.menu)
+
+                Picker("Sub-Agent-Timeout", selection: Binding(
+                    get: { UserDefaults.standard.integer(forKey: "kobold.subagent.timeout").nonZero ?? 300 },
+                    set: { UserDefaults.standard.set($0, forKey: "kobold.subagent.timeout") }
+                )) {
+                    Text("2 Min.").tag(120)
+                    Text("5 Min. (Standard)").tag(300)
+                    Text("10 Min.").tag(600)
+                    Text("15 Min.").tag(900)
+                }.pickerStyle(.menu)
+
+                Picker("Max. Sub-Agenten", selection: Binding(
+                    get: { UserDefaults.standard.integer(forKey: "kobold.subagent.maxConcurrent").nonZero ?? 3 },
+                    set: { UserDefaults.standard.set($0, forKey: "kobold.subagent.maxConcurrent") }
+                )) {
+                    Text("2 gleichzeitig").tag(2)
+                    Text("3 (Standard)").tag(3)
+                    Text("5 gleichzeitig").tag(5)
+                    Text("8 gleichzeitig").tag(8)
+                }.pickerStyle(.menu)
+            }
+            .frame(maxHeight: .infinity, alignment: .top)
+        }
+
         sectionTitle("Gedächtnis-Einstellungen")
 
         // Core Memory blocks
         HStack(alignment: .top, spacing: 16) {
-            GroupBox {
-                VStack(alignment: .leading, spacing: 10) {
-                    Label("Speicherlimits", systemImage: "ruler.fill").font(.subheadline.bold())
-                    HStack { Text("Persona-Block"); Spacer(); Text("2000 Zeichen").foregroundColor(.secondary) }.font(.system(size: 13))
-                    HStack { Text("Human-Block"); Spacer(); Text("2000 Zeichen").foregroundColor(.secondary) }.font(.system(size: 13))
-                    HStack { Text("Knowledge-Block"); Spacer(); Text("3000 Zeichen").foregroundColor(.secondary) }.font(.system(size: 13))
-                }
-                .padding()
+            FuturisticBox(icon: "ruler.fill", title: "Speicherlimits", accent: .koboldGold) {
+                    HStack { Text("Persona-Block"); Spacer(); Text("2000 Zeichen").foregroundColor(.secondary) }.font(.system(size: 15.5))
+                    HStack { Text("Human-Block"); Spacer(); Text("2000 Zeichen").foregroundColor(.secondary) }.font(.system(size: 15.5))
+                    HStack { Text("Knowledge-Block"); Spacer(); Text("3000 Zeichen").foregroundColor(.secondary) }.font(.system(size: 15.5))
             }
             .frame(maxHeight: .infinity, alignment: .top)
-            GroupBox {
-                VStack(alignment: .leading, spacing: 10) {
-                    Label("Auto-Speichern", systemImage: "arrow.clockwise").font(.subheadline.bold())
+            FuturisticBox(icon: "arrow.clockwise", title: "Auto-Speichern", accent: .koboldEmerald) {
                     Toggle("Automatisch sichern", isOn: AppStorageToggle("kobold.memory.autosave", default: true))
                         .toggleStyle(.switch)
                     Text("Speichert bei jeder Aktualisierung.").font(.caption).foregroundColor(.secondary)
-                }
-                .padding()
             }
             .frame(maxHeight: .infinity, alignment: .top)
         }
 
         // Recall settings (AgentZero-style)
-        GroupBox {
-            VStack(alignment: .leading, spacing: 14) {
-                Label("Memory Recall", systemImage: "magnifyingglass").font(.subheadline.bold())
+        FuturisticBox(icon: "magnifyingglass", title: "Memory Recall", accent: .koboldEmerald) {
                 Text("Automatisches Abrufen relevanter Erinnerungen vor jeder Antwort.")
                     .font(.caption).foregroundColor(.secondary)
 
@@ -2271,14 +2330,10 @@ struct SettingsView: View {
                             .tint(.koboldEmerald)
                     }
                 }
-            }
-            .padding()
         }
 
         // Memorization settings
-        GroupBox {
-            VStack(alignment: .leading, spacing: 14) {
-                Label("Automatisches Merken", systemImage: "brain.fill").font(.subheadline.bold())
+        FuturisticBox(icon: "brain.fill", title: "Automatisches Merken", accent: .koboldEmerald) {
                 Text("Agent extrahiert automatisch wichtige Informationen aus Gesprächen.")
                     .font(.caption).foregroundColor(.secondary)
 
@@ -2303,31 +2358,23 @@ struct SettingsView: View {
                     Text("Fasst ähnliche Erinnerungen zusammen und vermeidet Duplikate (LLM-basiert).")
                         .font(.caption).foregroundColor(.secondary)
                 }
-            }
-            .padding()
         }
 
         // Export / Import
-        GroupBox {
-            VStack(alignment: .leading, spacing: 12) {
-                Label("Export / Import", systemImage: "square.and.arrow.up").font(.subheadline.bold())
+        FuturisticBox(icon: "square.and.arrow.up", title: "Export / Import", accent: .koboldGold) {
                 HStack(spacing: 8) {
                     Button("Exportieren") { exportMemory() }.buttonStyle(.bordered)
                     Button("Importieren") { importMemory() }.buttonStyle(.bordered)
                     Spacer()
                     Button("Zurücksetzen") { resetMemory() }.buttonStyle(.bordered).foregroundColor(.red)
                 }
-            }
-            .padding()
         }
 
         // MARK: Proaktive Vorschläge (ehemals eigener Reiter)
         sectionTitle("Proaktive Vorschläge")
 
         HStack(alignment: .top, spacing: 12) {
-            GroupBox {
-                VStack(alignment: .leading, spacing: 12) {
-                    Label("Allgemein", systemImage: "lightbulb.fill").font(.subheadline.bold())
+            FuturisticBox(icon: "lightbulb.fill", title: "Allgemein", accent: .koboldGold) {
 
                     Toggle("Proaktive Vorschläge aktivieren", isOn: $proactiveEngine.isEnabled)
                         .toggleStyle(.switch)
@@ -2348,13 +2395,10 @@ struct SettingsView: View {
                             Text("60 Min").tag(60)
                         }.pickerStyle(.segmented).frame(maxWidth: 300)
                     }
-                }.padding()
             }
             .frame(maxWidth: .infinity, alignment: .top)
 
-            GroupBox {
-                VStack(alignment: .leading, spacing: 10) {
-                    Label("Trigger-Typen", systemImage: "bell.badge.fill").font(.subheadline.bold())
+            FuturisticBox(icon: "bell.badge.fill", title: "Trigger-Typen", accent: .koboldGold) {
 
                     Toggle("Morgen-Briefing (08:00-09:00)", isOn: $proactiveEngine.morningBriefing)
                         .toggleStyle(.switch).tint(.koboldEmerald)
@@ -2364,15 +2408,12 @@ struct SettingsView: View {
                         .toggleStyle(.switch).tint(.koboldEmerald)
                     Toggle("System-Health-Warnungen", isOn: $proactiveEngine.systemHealth)
                         .toggleStyle(.switch).tint(.koboldEmerald)
-                }.padding()
             }
             .frame(maxWidth: .infinity, alignment: .top)
         }
 
-        GroupBox {
-            VStack(alignment: .leading, spacing: 10) {
+        FuturisticBox(icon: "list.bullet.rectangle", title: "Benutzerdefinierte Regeln", accent: .koboldGold) {
                 HStack {
-                    Label("Benutzerdefinierte Regeln", systemImage: "list.bullet.rectangle").font(.subheadline.bold())
                     Spacer()
                     Button(action: {
                         let rule = ProactiveRule(id: UUID().uuidString, name: "Neue Regel",
@@ -2394,11 +2435,11 @@ struct SettingsView: View {
 
                         VStack(alignment: .leading, spacing: 2) {
                             TextField("Name", text: $rule.name)
-                                .font(.system(size: 12, weight: .medium))
+                                .font(.system(size: 14.5, weight: .medium))
                                 .textFieldStyle(.plain)
                                 .onSubmit { proactiveEngine.saveRules() }
                             TextField("Prompt", text: $rule.prompt)
-                                .font(.system(size: 11))
+                                .font(.system(size: 13.5))
                                 .foregroundColor(.secondary)
                                 .textFieldStyle(.plain)
                                 .onSubmit { proactiveEngine.saveRules() }
@@ -2415,7 +2456,7 @@ struct SettingsView: View {
 
                         if rule.triggerType == .timeOfDay {
                             TextField("HH:MM", text: $rule.triggerValue)
-                                .font(.system(size: 11, design: .monospaced))
+                                .font(.system(size: 13.5, design: .monospaced))
                                 .textFieldStyle(.roundedBorder)
                                 .frame(width: 60)
                                 .onSubmit { proactiveEngine.saveRules() }
@@ -2429,7 +2470,6 @@ struct SettingsView: View {
                     }
                     .padding(.vertical, 4)
                 }
-            }.padding()
         }
         settingsSaveButton(section: "Gedächtnis")
     }
@@ -2518,19 +2558,19 @@ struct SettingsView: View {
                             LinearGradient(colors: [Color.blue, Color.cyan], startPoint: .topLeading, endPoint: .bottomTrailing)
                         )
                         Image(systemName: "globe")
-                            .font(.system(size: 18, weight: .bold))
+                            .font(.system(size: 19, weight: .bold))
                             .foregroundColor(.white)
                     }
                     .frame(width: 36, height: 36)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("WebApp-Server").font(.system(size: 15, weight: .bold))
-                        Text("Fernsteuerung im Browser").font(.system(size: 11)).foregroundColor(.secondary)
+                        Text("WebApp-Server").font(.system(size: 17.5, weight: .bold))
+                        Text("Fernsteuerung im Browser").font(.system(size: 13.5)).foregroundColor(.secondary)
                     }
                     Spacer()
                     if webAppRunning {
                         HStack(spacing: 5) {
                             Circle().fill(Color.koboldEmerald).frame(width: 7, height: 7)
-                            Text("Aktiv").font(.system(size: 10, weight: .semibold)).foregroundColor(.koboldEmerald)
+                            Text("Aktiv").font(.system(size: 12.5, weight: .semibold)).foregroundColor(.koboldEmerald)
                         }
                     }
                 }
@@ -2544,19 +2584,19 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 12) {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Port").font(.system(size: 10, weight: .medium)).foregroundColor(.secondary)
+                            Text("Port").font(.system(size: 12.5, weight: .medium)).foregroundColor(.secondary)
                             TextField("Port", value: $webAppPort, format: .number)
                                 .textFieldStyle(.roundedBorder)
                                 .frame(width: 70)
                         }
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Benutzer").font(.system(size: 10, weight: .medium)).foregroundColor(.secondary)
+                            Text("Benutzer").font(.system(size: 12.5, weight: .medium)).foregroundColor(.secondary)
                             TextField("Benutzer", text: $webAppUsername)
                                 .textFieldStyle(.roundedBorder)
                         }
                     }
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Passwort").font(.system(size: 10, weight: .medium)).foregroundColor(.secondary)
+                        Text("Passwort").font(.system(size: 12.5, weight: .medium)).foregroundColor(.secondary)
                         SecureField("Passwort", text: $webAppPassword)
                             .textFieldStyle(.roundedBorder)
                     }
@@ -2608,7 +2648,7 @@ struct SettingsView: View {
                     HStack(spacing: 6) {
                         Circle().fill(Color.koboldEmerald).frame(width: 6, height: 6)
                         Text("http://localhost:\(webAppPort)")
-                            .font(.system(size: 10, design: .monospaced))
+                            .font(.system(size: 12.5, design: .monospaced))
                             .foregroundColor(.koboldEmerald)
                     }
                 }
@@ -2632,19 +2672,19 @@ struct SettingsView: View {
                             LinearGradient(colors: [Color(red: 0.96, green: 0.65, blue: 0.14), Color(red: 0.96, green: 0.45, blue: 0.08)], startPoint: .topLeading, endPoint: .bottomTrailing)
                         )
                         Image(systemName: "network")
-                            .font(.system(size: 18, weight: .bold))
+                            .font(.system(size: 19, weight: .bold))
                             .foregroundColor(.white)
                     }
                     .frame(width: 36, height: 36)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Cloudflare Tunnel").font(.system(size: 15, weight: .bold))
-                        Text("Sicherer Internet-Zugang").font(.system(size: 11)).foregroundColor(.secondary)
+                        Text("Cloudflare Tunnel").font(.system(size: 17.5, weight: .bold))
+                        Text("Sicherer Internet-Zugang").font(.system(size: 13.5)).foregroundColor(.secondary)
                     }
                     Spacer()
                     if tunnelRunning && !tunnelURL.isEmpty {
                         HStack(spacing: 5) {
                             Circle().fill(Color.koboldEmerald).frame(width: 7, height: 7)
-                            Text("Verbunden").font(.system(size: 10, weight: .semibold)).foregroundColor(.koboldEmerald)
+                            Text("Verbunden").font(.system(size: 12.5, weight: .semibold)).foregroundColor(.koboldEmerald)
                         }
                     }
                 }
@@ -2697,7 +2737,7 @@ struct SettingsView: View {
                             HStack(spacing: 6) {
                                 Circle().fill(Color.blue).frame(width: 6, height: 6)
                                 Text(tunnelURL)
-                                    .font(.system(size: 10, design: .monospaced))
+                                    .font(.system(size: 12.5, design: .monospaced))
                                     .foregroundColor(.blue)
                                     .textSelection(.enabled)
                                     .lineLimit(1)
@@ -2721,7 +2761,7 @@ struct SettingsView: View {
                             // QR Code
                             if let qrImage = generateQRCode(from: tunnelURL) {
                                 VStack(alignment: .leading, spacing: 4) {
-                                    Text("QR-Code:").font(.system(size: 10)).foregroundColor(.secondary)
+                                    Text("QR-Code:").font(.system(size: 12.5)).foregroundColor(.secondary)
                                     Image(nsImage: qrImage)
                                         .interpolation(.none)
                                         .resizable()
@@ -2784,9 +2824,9 @@ struct SettingsView: View {
                     if !googleEmail.isEmpty {
                         HStack(spacing: 8) {
                             Image(systemName: "person.circle.fill")
-                                .font(.system(size: 16)).foregroundColor(.secondary)
+                                .font(.system(size: 18.5)).foregroundColor(.secondary)
                             Text(googleEmail)
-                                .font(.system(size: 12, weight: .medium))
+                                .font(.system(size: 14.5, weight: .medium))
                         }
                     }
                     let activeScopes = GoogleOAuth.shared.enabledScopes
@@ -2794,7 +2834,7 @@ struct SettingsView: View {
                         FlowLayout(spacing: 4) {
                             ForEach(Array(activeScopes).sorted(by: { $0.label < $1.label }), id: \.self) { scope in
                                 Text(scope.label)
-                                    .font(.system(size: 9, weight: .medium))
+                                    .font(.system(size: 11.5, weight: .medium))
                                     .foregroundColor(.secondary)
                                     .padding(.horizontal, 6).padding(.vertical, 2)
                                     .background(Capsule().fill(Color.secondary.opacity(0.1)))
@@ -2817,11 +2857,11 @@ struct SettingsView: View {
                         HStack(spacing: 10) {
                             ZStack {
                                 RoundedRectangle(cornerRadius: 4).fill(Color.white).frame(width: 24, height: 24)
-                                Text("G").font(.system(size: 14, weight: .bold, design: .rounded))
+                                Text("G").font(.system(size: 16.5, weight: .bold, design: .rounded))
                                     .foregroundColor(Color(red: 0.259, green: 0.522, blue: 0.957))
                             }
                             Text("Sign in with Google")
-                                .font(.system(size: 13, weight: .medium)).foregroundColor(.white)
+                                .font(.system(size: 15.5, weight: .medium)).foregroundColor(.white)
                         }
                         .padding(.leading, 4).padding(.trailing, 14).padding(.vertical, 4)
                         .background(RoundedRectangle(cornerRadius: 6).fill(Color(red: 0.259, green: 0.522, blue: 0.957)))
@@ -2832,10 +2872,6 @@ struct SettingsView: View {
             }
         )
         .onAppear {
-            googleConnected = GoogleOAuth.shared.isConnected
-            googleEmail = GoogleOAuth.shared.userEmail
-        }
-        .onReceive(Timer.publish(every: 2, on: .main, in: .common).autoconnect()) { _ in
             googleConnected = GoogleOAuth.shared.isConnected
             googleEmail = GoogleOAuth.shared.userEmail
         }
@@ -2856,10 +2892,10 @@ struct SettingsView: View {
                     }) {
                         HStack(spacing: 6) {
                             Image(systemName: isEnabled ? "checkmark.circle.fill" : "circle")
-                                .font(.system(size: 11))
+                                .font(.system(size: 13.5))
                                 .foregroundColor(isEnabled ? .koboldEmerald : .secondary)
                             Text(scope.label)
-                                .font(.system(size: 11))
+                                .font(.system(size: 13.5))
                                 .foregroundColor(.primary)
                             Spacer()
                         }
@@ -2870,7 +2906,7 @@ struct SettingsView: View {
             .padding(.top, 4)
 
             Text("Änderungen werden bei der nächsten Anmeldung wirksam.")
-                .font(.system(size: 9)).foregroundColor(.secondary)
+                .font(.system(size: 11.5)).foregroundColor(.secondary)
                 .padding(.top, 4)
         }
         .font(.caption)
@@ -2894,9 +2930,9 @@ struct SettingsView: View {
                     if !soundCloudUser.isEmpty {
                         HStack(spacing: 8) {
                             Image(systemName: "person.circle.fill")
-                                .font(.system(size: 16)).foregroundColor(.secondary)
+                                .font(.system(size: 18.5)).foregroundColor(.secondary)
                             Text(soundCloudUser)
-                                .font(.system(size: 12, weight: .medium))
+                                .font(.system(size: 14.5, weight: .medium))
                         }
                     }
                     Button("Abmelden") {
@@ -2916,11 +2952,11 @@ struct SettingsView: View {
                             ZStack {
                                 RoundedRectangle(cornerRadius: 4).fill(Color.white).frame(width: 24, height: 24)
                                 Image(systemName: "cloud.fill")
-                                    .font(.system(size: 12, weight: .bold))
+                                    .font(.system(size: 14.5, weight: .bold))
                                     .foregroundColor(Color(red: 1.0, green: 0.333, blue: 0.0))
                             }
                             Text("Sign in with SoundCloud")
-                                .font(.system(size: 13, weight: .medium)).foregroundColor(.white)
+                                .font(.system(size: 15.5, weight: .medium)).foregroundColor(.white)
                         }
                         .padding(.leading, 4).padding(.trailing, 14).padding(.vertical, 4)
                         .background(RoundedRectangle(cornerRadius: 6).fill(Color(red: 1.0, green: 0.333, blue: 0.0)))
@@ -2954,17 +2990,17 @@ struct SettingsView: View {
                 AnyView(VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 6) {
                         Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 12)).foregroundColor(.koboldEmerald)
+                            .font(.system(size: 14.5)).foregroundColor(.koboldEmerald)
                         Text("Automation-Berechtigung erteilt")
-                            .font(.system(size: 11)).foregroundColor(.secondary)
+                            .font(.system(size: 13.5)).foregroundColor(.secondary)
                     }
                     Text("Der Agent kann über AppleScript Nachrichten lesen und senden.")
-                        .font(.system(size: 10)).foregroundColor(.secondary)
+                        .font(.system(size: 12.5)).foregroundColor(.secondary)
 
                     Toggle("iMessage aktiviert", isOn: $iMessageEnabled)
                         .toggleStyle(.switch)
                         .tint(.koboldEmerald)
-                        .font(.system(size: 12))
+                        .font(.system(size: 14.5))
                         .onChange(of: iMessageEnabled) {
                             if !iMessageEnabled { iMessageAvailable = false }
                         }
@@ -2973,7 +3009,7 @@ struct SettingsView: View {
             signInButton: {
                 AnyView(VStack(alignment: .leading, spacing: 10) {
                     Text("Aktiviere iMessage um deinem Agent Zugriff auf Nachrichten zu geben. macOS fragt nach Automation-Berechtigung.")
-                        .font(.system(size: 11)).foregroundColor(.secondary)
+                        .font(.system(size: 13.5)).foregroundColor(.secondary)
 
                     Toggle("iMessage aktivieren", isOn: Binding(
                         get: { iMessageEnabled },
@@ -2987,19 +3023,19 @@ struct SettingsView: View {
                     ))
                     .toggleStyle(.switch)
                     .tint(Color(red: 0.208, green: 0.824, blue: 0.341))
-                    .font(.system(size: 12))
+                    .font(.system(size: 14.5))
 
                     if iMessageEnabled && !iMessageAvailable {
                         HStack(spacing: 6) {
                             Image(systemName: "exclamationmark.triangle.fill")
-                                .font(.system(size: 10)).foregroundColor(.orange)
+                                .font(.system(size: 12.5)).foregroundColor(.orange)
                             Text("Berechtigung noch nicht erteilt")
-                                .font(.system(size: 10)).foregroundColor(.orange)
+                                .font(.system(size: 12.5)).foregroundColor(.orange)
                         }
                         Button("Systemeinstellungen öffnen") {
                             NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation")!)
                         }
-                        .font(.system(size: 11))
+                        .font(.system(size: 13.5))
                         .buttonStyle(.borderless)
                         .foregroundColor(.secondary)
                     }
@@ -3046,20 +3082,20 @@ struct SettingsView: View {
                     if !telegramBotName.isEmpty {
                         HStack(spacing: 6) {
                             Image(systemName: "person.circle.fill")
-                                .font(.system(size: 16)).foregroundColor(.secondary)
+                                .font(.system(size: 18.5)).foregroundColor(.secondary)
                             Text("@\(telegramBotName)")
-                                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                                .font(.system(size: 14.5, weight: .semibold, design: .monospaced))
                                 .foregroundColor(.koboldEmerald)
                         }
                     }
                     HStack(spacing: 12) {
                         VStack(alignment: .leading) {
-                            Text("\(telegramStats.received)").font(.system(size: 16, weight: .bold)).foregroundColor(.koboldEmerald)
-                            Text("Empfangen").font(.system(size: 9)).foregroundColor(.secondary)
+                            Text("\(telegramStats.received)").font(.system(size: 18.5, weight: .bold)).foregroundColor(.koboldEmerald)
+                            Text("Empfangen").font(.system(size: 11.5)).foregroundColor(.secondary)
                         }
                         VStack(alignment: .leading) {
-                            Text("\(telegramStats.sent)").font(.system(size: 16, weight: .bold)).foregroundColor(.blue)
-                            Text("Gesendet").font(.system(size: 9)).foregroundColor(.secondary)
+                            Text("\(telegramStats.sent)").font(.system(size: 18.5, weight: .bold)).foregroundColor(.blue)
+                            Text("Gesendet").font(.system(size: 11.5)).foregroundColor(.secondary)
                         }
                     }
                     Button("Bot stoppen") {
@@ -3079,16 +3115,16 @@ struct SettingsView: View {
             signInButton: {
                 AnyView(VStack(alignment: .leading, spacing: 8) {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Bot-Token").font(.system(size: 10, weight: .semibold)).foregroundColor(.secondary)
+                        Text("Bot-Token").font(.system(size: 12.5, weight: .semibold)).foregroundColor(.secondary)
                         SecureField("123456:ABC-DEF1234...", text: $telegramToken)
                             .textFieldStyle(.roundedBorder)
-                            .font(.system(size: 12))
+                            .font(.system(size: 14.5))
                     }
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Chat-ID (optional)").font(.system(size: 10, weight: .semibold)).foregroundColor(.secondary)
+                        Text("Chat-ID (optional)").font(.system(size: 12.5, weight: .semibold)).foregroundColor(.secondary)
                         TextField("123456789", text: $telegramChatId)
                             .textFieldStyle(.roundedBorder)
-                            .font(.system(size: 12))
+                            .font(.system(size: 14.5))
                     }
                     Button(action: {
                         guard !telegramToken.isEmpty else { return }
@@ -3101,8 +3137,8 @@ struct SettingsView: View {
                         }
                     }) {
                         HStack(spacing: 8) {
-                            Image(systemName: "paperplane.fill").font(.system(size: 12))
-                            Text("Bot starten").font(.system(size: 13, weight: .medium))
+                            Image(systemName: "paperplane.fill").font(.system(size: 14.5))
+                            Text("Bot starten").font(.system(size: 15.5, weight: .medium))
                         }
                         .padding(.horizontal, 14).padding(.vertical, 6)
                         .background(RoundedRectangle(cornerRadius: 6).fill(
@@ -3139,14 +3175,14 @@ struct SettingsView: View {
                 HStack(spacing: 10) {
                     logo.frame(width: 36, height: 36)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(name).font(.system(size: 15, weight: .bold))
-                        Text(subtitle).font(.system(size: 11)).foregroundColor(.secondary)
+                        Text(name).font(.system(size: 17.5, weight: .bold))
+                        Text(subtitle).font(.system(size: 13.5)).foregroundColor(.secondary)
                     }
                     Spacer()
                     if isConnected {
                         HStack(spacing: 5) {
                             Circle().fill(Color.koboldEmerald).frame(width: 7, height: 7)
-                            Text("Verbunden").font(.system(size: 10, weight: .semibold)).foregroundColor(.koboldEmerald)
+                            Text("Verbunden").font(.system(size: 12.5, weight: .semibold)).foregroundColor(.koboldEmerald)
                         }
                     }
                 }
@@ -3207,7 +3243,95 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - Sprache (TTS / STT)
+    // MARK: - MCP Server Settings (inside Verbindungen)
+
+    @State private var mcpServers: [(name: String, command: String, status: String)] = []
+    @State private var mcpNewName: String = ""
+    @State private var mcpNewCommand: String = ""
+    @State private var mcpNewArgs: String = ""
+
+    @ViewBuilder
+    private func mcpServersSection() -> some View {
+        sectionTitle("MCP Server (Model Context Protocol)")
+
+        FuturisticBox(icon: "server.rack", title: "MCP Server", accent: .koboldCyan) {
+            Text("Verbinde externe Tool-Server via MCP. Tools werden automatisch dem Agent zur Verfügung gestellt.")
+                .font(.caption).foregroundColor(.secondary)
+
+            if mcpServers.isEmpty {
+                Text("Keine MCP-Server konfiguriert")
+                    .font(.system(size: 13.5)).foregroundColor(.secondary.opacity(0.6))
+                    .padding(.vertical, 8)
+            } else {
+                ForEach(Array(mcpServers.enumerated()), id: \.offset) { _, server in
+                    HStack(spacing: 10) {
+                        Circle()
+                            .fill(server.status == "connected" ? Color.koboldEmerald : Color.orange)
+                            .frame(width: 7, height: 7)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(server.name).font(.system(size: 13.5, weight: .medium))
+                            Text(server.command).font(.system(size: 11.5, design: .monospaced)).foregroundColor(.secondary)
+                        }
+                        Spacer()
+                        Text(server.status).font(.system(size: 11.5)).foregroundColor(.secondary)
+                        Button(action: {
+                            let name = server.name
+                            Task {
+                                try? await MCPConfigManager.shared.removeConfig(name)
+                                await loadMCPServers()
+                            }
+                        }) {
+                            Image(systemName: "trash").font(.system(size: 12.5)).foregroundColor(.red.opacity(0.7))
+                        }.buttonStyle(.plain)
+                    }
+                    .padding(.vertical, 4)
+                    Divider().opacity(0.3)
+                }
+            }
+
+            // Add new server
+            Divider().opacity(0.3)
+            Text("Server hinzufügen").font(.system(size: 12.5, weight: .semibold)).foregroundColor(.secondary)
+            HStack(spacing: 8) {
+                TextField("Name", text: $mcpNewName)
+                    .textFieldStyle(.roundedBorder).frame(width: 100)
+                TextField("Befehl (z.B. npx)", text: $mcpNewCommand)
+                    .textFieldStyle(.roundedBorder).frame(width: 120)
+                TextField("Argumente (kommagetrennt)", text: $mcpNewArgs)
+                    .textFieldStyle(.roundedBorder)
+                Button("Hinzufügen") {
+                    guard !mcpNewName.isEmpty, !mcpNewCommand.isEmpty else { return }
+                    let args = mcpNewArgs.components(separatedBy: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+                    let name = mcpNewName
+                    let cmd = mcpNewCommand
+                    Task {
+                        let config = MCPClient.ServerConfig(name: name, command: cmd, args: args, env: [:])
+                        try? await MCPConfigManager.shared.saveConfig(config)
+                        await MainActor.run {
+                            mcpNewName = ""
+                            mcpNewCommand = ""
+                            mcpNewArgs = ""
+                        }
+                        await loadMCPServers()
+                    }
+                }
+                .disabled(mcpNewName.isEmpty || mcpNewCommand.isEmpty)
+            }
+            .font(.system(size: 12.5))
+        }
+    }
+
+    private func loadMCPServers() async {
+        let mgr = MCPConfigManager.shared
+        let configs = await mgr.loadConfigs()
+        let status = await mgr.getStatus()
+        mcpServers = configs.map { config in
+            let connected = status.first(where: { $0.name == config.name })?.connected ?? false
+            return (name: config.name, command: config.command, status: connected ? "connected" : "disconnected")
+        }
+    }
+
+    // MARK: - Sprache & Audio (TTS / STT / Sounds)
 
     @AppStorage("kobold.tts.voice") private var ttsVoice: String = "de-DE"
     @AppStorage("kobold.tts.rate") private var ttsRate: Double = 0.5
@@ -3216,13 +3340,45 @@ struct SettingsView: View {
     @State private var ttsTestText: String = "Hallo! Ich bin dein KoboldOS Assistent."
 
     @ViewBuilder
-    private func speechSettingsSection() -> some View {
-        sectionTitle("Sprache")
+    private func speechAndAudioSection() -> some View {
+        sectionTitle("Sprache & Audio")
+
+        // Systemsounds
+        HStack(alignment: .top, spacing: 16) {
+            FuturisticBox(icon: "speaker.wave.2.fill", title: "Systemsounds", accent: .koboldGold) {
+                    Toggle("Sounds aktivieren", isOn: $soundsEnabled)
+                        .toggleStyle(.switch)
+                    if soundsEnabled {
+                        HStack {
+                            Image(systemName: "speaker.fill").foregroundColor(.secondary)
+                            Slider(value: $soundsVolume, in: 0.1...1.0, step: 0.1)
+                            Image(systemName: "speaker.wave.3.fill").foregroundColor(.secondary)
+                            Text("\(Int(soundsVolume * 100))%")
+                                .font(.caption).foregroundColor(.secondary)
+                                .frame(width: 35, alignment: .trailing)
+                        }
+                    }
+            }
+            .frame(maxHeight: .infinity, alignment: .top)
+
+            FuturisticBox(icon: "globe", title: "Sprache", accent: .koboldGold) {
+                    Text("Interface- und Antwortsprache.")
+                        .font(.caption).foregroundColor(.secondary)
+                    Picker("", selection: Binding(
+                        get: { l10n.language },
+                        set: { l10n.language = $0 }
+                    )) {
+                        ForEach(AppLanguage.allCases, id: \.self) { lang in
+                            Text(lang.displayName).tag(lang)
+                        }
+                    }
+                    .pickerStyle(.menu)
+            }
+            .frame(maxHeight: .infinity, alignment: .top)
+        }
 
         // TTS Section
-        GroupBox {
-            VStack(alignment: .leading, spacing: 14) {
-                Label("Text-to-Speech", systemImage: "speaker.wave.3.fill").font(.subheadline.bold())
+        FuturisticBox(icon: "speaker.wave.3.fill", title: "Text-to-Speech", accent: .koboldEmerald) {
                 Text("Der Agent kann Texte laut vorlesen. Nutze 'lies vor' oder 'sag mir' im Chat.")
                     .font(.caption).foregroundColor(.secondary)
 
@@ -3260,14 +3416,14 @@ struct SettingsView: View {
                 HStack(spacing: 8) {
                     TextField("Testtext...", text: $ttsTestText)
                         .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 12))
+                        .font(.system(size: 14.5))
 
                     Button {
                         TTSManager.shared.speak(ttsTestText, voice: ttsVoice, rate: Float(ttsRate))
                     } label: {
                         HStack(spacing: 4) {
-                            Image(systemName: "play.fill").font(.system(size: 10))
-                            Text("Test").font(.system(size: 12, weight: .medium))
+                            Image(systemName: "play.fill").font(.system(size: 12.5))
+                            Text("Test").font(.system(size: 14.5, weight: .medium))
                         }
                         .padding(.horizontal, 10).padding(.vertical, 6)
                         .background(Color.koboldEmerald)
@@ -3278,20 +3434,16 @@ struct SettingsView: View {
 
                     if TTSManager.shared.isSpeaking {
                         Button(action: { TTSManager.shared.stop() }) {
-                            Image(systemName: "stop.fill").font(.system(size: 10))
+                            Image(systemName: "stop.fill").font(.system(size: 12.5))
                         }
                         .buttonStyle(.bordered)
                         .foregroundColor(.red)
                     }
                 }
-            }
-            .padding()
         }
 
         // STT Section
-        GroupBox {
-            VStack(alignment: .leading, spacing: 14) {
-                Label("Speech-to-Text (Whisper)", systemImage: "mic.fill").font(.subheadline.bold())
+        FuturisticBox(icon: "mic.fill", title: "Speech-to-Text (Whisper)", accent: .koboldEmerald) {
                 Text("Sprachnachrichten und Audio-Dateien automatisch transkribieren mit lokalem Whisper-Model.")
                     .font(.caption).foregroundColor(.secondary)
 
@@ -3331,13 +3483,13 @@ struct SettingsView: View {
                         HStack(spacing: 6) {
                             Circle().fill(Color.koboldEmerald).frame(width: 8, height: 8)
                             Text("Model '\(STTManager.shared.currentModelName)' geladen")
-                                .font(.system(size: 11, weight: .medium)).foregroundColor(.koboldEmerald)
+                                .font(.system(size: 13.5, weight: .medium)).foregroundColor(.koboldEmerald)
                         }
                     } else if STTManager.shared.isDownloading {
                         HStack(spacing: 6) {
                             ProgressView().controlSize(.small)
                             Text("Lade Model...")
-                                .font(.system(size: 11)).foregroundColor(.secondary)
+                                .font(.system(size: 13.5)).foregroundColor(.secondary)
                         }
                     } else {
                         Button("Model herunterladen") {
@@ -3348,105 +3500,9 @@ struct SettingsView: View {
                         .controlSize(.small)
                     }
                 }
-            }
-            .padding()
         }
 
-        // Stable Diffusion Section
-        GroupBox {
-            VStack(alignment: .leading, spacing: 14) {
-                Label("Bildgenerierung (Stable Diffusion)", systemImage: "photo.artframe").font(.subheadline.bold())
-                Text("Generiere Bilder lokal auf deinem Mac mit Stable Diffusion. Sage z.B. 'Erstelle ein Bild von...' im Chat.")
-                    .font(.caption).foregroundColor(.secondary)
-
-                // Master Prompt
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Master-Prompt (wird jedem Prompt vorangestellt)").font(.caption.bold()).foregroundColor(.secondary)
-                    TextField("z.B. masterpiece, best quality, highly detailed",
-                              text: AppStorageBinding("kobold.sd.masterPrompt", default: "masterpiece, best quality, highly detailed"))
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 12))
-                }
-
-                // Negative Prompt
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Standard Negative Prompt").font(.caption.bold()).foregroundColor(.secondary)
-                    TextField("z.B. ugly, blurry, distorted",
-                              text: AppStorageBinding("kobold.sd.negativePrompt", default: "ugly, blurry, distorted, low quality, deformed"))
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 12))
-                }
-
-                HStack(spacing: 20) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Schritte: \(UserDefaults.standard.integer(forKey: "kobold.sd.steps") == 0 ? 30 : UserDefaults.standard.integer(forKey: "kobold.sd.steps"))")
-                            .font(.caption.bold()).foregroundColor(.secondary)
-                        Slider(value: AppStorageDoubleBinding("kobold.sd.steps", default: 30), in: 10...80, step: 5)
-                            .tint(.koboldEmerald)
-                            .frame(width: 150)
-                    }
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        let gv = UserDefaults.standard.float(forKey: "kobold.sd.guidanceScale")
-                        Text("Guidance: \(String(format: "%.1f", gv > 0 ? gv : 7.5))")
-                            .font(.caption.bold()).foregroundColor(.secondary)
-                        Slider(value: AppStorageDoubleBinding("kobold.sd.guidanceScale", default: 7.5), in: 1.0...20.0, step: 0.5)
-                            .tint(.koboldEmerald)
-                            .frame(width: 150)
-                    }
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Compute").font(.caption.bold()).foregroundColor(.secondary)
-                        Picker("", selection: AppStorageBinding("kobold.sd.computeUnits", default: "cpuAndGPU")) {
-                            Text("CPU + GPU").tag("cpuAndGPU")
-                            Text("Alle (+ ANE)").tag("all")
-                            Text("Nur CPU").tag("cpuOnly")
-                        }
-                        .pickerStyle(.menu)
-                        .frame(width: 130)
-                    }
-                }
-
-                // Model status
-                HStack(spacing: 12) {
-                    if ImageGenManager.shared.isModelLoaded {
-                        HStack(spacing: 6) {
-                            Circle().fill(Color.koboldEmerald).frame(width: 8, height: 8)
-                            Text("Model '\(ImageGenManager.shared.currentModelName)' geladen")
-                                .font(.system(size: 11, weight: .medium)).foregroundColor(.koboldEmerald)
-                        }
-                    } else {
-                        HStack(spacing: 6) {
-                            Image(systemName: "info.circle.fill").font(.caption).foregroundColor(.orange)
-                            Text("Lade ein CoreML Stable Diffusion Model herunter und lege es in ~/Library/Application Support/KoboldOS/sd-models/")
-                                .font(.system(size: 10)).foregroundColor(.secondary)
-                        }
-                    }
-
-                    Spacer()
-
-                    Button("Models-Ordner öffnen") {
-                        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-                            .appendingPathComponent("KoboldOS/sd-models")
-                        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-                        NSWorkspace.shared.open(dir)
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                }
-
-                if ImageGenManager.shared.isGenerating {
-                    HStack(spacing: 8) {
-                        ProgressView(value: ImageGenManager.shared.generationProgress)
-                            .tint(.koboldEmerald)
-                        Text("\(Int(ImageGenManager.shared.generationProgress * 100))%")
-                            .font(.system(size: 11, weight: .bold, design: .monospaced))
-                            .foregroundColor(.koboldEmerald)
-                    }
-                }
-            }
-            .padding()
-        }
+        settingsSaveButton(section: "Sprache & Audio")
     }
 
     @ViewBuilder
@@ -3454,9 +3510,7 @@ struct SettingsView: View {
         sectionTitle("Skills")
 
         // Verwalten box FIRST (above active skills)
-        GroupBox {
-            VStack(alignment: .leading, spacing: 10) {
-                Label("Skills verwalten", systemImage: "folder.fill").font(.subheadline.bold())
+        FuturisticBox(icon: "folder.fill", title: "Skills verwalten", accent: .koboldGold) {
                 Text("Importiere .md Dateien als Skills oder lege sie manuell in den Skills-Ordner.")
                     .font(.caption).foregroundColor(.secondary)
                 HStack(spacing: 8) {
@@ -3476,20 +3530,16 @@ struct SettingsView: View {
 
                     Spacer()
                     Button(action: { loadSkillsList() }) {
-                        Image(systemName: "arrow.clockwise").font(.system(size: 12))
+                        Image(systemName: "arrow.clockwise").font(.system(size: 14.5))
                     }
                     .buttonStyle(.borderless)
                     .foregroundColor(.koboldEmerald)
                     .help("Skills neu laden")
                 }
-            }
-            .padding()
         }
 
         // Active Skills list
-        GroupBox {
-            VStack(alignment: .leading, spacing: 12) {
-                Label("Aktive Skills", systemImage: "sparkles").font(.subheadline.bold())
+        FuturisticBox(icon: "sparkles", title: "Aktive Skills", accent: .koboldGold) {
                 Text("Aktivierte Skills werden in den System-Prompt des Agenten injiziert.")
                     .font(.caption).foregroundColor(.secondary)
 
@@ -3504,7 +3554,7 @@ struct SettingsView: View {
                                 .foregroundColor(.koboldGold)
                                 .frame(width: 20)
                             VStack(alignment: .leading, spacing: 1) {
-                                Text(skill.name).font(.system(size: 13, weight: .medium))
+                                Text(skill.name).font(.system(size: 15.5, weight: .medium))
                                 Text(skill.filename).font(.caption).foregroundColor(.secondary)
                             }
                             Spacer()
@@ -3521,8 +3571,6 @@ struct SettingsView: View {
                         if idx < skills.count - 1 { Divider() }
                     }
                 }
-            }
-            .padding()
         }
         .onAppear { loadSkillsList() }
         settingsSaveButton(section: "Skills")
@@ -3650,16 +3698,21 @@ struct SettingsView: View {
     @AppStorage("kobold.agent.verbosity") private var agentVerbosity: Double = 0.5
 
     @ViewBuilder
+    private func agentsSettingsSection() -> some View {
+        sectionTitle("Agenten")
+        AgentsView(viewModel: viewModel)
+            .frame(minHeight: 600)
+    }
+
+    @ViewBuilder
     private func agentPersonalitySection() -> some View {
         sectionTitle("Agent-Persönlichkeit")
 
-        GroupBox {
-            VStack(alignment: .leading, spacing: 12) {
-                Label("Soul.md — Kernidentität", systemImage: "heart.fill").font(.subheadline.bold())
+        FuturisticBox(icon: "heart.fill", title: "Soul.md — Kernidentität", accent: .koboldEmerald) {
                 Text("Definiert wer der Agent im Kern ist. Grundlegende Werte, Identität und Verhaltensmuster.")
                     .font(.caption).foregroundColor(.secondary)
                 TextEditor(text: $agentSoul)
-                    .font(.system(size: 12, design: .monospaced))
+                    .font(.system(size: 14.5, design: .monospaced))
                     .frame(minHeight: 80, maxHeight: 150)
                     .padding(6)
                     .background(Color.black.opacity(0.2)).cornerRadius(8)
@@ -3668,16 +3721,13 @@ struct SettingsView: View {
                     Text("Leer = Standard-Persönlichkeit (KoboldOS)")
                         .font(.caption2).foregroundColor(.secondary).italic()
                 }
-            }.padding(6)
         }
 
-        GroupBox {
-            VStack(alignment: .leading, spacing: 12) {
-                Label("Personality.md — Verhaltensstil", systemImage: "theatermasks.fill").font(.subheadline.bold())
+        FuturisticBox(icon: "theatermasks.fill", title: "Personality.md — Verhaltensstil", accent: .koboldGold) {
                 Text("Beschreibt wie der Agent kommuniziert: Tonfall, Humor, Formalität, Eigenheiten.")
                     .font(.caption).foregroundColor(.secondary)
                 TextEditor(text: $agentPersonality)
-                    .font(.system(size: 12, design: .monospaced))
+                    .font(.system(size: 14.5, design: .monospaced))
                     .frame(minHeight: 80, maxHeight: 150)
                     .padding(6)
                     .background(Color.black.opacity(0.2)).cornerRadius(8)
@@ -3686,12 +3736,9 @@ struct SettingsView: View {
                     Text("Leer = neutraler, hilfsbereiter Stil")
                         .font(.caption2).foregroundColor(.secondary).italic()
                 }
-            }.padding(6)
         }
 
-        GroupBox {
-            VStack(alignment: .leading, spacing: 12) {
-                Label("Kommunikation", systemImage: "bubble.left.and.bubble.right.fill").font(.subheadline.bold())
+        FuturisticBox(icon: "bubble.left.and.bubble.right.fill", title: "Kommunikation", accent: .koboldGold) {
 
                 HStack(spacing: 20) {
                     VStack(alignment: .leading, spacing: 4) {
@@ -3726,7 +3773,6 @@ struct SettingsView: View {
                         Text("Ausführlich").font(.caption2).foregroundColor(.secondary)
                     }
                 }
-            }.padding(6)
         }
     }
 
@@ -3740,9 +3786,7 @@ struct SettingsView: View {
     private func memoryPolicySection() -> some View {
         sectionTitle("Gedächtnis-Richtlinie")
 
-        GroupBox {
-            VStack(alignment: .leading, spacing: 12) {
-                Label("Memory Policy", systemImage: "brain.head.profile").font(.subheadline.bold())
+        FuturisticBox(icon: "brain.head.profile", title: "Memory Policy", accent: .koboldEmerald) {
                 Text("Bestimmt wie der Agent mit Erinnerungen umgeht — automatisch lernen oder nur auf Anweisung.")
                     .font(.caption).foregroundColor(.secondary)
 
@@ -3769,16 +3813,13 @@ struct SettingsView: View {
                 default:
                     EmptyView()
                 }
-            }.padding(6)
         }
 
-        GroupBox {
-            VStack(alignment: .leading, spacing: 12) {
-                Label("Verhaltensregeln", systemImage: "list.bullet.clipboard.fill").font(.subheadline.bold())
+        FuturisticBox(icon: "list.bullet.clipboard.fill", title: "Verhaltensregeln", accent: .koboldGold) {
                 Text("Feste Regeln, die der Agent immer befolgen muss. Z.B. 'Antworte immer auf Deutsch', 'Frage bei Löschvorgängen immer nach'.")
                     .font(.caption).foregroundColor(.secondary)
                 TextEditor(text: $behaviorRules)
-                    .font(.system(size: 12, design: .monospaced))
+                    .font(.system(size: 14.5, design: .monospaced))
                     .frame(minHeight: 80, maxHeight: 150)
                     .padding(6)
                     .background(Color.black.opacity(0.2)).cornerRadius(8)
@@ -3789,16 +3830,13 @@ struct SettingsView: View {
                 }
                 Text("Tipp: Jede Zeile = eine Regel. Der Agent sieht diese in jedem Gespräch.")
                     .font(.caption2).foregroundColor(.secondary)
-            }.padding(6)
         }
 
-        GroupBox {
-            VStack(alignment: .leading, spacing: 12) {
-                Label("Gedächtnis-Regeln", systemImage: "brain.fill").font(.subheadline.bold())
+        FuturisticBox(icon: "brain.fill", title: "Gedächtnis-Regeln", accent: .koboldEmerald) {
                 Text("Freitext-Anweisungen wie der Agent mit Erinnerungen umgehen soll. Z.B. 'Merke dir meine Lieblingsfarbe', 'Vergiss nie meine Termine'.")
                     .font(.caption).foregroundColor(.secondary)
                 TextEditor(text: $memoryRules)
-                    .font(.system(size: 12, design: .monospaced))
+                    .font(.system(size: 14.5, design: .monospaced))
                     .frame(minHeight: 80, maxHeight: 150)
                     .padding(6)
                     .background(Color.black.opacity(0.2)).cornerRadius(8)
@@ -3809,7 +3847,6 @@ struct SettingsView: View {
                 }
                 Text("Tipp: Hier kannst du dem Agent detailliert sagen, was er sich merken soll und was nicht. Diese Regeln gelten zusätzlich zur gewählten Memory Policy.")
                     .font(.caption2).foregroundColor(.secondary)
-            }.padding(6)
         }
     }
 
@@ -3829,7 +3866,7 @@ struct SettingsView: View {
         GroupBox {
             HStack(spacing: 20) {
                 Image(systemName: "lizard.fill")
-                    .font(.system(size: 52))
+                    .font(.system(size: 53))
                     .foregroundStyle(
                         LinearGradient(colors: [.koboldGold, .koboldEmerald], startPoint: .top, endPoint: .bottom)
                     )
@@ -3844,37 +3881,25 @@ struct SettingsView: View {
             .padding()
         }
 
-        GroupBox {
-            VStack(alignment: .leading, spacing: 8) {
-                Label("Build-Info", systemImage: "info.circle").font(.subheadline.bold())
+        FuturisticBox(icon: "info.circle", title: "Build-Info", accent: .koboldGold) {
                 infoRow("Version", "Alpha v0.2.5")
                 infoRow("Build", "2026-02-22")
                 infoRow("Swift", "6.0")
                 infoRow("Plattform", "macOS 14+ (Sonoma)")
                 infoRow("Backend", "Ollama \(viewModel.ollamaStatus)")
                 infoRow("PID", "\(ProcessInfo.processInfo.processIdentifier)")
-            }
-            .padding()
         }
 
-        GroupBox {
-            VStack(alignment: .leading, spacing: 8) {
-                Label("Credits", systemImage: "heart.fill").font(.subheadline.bold())
+        FuturisticBox(icon: "heart.fill", title: "Credits", accent: .koboldGold) {
                 Text("Entwickelt von der KoboldOS Community")
                 Text("Powered by Ollama · Swift 6 · SwiftUI")
                     .font(.caption).foregroundColor(.secondary)
-            }
-            .padding()
         }
 
-        GroupBox {
-            VStack(alignment: .leading, spacing: 8) {
-                Label("Links", systemImage: "link").font(.subheadline.bold())
+        FuturisticBox(icon: "link", title: "Links", accent: .koboldEmerald) {
                 linkButton("Modellbibliothek (Ollama)", url: "https://ollama.ai/library")
                 linkButton("GitHub", url: "https://github.com/FunkJood/KoboldOS")
                 linkButton("Problem melden", url: "https://github.com/FunkJood/KoboldOS/issues")
-            }
-            .padding()
         }
     }
 
@@ -3890,7 +3915,7 @@ struct SettingsView: View {
             Spacer()
             Text(value).fontWeight(.medium)
         }
-        .font(.system(size: 13))
+        .font(.system(size: 15.5))
     }
 
     private func linkButton(_ title: String, url: String) -> some View {
@@ -3990,4 +4015,11 @@ struct A2AConnectedClient: Identifiable {
     let name: String
     let url: String
     var lastSeen: String
+}
+
+// MARK: - Helpers
+
+private extension Int {
+    /// Returns nil if zero, otherwise self. Used for UserDefaults with default fallback.
+    var nonZero: Int? { self == 0 ? nil : self }
 }

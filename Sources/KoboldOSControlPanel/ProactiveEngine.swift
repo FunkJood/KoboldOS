@@ -75,6 +75,12 @@ class ProactiveEngine: ObservableObject {
         loadRules()
     }
 
+    /// Call on app termination to prevent timer leak
+    func cleanup() {
+        checkTimer?.invalidate()
+        checkTimer = nil
+    }
+
     // MARK: - Rules Persistence
 
     func loadRules() {
@@ -246,33 +252,33 @@ struct ProactiveSuggestionsBar: View {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
                         Label("Vorschläge", systemImage: "lightbulb.fill")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(.system(size: 14.5, weight: .semibold))
                             .foregroundColor(.koboldGold)
                         Spacer()
                         Text("\(engine.suggestions.count)")
-                            .font(.system(size: 10, weight: .bold, design: .monospaced))
+                            .font(.system(size: 12.5, weight: .bold, design: .monospaced))
                             .foregroundColor(.secondary)
                     }
 
                     ForEach(engine.suggestions.prefix(3)) { suggestion in
                         HStack(spacing: 10) {
                             Image(systemName: suggestion.icon)
-                                .font(.system(size: 14))
+                                .font(.system(size: 16.5))
                                 .foregroundColor(.koboldEmerald)
                                 .frame(width: 20)
 
                             VStack(alignment: .leading, spacing: 2) {
                                 HStack(spacing: 6) {
                                     Text(suggestion.title)
-                                        .font(.system(size: 12, weight: .semibold))
+                                        .font(.system(size: 14.5, weight: .semibold))
                                     Text(suggestion.category.rawValue)
-                                        .font(.system(size: 9))
+                                        .font(.system(size: 11.5))
                                         .foregroundColor(.secondary)
                                         .padding(.horizontal, 4).padding(.vertical, 1)
                                         .background(Capsule().fill(Color.white.opacity(0.06)))
                                 }
                                 Text(suggestion.message)
-                                    .font(.system(size: 11))
+                                    .font(.system(size: 13.5))
                                     .foregroundColor(.secondary)
                                     .lineLimit(2)
                             }
@@ -281,7 +287,7 @@ struct ProactiveSuggestionsBar: View {
 
                             Button(action: { onAction(suggestion.action) }) {
                                 Text("Los")
-                                    .font(.system(size: 11, weight: .semibold))
+                                    .font(.system(size: 13.5, weight: .semibold))
                                     .foregroundColor(.koboldEmerald)
                                     .padding(.horizontal, 8).padding(.vertical, 4)
                                     .background(RoundedRectangle(cornerRadius: 6).fill(Color.koboldEmerald.opacity(0.15)))
@@ -290,7 +296,7 @@ struct ProactiveSuggestionsBar: View {
 
                             Button(action: { engine.dismissSuggestion(suggestion) }) {
                                 Image(systemName: "xmark")
-                                    .font(.system(size: 9))
+                                    .font(.system(size: 11.5))
                                     .foregroundColor(.secondary)
                             }
                             .buttonStyle(.plain)

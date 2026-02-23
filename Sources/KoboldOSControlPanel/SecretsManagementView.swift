@@ -43,8 +43,8 @@ struct SecretsManagementView: View {
             switch self {
             case .apiKey:     return .koboldGold
             case .password:   return .red
-            case .token:      return .blue
-            case .credential: return .purple
+            case .token:      return .koboldEmerald
+            case .credential: return .koboldGold
             case .other:      return .secondary
             }
         }
@@ -67,10 +67,10 @@ struct SecretsManagementView: View {
 
                 // Search
                 HStack(spacing: 6) {
-                    Image(systemName: "magnifyingglass").foregroundColor(.secondary).font(.system(size: 12))
+                    Image(systemName: "magnifyingglass").foregroundColor(.secondary).font(.system(size: 14.5))
                     TextField("Suchen...", text: $searchText)
                         .textFieldStyle(.plain)
-                        .font(.system(size: 12))
+                        .font(.system(size: 14.5))
                 }
                 .padding(.horizontal, 10).padding(.vertical, 6)
                 .background(RoundedRectangle(cornerRadius: 8).fill(Color.koboldSurface))
@@ -119,17 +119,17 @@ struct SecretsManagementView: View {
             // Security info footer
             HStack(spacing: 16) {
                 Label("macOS Keychain", systemImage: "lock.shield.fill")
-                    .font(.system(size: 10)).foregroundColor(.secondary)
+                    .font(.system(size: 12.5)).foregroundColor(.secondary)
                 Label("Verschlüsselt", systemImage: "checkmark.seal.fill")
-                    .font(.system(size: 10)).foregroundColor(.secondary)
+                    .font(.system(size: 12.5)).foregroundColor(.secondary)
                 Label("\(secrets.count) Einträge", systemImage: "key.fill")
-                    .font(.system(size: 10)).foregroundColor(.secondary)
+                    .font(.system(size: 12.5)).foregroundColor(.secondary)
                 Spacer()
             }
             .padding(.horizontal, 24).padding(.vertical, 8)
             .background(Color.koboldPanel)
         }
-        .background(Color.koboldBackground)
+        .background(ZStack { Color.koboldBackground; LinearGradient(colors: [Color.koboldEmerald.opacity(0.015), .clear, Color.koboldGold.opacity(0.01)], startPoint: .topLeading, endPoint: .bottomTrailing) })
         .onAppear { loadSecrets() }
         .sheet(isPresented: $showingAddSheet) {
             addSecretSheet
@@ -142,7 +142,7 @@ struct SecretsManagementView: View {
         VStack(spacing: 16) {
             Spacer()
             Image(systemName: "lock.shield.fill")
-                .font(.system(size: 48))
+                .font(.system(size: 49))
                 .foregroundColor(.secondary.opacity(0.4))
             Text("Keine Secrets gespeichert")
                 .font(.title3).foregroundColor(.secondary)
@@ -164,7 +164,7 @@ struct SecretsManagementView: View {
             HStack(spacing: 12) {
                 // Category icon
                 Image(systemName: secret.category.icon)
-                    .font(.system(size: 16))
+                    .font(.system(size: 18.5))
                     .foregroundColor(secret.category.color)
                     .frame(width: 32, height: 32)
                     .background(secret.category.color.opacity(0.12))
@@ -174,22 +174,22 @@ struct SecretsManagementView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 6) {
                         Text(secret.name)
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(.system(size: 15.5, weight: .semibold))
                         Text(secret.category.rawValue)
-                            .font(.system(size: 9, weight: .medium))
+                            .font(.system(size: 11.5, weight: .medium))
                             .foregroundColor(secret.category.color)
                             .padding(.horizontal, 5).padding(.vertical, 2)
                             .background(Capsule().fill(secret.category.color.opacity(0.15)))
                     }
                     if showValue.contains(secret.id), let full = secret.fullValue {
                         Text(full)
-                            .font(.system(size: 11, design: .monospaced))
+                            .font(.system(size: 13.5, design: .monospaced))
                             .foregroundColor(.secondary)
                             .textSelection(.enabled)
                             .lineLimit(2)
                     } else {
                         Text(secret.maskedValue)
-                            .font(.system(size: 11, design: .monospaced))
+                            .font(.system(size: 13.5, design: .monospaced))
                             .foregroundColor(.secondary.opacity(0.6))
                     }
                 }
@@ -201,7 +201,7 @@ struct SecretsManagementView: View {
                     // Toggle visibility
                     Button(action: { toggleVisibility(secret) }) {
                         Image(systemName: showValue.contains(secret.id) ? "eye.slash.fill" : "eye.fill")
-                            .font(.system(size: 12))
+                            .font(.system(size: 14.5))
                             .foregroundColor(.secondary)
                             .frame(width: 28, height: 28)
                             .background(Color.koboldSurface)
@@ -213,7 +213,7 @@ struct SecretsManagementView: View {
                     // Copy
                     Button(action: { copySecret(secret) }) {
                         Image(systemName: "doc.on.doc")
-                            .font(.system(size: 12))
+                            .font(.system(size: 14.5))
                             .foregroundColor(.secondary)
                             .frame(width: 28, height: 28)
                             .background(Color.koboldSurface)
@@ -225,7 +225,7 @@ struct SecretsManagementView: View {
                     // Delete
                     Button(action: { deleteSecret(secret) }) {
                         Image(systemName: "trash")
-                            .font(.system(size: 12))
+                            .font(.system(size: 14.5))
                             .foregroundColor(.red.opacity(0.7))
                             .frame(width: 28, height: 28)
                             .background(Color.red.opacity(0.08))
@@ -263,8 +263,8 @@ struct SecretsManagementView: View {
                         ForEach(SecretCategory.allCases, id: \.self) { cat in
                             Button(action: { selectedCategory = cat }) {
                                 HStack(spacing: 4) {
-                                    Image(systemName: cat.icon).font(.system(size: 11))
-                                    Text(cat.rawValue).font(.system(size: 11, weight: .medium))
+                                    Image(systemName: cat.icon).font(.system(size: 13.5))
+                                    Text(cat.rawValue).font(.system(size: 13.5, weight: .medium))
                                 }
                                 .foregroundColor(selectedCategory == cat ? .white : cat.color)
                                 .padding(.horizontal, 10).padding(.vertical, 6)
@@ -325,7 +325,7 @@ struct SecretsManagementView: View {
             .padding(20)
         }
         .frame(width: 520, height: 440)
-        .background(Color.koboldBackground)
+        .background(ZStack { Color.koboldBackground; LinearGradient(colors: [Color.koboldEmerald.opacity(0.015), .clear, Color.koboldGold.opacity(0.01)], startPoint: .topLeading, endPoint: .bottomTrailing) })
     }
 
     func presetButton(_ label: String, name: String, category: SecretCategory) -> some View {
@@ -334,7 +334,7 @@ struct SecretsManagementView: View {
             selectedCategory = category
         }) {
             Text(label)
-                .font(.system(size: 10, weight: .medium))
+                .font(.system(size: 12.5, weight: .medium))
                 .foregroundColor(.secondary)
                 .padding(.horizontal, 8).padding(.vertical, 4)
                 .background(Capsule().fill(Color.koboldSurface))
@@ -351,13 +351,13 @@ struct SecretsManagementView: View {
             var entries: [SecretEntry] = []
             for key in keys {
                 let cat = guessCategory(key)
-                let value = await SecretStore.shared.get(key) ?? ""
+                // Don't load values eagerly — avoids Keychain prompts on section open
                 entries.append(SecretEntry(
                     id: key,
                     name: key,
                     category: cat,
-                    maskedValue: maskValue(value),
-                    fullValue: value
+                    maskedValue: String(repeating: "\u{2022}", count: 12),
+                    fullValue: nil
                 ))
             }
             await MainActor.run {
@@ -406,13 +406,18 @@ struct SecretsManagementView: View {
     }
 
     private func copySecret(_ secret: SecretEntry) {
+        // Read from Keychain on demand (triggers system auth only for copy action)
         Task {
-            let value = await SecretStore.shared.get(secret.id) ?? ""
+            let value: String
+            if let cached = secret.fullValue {
+                value = cached
+            } else {
+                value = await SecretStore.shared.get(secret.id) ?? ""
+            }
             await MainActor.run {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(value, forType: .string)
                 statusMessage = "'\(secret.name)' kopiert (wird in 30s gelöscht)"
-                // Auto-clear clipboard after 30s for security
                 DispatchQueue.main.asyncAfter(deadline: .now() + 30) {
                     if NSPasteboard.general.string(forType: .string) == value {
                         NSPasteboard.general.clearContents()
@@ -427,10 +432,32 @@ struct SecretsManagementView: View {
         if showValue.contains(secret.id) {
             showValue.remove(secret.id)
         } else {
-            showValue.insert(secret.id)
-            // Auto-hide after 10s
-            DispatchQueue.main.asyncAfter(deadline: .now() + 10) {
-                showValue.remove(secret.id)
+            // Lazy-load value from Keychain only when user reveals it
+            if secret.fullValue == nil {
+                Task {
+                    let value = await SecretStore.shared.get(secret.id) ?? ""
+                    await MainActor.run {
+                        if let idx = secrets.firstIndex(where: { $0.id == secret.id }) {
+                            secrets[idx].fullValue = value
+                            secrets[idx] = SecretEntry(
+                                id: secrets[idx].id,
+                                name: secrets[idx].name,
+                                category: secrets[idx].category,
+                                maskedValue: maskValue(value),
+                                fullValue: value
+                            )
+                        }
+                        showValue.insert(secret.id)
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 10) {
+                            showValue.remove(secret.id)
+                        }
+                    }
+                }
+            } else {
+                showValue.insert(secret.id)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 10) {
+                    showValue.remove(secret.id)
+                }
             }
         }
     }
