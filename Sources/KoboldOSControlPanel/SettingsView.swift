@@ -597,6 +597,106 @@ struct SettingsView: View {
             }
             .padding()
         }
+        // MARK: Heartbeat
+        sectionTitle("Heartbeat")
+
+        HStack(alignment: .top, spacing: 12) {
+            FuturisticBox(icon: "heart.fill", title: "Heartbeat-System", accent: .red) {
+                Text("Der Heartbeat ist der Puls des Agenten — ein regelmäßiger Timer der prüft, ob der Agent bereit ist und ob es proaktive Arbeit gibt. Ohne Heartbeat bleibt der Agent passiv und wartet nur auf deine Eingaben.")
+                    .font(.caption).foregroundColor(.secondary)
+
+                Toggle("Heartbeat aktivieren", isOn: $proactiveEngine.heartbeatEnabled)
+                    .toggleStyle(.switch).tint(.red)
+
+                HStack {
+                    Text("Intervall").font(.caption.bold()).foregroundColor(.secondary)
+                    Picker("", selection: $proactiveEngine.heartbeatIntervalSec) {
+                        Text("10s").tag(10)
+                        Text("30s").tag(30)
+                        Text("60s").tag(60)
+                        Text("120s").tag(120)
+                        Text("300s").tag(300)
+                    }.pickerStyle(.segmented).frame(maxWidth: 350)
+                }
+                Text("Wie oft der Agent seinen Status prüft. Kürzere Intervalle = reaktiver, aber mehr CPU.")
+                    .font(.caption2).foregroundColor(.secondary)
+
+                Toggle("Im Dashboard anzeigen", isOn: $proactiveEngine.heartbeatShowInDashboard)
+                    .toggleStyle(.switch).tint(.koboldEmerald)
+
+                Divider()
+
+                // Status
+                HStack(spacing: 12) {
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(proactiveEngine.heartbeatEnabled ? Color.green : Color.gray)
+                            .frame(width: 8, height: 8)
+                        Text(proactiveEngine.heartbeatStatus)
+                            .font(.system(size: 13, weight: .medium, design: .monospaced))
+                    }
+                    Spacer()
+                    if let last = proactiveEngine.lastHeartbeat {
+                        Text("Letzter: \(last, style: .relative) her")
+                            .font(.caption2).foregroundColor(.secondary)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .top)
+
+            FuturisticBox(icon: "list.clipboard.fill", title: "Heartbeat-Log", accent: .secondary) {
+                Text("Protokoll der letzten Heartbeat-Zyklen. Zeigt was der Agent bei jedem Takt geprüft und entschieden hat.")
+                    .font(.caption).foregroundColor(.secondary)
+
+                HStack {
+                    Text("Aufbewahrung").font(.caption.bold()).foregroundColor(.secondary)
+                    Picker("", selection: $proactiveEngine.heartbeatLogRetention) {
+                        Text("20").tag(20)
+                        Text("50").tag(50)
+                        Text("100").tag(100)
+                        Text("200").tag(200)
+                    }.pickerStyle(.segmented).frame(maxWidth: 250)
+                    Text("Einträge").font(.caption).foregroundColor(.secondary)
+                }
+
+                if proactiveEngine.heartbeatLog.isEmpty {
+                    Text("Noch keine Heartbeat-Einträge. Starte den Heartbeat, um das Protokoll zu füllen.")
+                        .font(.caption2).foregroundColor(.secondary).italic()
+                        .padding(.vertical, 8)
+                } else {
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 2) {
+                            ForEach(proactiveEngine.heartbeatLog.prefix(30)) { entry in
+                                HStack(spacing: 6) {
+                                    Text(entry.timestamp, style: .time)
+                                        .font(.system(size: 11.5, design: .monospaced))
+                                        .foregroundColor(.secondary)
+                                        .frame(width: 65, alignment: .leading)
+                                    Text(entry.status)
+                                        .font(.system(size: 12, weight: .medium))
+                                        .foregroundColor(entry.action != nil ? .koboldEmerald : .secondary)
+                                    if let action = entry.action {
+                                        Text("→ \(action)")
+                                            .font(.system(size: 12))
+                                            .foregroundColor(.koboldGold)
+                                            .lineLimit(1)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    .frame(maxHeight: 180)
+
+                    HStack {
+                        Spacer()
+                        Button("Log löschen") { proactiveEngine.clearHeartbeatLog() }
+                            .font(.caption).buttonStyle(.bordered)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .top)
+        }
+
         settingsSaveButton(section: "Allgemein")
     }
 
@@ -2606,107 +2706,6 @@ struct SettingsView: View {
                 }
         }
 
-        // MARK: Proaktive Vorschläge (ehemals eigener Reiter)
-        sectionTitle("Proaktive Vorschläge")
-
-        HStack(alignment: .top, spacing: 12) {
-            FuturisticBox(icon: "lightbulb.fill", title: "Allgemein", accent: .koboldGold) {
-
-                    Toggle("Proaktive Vorschläge aktivieren", isOn: $proactiveEngine.isEnabled)
-                        .toggleStyle(.switch)
-                        .tint(.koboldEmerald)
-
-                    Toggle("Agent darf eigenständig anschreiben", isOn: AppStorageToggle("kobold.proactive.allowInitiate", default: false))
-                        .toggleStyle(.switch)
-                        .tint(.koboldGold)
-                    Text("Agent darf von sich aus Nachrichten senden, z.B. Erinnerungen oder Hinweise.")
-                        .font(.caption2).foregroundColor(.secondary)
-
-                    HStack {
-                        Text("Prüf-Intervall").font(.caption.bold()).foregroundColor(.secondary)
-                        Picker("", selection: $proactiveEngine.checkIntervalMinutes) {
-                            Text("5 Min").tag(5)
-                            Text("10 Min").tag(10)
-                            Text("30 Min").tag(30)
-                            Text("60 Min").tag(60)
-                        }.pickerStyle(.segmented).frame(maxWidth: 300)
-                    }
-            }
-            .frame(maxWidth: .infinity, alignment: .top)
-
-            FuturisticBox(icon: "bell.badge.fill", title: "Trigger-Typen", accent: .koboldGold) {
-
-                    Toggle("Morgen-Briefing (08:00-09:00)", isOn: $proactiveEngine.morningBriefing)
-                        .toggleStyle(.switch).tint(.koboldEmerald)
-                    Toggle("Tages-Zusammenfassung (17:00-18:00)", isOn: $proactiveEngine.eveningSummary)
-                        .toggleStyle(.switch).tint(.koboldEmerald)
-                    Toggle("Fehler-Diagnose vorschlagen", isOn: $proactiveEngine.errorAlerts)
-                        .toggleStyle(.switch).tint(.koboldEmerald)
-                    Toggle("System-Health-Warnungen", isOn: $proactiveEngine.systemHealth)
-                        .toggleStyle(.switch).tint(.koboldEmerald)
-            }
-            .frame(maxWidth: .infinity, alignment: .top)
-        }
-
-        FuturisticBox(icon: "list.bullet.rectangle", title: "Benutzerdefinierte Regeln", accent: .koboldGold) {
-                HStack {
-                    Spacer()
-                    Button(action: {
-                        let rule = ProactiveRule(id: UUID().uuidString, name: "Neue Regel",
-                                                 triggerType: .timeOfDay, triggerValue: "12:00",
-                                                 prompt: "Was soll ich tun?", enabled: true)
-                        proactiveEngine.addRule(rule)
-                    }) {
-                        Label("Hinzufügen", systemImage: "plus")
-                            .font(.caption)
-                    }.buttonStyle(.bordered)
-                }
-
-                ForEach($proactiveEngine.rules) { $rule in
-                    HStack(spacing: 8) {
-                        Toggle("", isOn: $rule.enabled)
-                            .toggleStyle(.switch).labelsHidden().scaleEffect(0.7)
-                            .tint(.koboldEmerald)
-                            .onChange(of: rule.enabled) { proactiveEngine.saveRules() }
-
-                        VStack(alignment: .leading, spacing: 2) {
-                            TextField("Name", text: $rule.name)
-                                .font(.system(size: 14.5, weight: .medium))
-                                .textFieldStyle(.plain)
-                                .onSubmit { proactiveEngine.saveRules() }
-                            TextField("Prompt", text: $rule.prompt)
-                                .font(.system(size: 13.5))
-                                .foregroundColor(.secondary)
-                                .textFieldStyle(.plain)
-                                .onSubmit { proactiveEngine.saveRules() }
-                        }
-
-                        Spacer()
-
-                        Picker("", selection: $rule.triggerType) {
-                            ForEach(ProactiveRule.TriggerType.allCases, id: \.self) { t in
-                                Text(t.rawValue).tag(t)
-                            }
-                        }.pickerStyle(.menu).frame(width: 90)
-                        .onChange(of: rule.triggerType) { proactiveEngine.saveRules() }
-
-                        if rule.triggerType == .timeOfDay {
-                            TextField("HH:MM", text: $rule.triggerValue)
-                                .font(.system(size: 13.5, design: .monospaced))
-                                .textFieldStyle(.roundedBorder)
-                                .frame(width: 60)
-                                .onSubmit { proactiveEngine.saveRules() }
-                        }
-
-                        if !ProactiveRule.defaults.contains(where: { $0.id == rule.id }) {
-                            Button(action: { proactiveEngine.deleteRule(rule.id) }) {
-                                Image(systemName: "trash").font(.caption).foregroundColor(.red.opacity(0.7))
-                            }.buttonStyle(.plain)
-                        }
-                    }
-                    .padding(.vertical, 4)
-                }
-        }
         settingsSaveButton(section: "Gedächtnis")
     }
 
@@ -4011,6 +4010,24 @@ struct SettingsView: View {
                 }
         }
 
+        // Verhaltensregeln (gelb)
+        FuturisticBox(icon: "list.bullet.clipboard.fill", title: "Verhaltensregeln", accent: .koboldGold) {
+                Text("Feste Regeln, die der Agent immer befolgen muss. Z.B. 'Antworte immer auf Deutsch', 'Frage bei Löschvorgängen immer nach'.")
+                    .font(.caption).foregroundColor(.secondary)
+                TextEditor(text: $behaviorRules)
+                    .font(.system(size: 14.5, design: .monospaced))
+                    .frame(minHeight: 80, maxHeight: 150)
+                    .padding(6)
+                    .background(Color.black.opacity(0.2)).cornerRadius(8)
+                    .scrollContentBackground(.hidden)
+                if behaviorRules.isEmpty {
+                    Text("Keine besonderen Regeln definiert — Standardverhalten.")
+                        .font(.caption2).foregroundColor(.secondary).italic()
+                }
+                Text("Tipp: Jede Zeile = eine Regel. Der Agent sieht diese in jedem Gespräch.")
+                    .font(.caption2).foregroundColor(.secondary)
+        }
+
         // Goals
         FuturisticBox(icon: "target", title: "Ziele", accent: .koboldEmerald) {
             Text("Langfristige Ziele die das autonome Verhalten deines Agenten stark beeinflussen. Ziele fließen in den System-Prompt und die proaktiven Vorschläge ein.")
@@ -4058,6 +4075,36 @@ struct SettingsView: View {
                     .font(.caption2).foregroundColor(.secondary).italic()
             }
         }
+
+        // MARK: Autonomie & Proaktivität
+        Group {
+        sectionTitle("Autonomie & Proaktivität")
+
+        FuturisticBox(icon: "lightbulb.fill", title: "Proaktive Vorschläge", accent: .koboldGold) {
+            Text("Der Agent analysiert regelmäßig den Kontext und schlägt passende Aktionen vor — Morgen-Briefings, Fehlerdiagnosen, Systemchecks.")
+                .font(.caption).foregroundColor(.secondary)
+
+            Toggle("Proaktive Vorschläge aktivieren", isOn: $proactiveEngine.isEnabled)
+                .toggleStyle(.switch).tint(.koboldEmerald)
+
+            Toggle("Agent darf eigenständig anschreiben", isOn: AppStorageToggle("kobold.proactive.allowInitiate", default: false))
+                .toggleStyle(.switch).tint(.koboldGold)
+            Text("Erlaubt dem Agent, von sich aus Nachrichten zu senden — z.B. Erinnerungen, Warnungen oder Hinweise.")
+                .font(.caption2).foregroundColor(.secondary)
+
+            HStack {
+                Text("Prüf-Intervall").font(.caption.bold()).foregroundColor(.secondary)
+                Picker("", selection: $proactiveEngine.checkIntervalMinutes) {
+                    Text("5 Min").tag(5)
+                    Text("10 Min").tag(10)
+                    Text("30 Min").tag(30)
+                    Text("60 Min").tag(60)
+                }.pickerStyle(.segmented).frame(maxWidth: 300)
+            }
+        }
+
+        settingsSaveButton(section: "Persönlichkeit")
+        } // end Group
     }
 
     @State private var newGoalText: String = ""
@@ -4107,23 +4154,6 @@ struct SettingsView: View {
                 }
         }
 
-        FuturisticBox(icon: "list.bullet.clipboard.fill", title: "Verhaltensregeln", accent: .koboldGold) {
-                Text("Feste Regeln, die der Agent immer befolgen muss. Z.B. 'Antworte immer auf Deutsch', 'Frage bei Löschvorgängen immer nach'.")
-                    .font(.caption).foregroundColor(.secondary)
-                TextEditor(text: $behaviorRules)
-                    .font(.system(size: 14.5, design: .monospaced))
-                    .frame(minHeight: 80, maxHeight: 150)
-                    .padding(6)
-                    .background(Color.black.opacity(0.2)).cornerRadius(8)
-                    .scrollContentBackground(.hidden)
-                if behaviorRules.isEmpty {
-                    Text("Keine besonderen Regeln definiert — Standardverhalten.")
-                        .font(.caption2).foregroundColor(.secondary).italic()
-                }
-                Text("Tipp: Jede Zeile = eine Regel. Der Agent sieht diese in jedem Gespräch.")
-                    .font(.caption2).foregroundColor(.secondary)
-        }
-
         FuturisticBox(icon: "brain.fill", title: "Gedächtnis-Regeln", accent: .koboldEmerald) {
                 Text("Freitext-Anweisungen wie der Agent mit Erinnerungen umgehen soll. Z.B. 'Merke dir meine Lieblingsfarbe', 'Vergiss nie meine Termine'.")
                     .font(.caption).foregroundColor(.secondary)
@@ -4164,7 +4194,7 @@ struct SettingsView: View {
                     )
                 VStack(alignment: .leading, spacing: 4) {
                     Text("KoboldOS").font(.title.bold())
-                    Text("Alpha v0.2.5").font(.title3).foregroundColor(.koboldGold)
+                    Text("Alpha v0.2.8").font(.title3).foregroundColor(.koboldGold)
                     Text("Dein lokaler KI-Assistent für macOS")
                         .font(.subheadline).foregroundColor(.secondary)
                 }
@@ -4174,8 +4204,8 @@ struct SettingsView: View {
         }
 
         FuturisticBox(icon: "info.circle", title: "Build-Info", accent: .koboldGold) {
-                infoRow("Version", "Alpha v0.2.5")
-                infoRow("Build", "2026-02-22")
+                infoRow("Version", "Alpha v0.2.8")
+                infoRow("Build", "2026-02-23")
                 infoRow("Swift", "6.0")
                 infoRow("Plattform", "macOS 14+ (Sonoma)")
                 infoRow("Backend", "Ollama \(viewModel.ollamaStatus)")

@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Build script for KoboldOS
-VERSION="0.2.7"
+VERSION="0.2.8"
 echo "Building KoboldOS v${VERSION}..."
 
 # Clean previous builds

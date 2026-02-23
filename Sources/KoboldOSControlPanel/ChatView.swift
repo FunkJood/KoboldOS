@@ -40,20 +40,21 @@ struct ChatView: View {
                                 .id(msg.id)
                         }
 
-                        // Live thinking panel (only in the chat that initiated the request)
+                        // Live thinking/streaming area (layered, non-overlapping)
                         if viewModel.isAgentLoadingInCurrentChat {
-                            if viewModel.activeThinkingSteps.isEmpty {
-                                ThinkingPlaceholderBubble()
-                                    .id("thinking-placeholder")
-                            } else {
+                            // Top layer: Steps/Tool stream (always expanded)
+                            if !viewModel.activeThinkingSteps.isEmpty {
                                 ThinkingPanelBubble(entries: viewModel.activeThinkingSteps, isLive: true)
                                     .id("thinking-live")
                                 SubAgentActivityBanner(entries: viewModel.activeThinkingSteps)
                                     .id("subagent-banner")
                             }
-                        }
 
-                        if viewModel.isAgentLoadingInCurrentChat {
+                            // Middle layer: Thinking/Waiting status
+                            ThinkingPlaceholderBubble()
+                                .id("thinking-placeholder")
+
+                            // Bottom layer: Typing animation
                             GlassChatBubble(message: "", isUser: false, timestamp: Date(), isLoading: true)
                                 .id("loading")
                         }
@@ -86,6 +87,37 @@ struct ChatView: View {
                 }
                 .padding(.horizontal, 16).padding(.vertical, 4)
                 .background(Color.koboldGold.opacity(0.08))
+            }
+
+            // Context Usage Bar (above input)
+            if viewModel.contextPromptTokens > 0 || viewModel.agentLoading {
+                HStack(spacing: 8) {
+                    Image(systemName: "text.line.last.and.arrowtriangle.forward")
+                        .font(.system(size: 12.5))
+                        .foregroundColor(viewModel.contextUsagePercent > 0.8 ? .orange : .secondary)
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            RoundedRectangle(cornerRadius: 3)
+                                .fill(Color.white.opacity(0.1))
+                            RoundedRectangle(cornerRadius: 3)
+                                .fill(viewModel.contextUsagePercent > 0.8
+                                      ? Color.orange.opacity(0.7)
+                                      : Color.green.opacity(0.5))
+                                .frame(width: geo.size.width * min(1.0, viewModel.contextUsagePercent))
+                        }
+                    }
+                    .frame(height: 6)
+                    Text("\(Int(viewModel.contextUsagePercent * 100))%")
+                        .font(.system(size: 12.5, weight: .medium, design: .monospaced))
+                        .foregroundColor(viewModel.contextUsagePercent > 0.8 ? .orange : .secondary)
+                        .frame(width: 36)
+                    Text("\(viewModel.contextPromptTokens)/\(viewModel.contextWindowSize)")
+                        .font(.system(size: 11.5, design: .monospaced))
+                        .foregroundColor(.secondary)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 5)
+                .background(Color.black.opacity(0.15))
             }
 
             GlassDivider()
@@ -205,37 +237,6 @@ struct ChatView: View {
                     LinearGradient(colors: [Color.koboldEmerald.opacity(0.03), .clear, Color.koboldGold.opacity(0.02)], startPoint: .leading, endPoint: .trailing)
                 }
             )
-
-            // Context Usage Bar (shows when agent is active)
-            if viewModel.contextPromptTokens > 0 || viewModel.agentLoading {
-                HStack(spacing: 8) {
-                    Image(systemName: "text.line.last.and.arrowtriangle.forward")
-                        .font(.system(size: 12.5))
-                        .foregroundColor(viewModel.contextUsagePercent > 0.8 ? .orange : .secondary)
-                    GeometryReader { geo in
-                        ZStack(alignment: .leading) {
-                            RoundedRectangle(cornerRadius: 3)
-                                .fill(Color.white.opacity(0.1))
-                            RoundedRectangle(cornerRadius: 3)
-                                .fill(viewModel.contextUsagePercent > 0.8
-                                      ? Color.orange.opacity(0.7)
-                                      : Color.green.opacity(0.5))
-                                .frame(width: geo.size.width * min(1.0, viewModel.contextUsagePercent))
-                        }
-                    }
-                    .frame(height: 6)
-                    Text("\(Int(viewModel.contextUsagePercent * 100))%")
-                        .font(.system(size: 12.5, weight: .medium, design: .monospaced))
-                        .foregroundColor(viewModel.contextUsagePercent > 0.8 ? .orange : .secondary)
-                        .frame(width: 36)
-                    Text("\(viewModel.contextPromptTokens)/\(viewModel.contextWindowSize)")
-                        .font(.system(size: 11.5, design: .monospaced))
-                        .foregroundColor(.secondary)
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 5)
-                .background(Color.black.opacity(0.15))
-            }
 
             // Mode-specific banner
             if viewModel.chatMode == .workflow {
@@ -503,7 +504,7 @@ struct ChatView: View {
                     .disabled(inputText.trimmingCharacters(in: .whitespaces).isEmpty && pendingAttachments.isEmpty)
                 }
             }
-            .padding(.horizontal, 12).padding(.vertical, 6)
+            .padding(.horizontal, 12).padding(.vertical, 10)
         }
         .background(
             ZStack {

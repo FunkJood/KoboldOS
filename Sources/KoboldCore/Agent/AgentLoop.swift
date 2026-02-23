@@ -949,24 +949,19 @@ public actor AgentLoop {
     public func getTimelineJSON() async -> String { "{}" }
 
     private func buildGoalsSection() -> String {
-        guard let data = UserDefaults.standard.data(forKey: "kobold.proactive.goals"),
-              let goals = try? JSONDecoder().decode([[String: String]].self, from: data) else {
-            // Try parsing GoalEntry-style JSON
-            if let data = UserDefaults.standard.data(forKey: "kobold.proactive.goals") {
-                struct GoalEntry: Codable { var text: String; var isActive: Bool; var priority: String }
-                if let entries = try? JSONDecoder().decode([GoalEntry].self, from: data) {
-                    let active = entries.filter { $0.isActive }
-                    guard !active.isEmpty else { return "" }
-                    let list = active.map { "- [\($0.priority)] \($0.text)" }.joined(separator: "\n")
-                    return """
+        guard let data = UserDefaults.standard.data(forKey: "kobold.proactive.goals") else { return "" }
+        // Parse GoalEntry-style JSON
+        struct GoalEntry: Codable { var text: String; var isActive: Bool; var priority: String }
+        if let entries = try? JSONDecoder().decode([GoalEntry].self, from: data) {
+            let active = entries.filter { $0.isActive }
+            guard !active.isEmpty else { return "" }
+            let list = active.map { "- [\($0.priority)] \($0.text)" }.joined(separator: "\n")
+            return """
 
         ## Langfristige Ziele (vom Nutzer definiert)
         Arbeite proaktiv auf diese Ziele hin. Schlage relevante Aktionen vor wenn passend.
         \(list)
         """
-                }
-            }
-            return ""
         }
         return ""
     }
@@ -1379,7 +1374,49 @@ public actor AgentLoop {
         - Du kannst Python, Swift, JavaScript, Shell-Scripts schreiben und sofort ausführen.
         - Du kannst mit brew, pip, npm Pakete installieren wenn nötig.
         - Du kannst AppleScript nutzen um macOS-Apps zu steuern (Finder, Safari, Mail, Notes, Messages, etc.)
+        - Du kannst den Bildschirm sehen (Screenshots + OCR), die Maus bewegen und klicken, und die Tastatur bedienen — damit kannst du JEDE App visuell steuern.
+        - Du kannst Chrome automatisieren (Webseiten navigieren, Formulare ausfüllen, klicken, JavaScript ausführen).
+        - Du kannst Bilder generieren mit Stable Diffusion (lokal, kein Internet nötig).
         - Dein Motto: "Ich finde einen Weg." — Nicht "Das geht nicht."
+
+        # Deine Fähigkeiten (v0.2.8)
+
+        ## Bildschirmsteuerung (screen_control)
+        Du kannst den Computer des Nutzers wie ein Mensch bedienen:
+        - **Screenshots** machen und den Bildschirminhalt per OCR lesen
+        - **Maus** bewegen, klicken, doppelklicken an beliebige Koordinaten
+        - **Tastatur** bedienen: Text tippen, Tastenkombinationen (Cmd+C, Cmd+V, etc.)
+        - **Text auf dem Bildschirm finden** (OCR) mit Position für gezieltes Klicken
+        - **Workflow**: Screenshot → find_text("Button-Text") → mouse_click(x, y) → key_type("eingabe")
+        - Nutze dies wenn kein API/CLI-Weg existiert oder wenn der Nutzer dich bittet, eine App visuell zu bedienen.
+
+        ## Browser-Automatisierung (playwright)
+        Chrome-Browser fernsteuern für Web-Aufgaben:
+        - Webseiten öffnen, Formulare ausfüllen, auf Buttons klicken
+        - JavaScript ausführen, Text/HTML extrahieren, Screenshots machen
+        - Perfekt für: Web-Recherche, Formulare, Online-Bestellungen, Website-Tests
+
+        ## Bildgenerierung (generate_image)
+        Lokale Stable Diffusion Bildgenerierung:
+        - Erstelle Bilder aus Text-Beschreibungen
+        - Bilder werden auf dem Desktop gespeichert
+        - Nutze detaillierte englische Prompts für beste Ergebnisse
+
+        ## Teams (Beratungsgremium)
+        Du kannst ein Team von spezialisierten KI-Agenten konsultieren:
+        - Teams bestehen aus Agenten mit verschiedenen Rollen (Researcher, Coder, Architekt, etc.)
+        - 3-Runden-Diskurs: Einzelanalyse → gegenseitige Diskussion → Koordinator-Synthese
+        - Nutze Teams für qualitativ hochwertige Entscheidungen, Code-Reviews, Architektur-Beratung
+
+        ## Tasks & Workflows
+        - **Tasks**: Geplante Aufgaben die nach Zeitplan automatisch ausgeführt werden
+        - **Workflows**: Visuelle Pipelines mit mehreren Schritten (Agent → Bedingung → Team → etc.)
+        - Beide können Teams als Berater einbinden
+
+        ## Delegation (call_subordinate / delegate_parallel)
+        - Delegiere Teilaufgaben an spezialisierte Sub-Agenten
+        - Parallele Delegation für mehrere unabhängige Aufgaben gleichzeitig
+        - Profile: coder, researcher, planner, reviewer, utility, web
 
         # Kommunikationsformat
         Du antwortest IMMER als JSON-Objekt. Kein Text vor oder nach dem JSON.

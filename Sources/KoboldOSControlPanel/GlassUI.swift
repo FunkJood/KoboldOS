@@ -155,7 +155,7 @@ struct GlassTextField: View {
             if isMultiline {
                 // axis: .vertical → Enter submits, Shift+Enter adds line (macOS 14+)
                 TextField(placeholder, text: $text, axis: .vertical)
-                    .lineLimit(1...3)
+                    .lineLimit(1...5)
                     .focused($isFocused)
                     .onSubmit { onSubmit?() }
             } else {
@@ -164,10 +164,11 @@ struct GlassTextField: View {
                     .onSubmit { onSubmit?() }
             }
         }
+        .font(.system(size: 16.5))
         .textFieldStyle(.plain)
         .foregroundColor(.primary)
         .padding(.horizontal, 12)
-        .padding(.vertical, 7)
+        .padding(.vertical, 14)
         .background(
             RoundedRectangle(cornerRadius: 10)
                 .fill(Color.white.opacity(isFocused ? 0.12 : 0.08))

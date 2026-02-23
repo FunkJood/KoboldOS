@@ -716,12 +716,23 @@ class RuntimeViewModel: ObservableObject {
         }
     }
 
-    /// Detect if a final answer is a simple yes/no question → show interactive buttons
+    /// Detect if a final answer is a clear, direct yes/no question → show interactive buttons.
+    /// Only triggers when the text is SHORT and ends with a direct question — avoids polluting
+    /// longer explanations or multi-paragraph answers with unnecessary Ja/Nein buttons.
     static func isYesNoQuestion(_ text: String) -> Bool {
-        let lower = text.lowercased()
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Must end with a question mark
+        guard trimmed.hasSuffix("?") else { return false }
+        // Must be short — a direct question, not a long explanation that happens to ask something
+        let lines = trimmed.components(separatedBy: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        guard lines.count <= 3, trimmed.count < 300 else { return false }
+        // The last line must contain the actual trigger
+        let lastLine = (lines.last ?? trimmed).lowercased()
         let triggers = ["soll ich", "möchtest du", "willst du", "darf ich", "shall i", "should i", "do you want", "ist das ok", "einverstanden"]
-        guard triggers.contains(where: { lower.contains($0) }) else { return false }
-        return lower.hasSuffix("?") || lower.contains("?")
+        guard triggers.contains(where: { lastLine.contains($0) }) else { return false }
+        // Must NOT contain code blocks, lists, or long explanations (signs it's not a simple question)
+        let hasCodeOrList = trimmed.contains("```") || trimmed.contains("- ") || trimmed.contains("1.")
+        return !hasCodeOrList
     }
 
     /// Extract file paths from text and create MediaAttachments for detected media files

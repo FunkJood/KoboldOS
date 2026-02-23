@@ -1,52 +1,143 @@
 # KoboldOS Changelog
 
-## Alpha v0.2.6 — 2026-02-23
+## Alpha v0.2.8 — 2026-02-23
 
-### Performance & Stability
-- **Context Window 8K → 150K**: Massiv erhöhte Agent-Kapazität, konfigurierbar bis 200K in Settings
-- **Agent-Limits konfigurierbar**: Researcher 50 Steps, Coder 40, Allgemein 25 — über Settings steuerbar
-- **Sub-Agent Concurrency**: Max parallel Sub-Agents (Standard 3), Timeout (Standard 5 Min) konfigurierbar
-- **Shell-Timeout**: Default 60s, max 300s, konfigurierbar in Settings
-- **Session-Switch optimiert**: 2-Phasen-Restore (clear → next run loop → restore), debounced saves
-- **RichTextView Caching**: @State-basiertes Caching für parseRichBlocks (kein Re-Parse bei jedem Render)
-- **CloverPatternBackground**: `.drawingGroup()` für GPU-beschleunigte Canvas-Darstellung
-- **ThinkingPanelBubble**: Doppelte onChange-Handler zusammengeführt
-- **Content Truncation erhöht**: Thoughts 2000 chars, Tool Results 8KB, Sub-Agent Results 4KB
+### Teams: Echtes Diskursmodell
+- **3-Runden-Diskussion**: R1 Einzelanalyse (parallel) → R2 Diskussion (sequentiell) → R3 Koordinator-Synthese
+- **Persistenz**: Teams und Gruppennachrichten werden als JSON gespeichert (`teams.json` + `team_messages/{id}.json`)
+- **Organigramm**: Ziele pro Team (editierbar), Knoten klickbar für Agent-Details
+- **Chat-Controls**: Font-Size A/a, Brain-Toggle, Clear-Button, Stop-Button (wie normaler Chat)
+- **AgentTeam/TeamAgent/GroupMessage**: Vollständige Codable-Datenmodelle mit Runden-Tracking
 
-### UI Overhaul
-- **Alle Font-Sizes +1pt**: 470 Stellen in 19 Dateien — bessere Lesbarkeit
-- **Kleeblatt-Hintergrundmuster**: CloverPatternBackground in ContentArea
-- **GlobalHeaderBar**: Datum links, Uhr mittig, Wetter + aktive Agents + Notification-Bell rechts
-  - Auf allen Seiten sichtbar (außer Settings)
-  - Benachrichtigungs-Glocke von ChatView hierher verschoben
-- **Chat-Header verschlankt**: Name und Model-Badge zentriert, Tools-Unterschrift entfernt, Padding reduziert
-- **Agenten-Tab → Settings**: Sidebar-Tab entfernt, AgentsView jetzt unter Settings → "Agenten"
-- **"Agent" → "Persönlichkeit"**: Settings-Tab umbenannt (Soul.md, Personality.md, Kommunikation)
-- **Sidebar-Organisation**: Normale Chats als klappbare Sektion unter Aufgaben- und Workflow-Tabs
-- **Trash-Button**: Von Chat-Header in Sidebar "Gespräche" verschoben
-- **Online-Badge**: Von Chat-Header in GlobalHeaderBar verschoben
+### Neue Tools
+- **PlaywrightTool**: Chrome-Browser-Automatisierung — `navigate`, `click`, `fill`, `screenshot`, `evaluate`, `get_text`, `wait`
+- **ScreenControlTool**: Maus/Tastatur-Steuerung, Screenshots via `screencapture`, OCR via Vision.framework (`VNRecognizeTextRequest`)
 
-### Workflow & Task Notifications
-- **Workflow-Sounds**: workflowStep (Purr), workflowDone (Hero), workflowFail (Sosumi)
-- **Deep-Link Notifications für Workflows**: Immer bei Completion/Failure, navigiert direkt zum Ergebnis-Chat
-- **Deep-Link Notifications für Tasks**: Immer bei Completion/Failure, navigiert direkt zum Task-Chat
-- **Active Sessions**: Bleiben 60 Sekunden nach Completion sichtbar (vorher sofort entfernt)
+### Goals-System
+- **GoalEntry-Modell**: Text, isActive, Priority (hoch/mittel/niedrig), Category
+- **Settings UI**: Ziele-Box unter Persönlichkeit mit Inline-Editing, Toggle, Priority-Picker
+- **Agent-Integration**: Aktive Ziele fließen als "Langfristige Ziele" in den System-Prompt
 
-### Security
-- **OAuth → UserDefaults**: Google OAuth und SoundCloud OAuth von Keychain auf UserDefaults migriert
-  - Behebt wiederholte macOS Keychain-Passwort-Abfragen bei unsigned Apps
-- **SecretsManagementView lazy-loaded**: Öffnet sich erst bei Bedarf (kein Keychain-Zugriff beim Tab-Wechsel)
+### Idle Tasks & Heartbeat
+- **Idle-Aufgaben-Liste**: User-definierbare Tasks für den Agent wenn idle — konkrete Jobs UND vage Richtungen
+- **7 Beispiel-Tasks**: Brew Updates, Downloads aufräumen, Verbesserungen finden, Sicherheit im Blick, Neues entdecken, Projekte checken, Speicherplatz
+- **Cooldown-System**: Pro Task konfigurierbar (Minuten), Rate-Limiting pro Stunde
+- **Quiet Hours**: Konfigurierbare Ruhezeiten (z.B. 22–07 Uhr)
+- **Sicherheits-Toggles**: Shell/Network/FileWrite separat aktivierbar
+- **Heartbeat-Sektion**: In Allgemein-Settings mit Intervall, Log-Retention, Dashboard-Toggle
+- **Idle-Settings**: In TasksView inline mit Timing, Kategorien, Prioritäts-Filter
 
-### Infrastructure
-- **MCP-Infrastruktur**: MCPClient, MCPConfigManager, MCPBridgeTool erstellt (noch nicht mit AgentLoop verdrahtet)
-- **TokenEstimator**: Heuristischer Token-Schätzer (3.5 chars/token)
-- **3-Stage Context Pruning**: Automatische Kontext-Komprimierung
-- **ArchivalMemory**: Langzeit-Archivierung von Kontext
+### Tasks & Workflows ← Teams
+- **ScheduledTask.teamId**: Tasks können optional ein Team nutzen
+- **Team-Picker**: Bei Task-Erstellung optionales Team auswählen
+- **Workflow Team-Node**: Team-Diskussion als Workflow-Schritt
 
-### Settings (neue Sektionen)
-- **Agent-Leistung**: Researcher/Coder/Allgemein Step-Limits, Shell-Timeout, Sub-Agent-Timeout, Max Sub-Agents
-- **Agenten**: Komplette AgentsView (Modell, Temperatur, System-Prompt, Vision pro Agent)
-- **Persönlichkeit**: Soul.md, Personality.md, Tonfall, Sprache, Ausführlichkeit (vorher "Agent")
+### UI-Verbesserungen
+- **Live Thinking Layers**: Nicht-überlappende 3-Schicht-Anzeige — Steps/Tools (oben, immer offen) → Thinking-Status (mitte) → Typing-Animation (unten)
+- **Chat-Eingabe**: Doppelte Höhe, Schrift +1pt, lineLimit 1...5
+- **Kontext-Balken**: Verschoben von Chat-Header nach über der Eingabeleiste
+- **Schriftgröße**: Wirkt jetzt auf User UND Assistant Nachrichten (RichTextView + markdownAttributedString)
+- **Temperatur**: Dashboard zeigt °C-Schätzwerte statt Kühl/Normal/Hoch
+- **Interactive Buttons**: Ja/Nein nur noch bei echten kurzen Entscheidungsfragen (max 3 Zeilen, <300 Chars, Trigger-Phrase nötig)
+- **AI-Vorschläge**: SuggestionService via Ollama mit 4h-Cache, Fallback auf Hardcoded
+- **Nachrichten-Queue**: Statt Agent-Interrupt werden Nachrichten in Queue gehalten
+- **MenuBar-Icon**: brain.head.profile (Gehirn)
+
+### Settings-Reorganisation
+- **Persönlichkeit**: Kommunikation, Soul.md, Personality.md, Verhaltensregeln, Ziele, Autonomie & Proaktivität
+- **Allgemein**: Heartbeat-Einstellungen hinzugefügt
+- **Benachrichtigungen**: Neue Sektion
+- **Debugging & Sicherheit**: Neue Sektion (Logging, Recovery, Sandboxing)
+- **Verbindung aus Allgemein entfernt** (bleibt in StatusIndicator)
+
+### Bug Fixes
+- **SD Crash Fix**: Model-Loading via `Task.detached` statt MainActor (Watchdog-Kill verhindert)
+- **SD Model Selection**: Modelle aus Ordner laden/entladen
+- **AppStorage Key-Kollision**: IdleTasks Bool vs Array hatten gleichen Key → getrennt
+- **buildGoalsSection()**: Gab immer leeren String zurück (doppelter guard/return) → gefixt
+- **TeamId beim Laden**: Wurde aus Daemon-Response nicht gelesen → gefixt
+- **ViewBuilder 10-View-Limit**: Persönlichkeit-Sektion hatte 13 Views → Group-Wrapper
+- **Agent System-Prompt**: Alle v0.2.8 Fähigkeiten dokumentiert (Screen Control, Playwright, Teams, etc.)
+
+### Statistik
+- 44.572 Lines of Code (Swift)
+
+---
+
+## Alpha v0.2.5 — 2026-02-22
+
+### Neue Features
+- **Text-to-Speech (TTS)**: Agent kann Text vorlesen via `speak`-Tool
+  - AVSpeechSynthesizer (built-in, keine Dependency)
+  - Stimme, Geschwindigkeit, Lautstärke konfigurierbar in Einstellungen → Sprache
+  - Test-Button zum Vorhören
+- **Speech-to-Text (STT)**: Lokale Spracherkennung via SwiftWhisper (whisper.cpp)
+  - Model-Download (tiny/base/small/medium) aus HuggingFace
+  - Automatische Transkription von Sprachnachrichten
+  - Sprache wählbar (Auto-Detect, Deutsch, Englisch, etc.)
+- **Stable Diffusion Bildgenerierung**: Lokale Bildgenerierung auf dem Mac
+  - Apple ml-stable-diffusion CoreML Pipeline
+  - `generate_image`-Tool für den Agent ("Generiere ein Bild von...")
+  - Konfigurierbar: Master-Prompt, Negative Prompt, Schritte, Guidance Scale, Compute Units
+  - Bilder werden in `~/Desktop/KoboldOS-Images/` gespeichert und inline im Chat angezeigt
+- **Medien-Embedding**: Bilder, Audio und Videos in Agent-Antworten automatisch eingebettet
+  - Regex-basierte Erkennung von Dateipfaden in Agent-Antworten
+  - Toggle in Einstellungen → Allgemein ("Medien automatisch einbetten")
+- **Proaktiv — Eigenständiges Anschreiben**: Agent darf von sich aus Nachrichten senden
+  - Neuer Toggle: "Agent darf eigenständig anschreiben" (Erinnerungen, Hinweise)
+
+### Tool-Execution Bug Fix (KRITISCH)
+- **ToolCallParser komplett neu geschrieben**: 5 Parsing-Strategien in Prioritätsreihenfolge
+  1. Markdown-Codeblöcke (` ```json ... ``` `)
+  2. Erste-bis-letzte-Klammer Extraktion
+  3. Balancierte JSON-Block-Suche mit `tool_name`-Erkennung
+  4. XML-Style `<tool_call>` Extraktion
+  5. Zeile-für-Zeile JSON-Scan
+  - Akzeptiert jetzt auch `"action"`, `"reasoning"`, `"args"` als Schlüsselnamen
+  - Logging bei Fallback auf "response" für Debugging
+- **System-Prompt optimiert für lokale Modelle**: Englische CRITICAL INSTRUCTION am Anfang
+  - Klare JSON-Format-Vorgabe auf Englisch (lokale Modelle verstehen Deutsch oft schlecht)
+  - Feedback-Text bei Tool-Fehlern enthält jetzt JSON-Beispiel
+
+### Verbindungen & Integrationen
+- **Verbindungen mit echten Logos**: Alle Services (Google, SoundCloud, Telegram, iMessage) mit brand-authentischen SwiftUI-Logos
+  - Side-by-side Layout: Google + SoundCloud, iMessage + Telegram, WebApp + Cloudflare, A2A
+- **iMessage-Integration**: Toggle-basiert mit macOS-Berechtigungsanfrage
+- **SoundCloud OAuth Fix**: Scope von "non-expiring" auf "" korrigiert (403-Fehler)
+- **A2A in Verbindungen integriert**: Kein eigener Sidebar-Reiter mehr — Server + Berechtigungen + Token-Austausch unter Verbindungen
+
+### UI/Layout-Verbesserungen
+- **Dashboard überarbeitet**: Willkommens-Nachricht mit tagesbasiertem Gruß + täglich wechselnde Sprüche (31 Zitate)
+  - "Metriken aktualisieren" Button in Header verschoben
+  - Schnellaktionen-Box entfernt
+  - Metrikkarten gleich groß und zentriert
+- **Leerer Chat**: Smiley entfernt, Beispielbox größer mit 7 wechselnden Sets
+  - Nur echte KoboldOS-Fähigkeiten (Shell, Telegram, Dateien, Bildgenerierung, etc.)
+- **WebApp + Cloudflare Tunnel nebeneinander** (wie andere Verbindungen)
+- **Proaktiv in Gedächtnis integriert**: Kein eigener Sidebar-Reiter mehr
+- **"Skills" → "Fähigkeiten"** umbenannt
+
+### Freeze-Fixes
+- **UpdateManager Deadlock behoben**: `waitUntilExit()` in `installFromDMG()` blockierte den MainThread
+  - Alle Process-Aufrufe (hdiutil mount/unmount, chmod) auf `Task.detached` verschoben
+- **KoboldCLI Concurrency**: Swift Language Mode auf v5 gesetzt (ArgumentParser Sendable-Kompatibilität)
+
+---
+
+## Alpha v0.2.4 — 2026-02-22
+
+### Bug Fixes (Session 4)
+- **Chat-Routing Fix**: Nachrichten landen jetzt immer im richtigen Chat, auch wenn der Benutzer während einer Agent-Antwort den Chat wechselt
+  - `appendToSession()` routet via `originSession` UUID zum korrekten Session-Array
+  - `activeAgentOriginSession` trackt welche Session der Agent gerade bedient
+- **sendWithAgentNonStreaming Fix**: Alle Nachricht-Appends verwenden jetzt `appendToSession()` statt direktem `messages.append()`
+- **Daemon Autostart**: Daemon startet jetzt in `AppDelegate.applicationDidFinishLaunching` statt in `onAppear` — zuverlässigerer Start
+- **Workflow/Projekt-Löschung persistiert**: Synchrone Saves mit `.atomic` Write für Workflow-Definitionen und Projekte — Löschungen gehen nicht mehr beim Beenden verloren
+- **performShutdownSave verbessert**:
+  - `upsertCurrentSession()` wird vor dem Speichern aufgerufen — aktuelle Chat-Daten gehen nicht verloren
+  - Alle Session-Arrays (Chat, Task, Workflow) nutzen atomare Writes
+  - Session-Deduplizierung vor dem Speichern verhindert Duplikate
+- **isAgentLoadingInCurrentChat**: Loading-Spinner wird nur im richtigen Chat angezeigt (Computed Property statt globaler State)
 
 ---
 

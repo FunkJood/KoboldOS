@@ -1,365 +1,296 @@
-<div align="center">
+# KoboldOS — Autonomous AI Agent System for macOS
 
-# KoboldOS
+**KoboldOS** is a native macOS application that runs a self-contained AI agent system locally on your Mac. It wraps an Ollama-backed LLM in a full agent loop with tools, persistent memory, a scheduling system, and a polished SwiftUI control panel — no cloud required.
 
-### AI Desktop Operating System
-
-**Your machine. Your models. Your agents.**
-
-A native macOS AI assistant that runs locally-first with multi-agent orchestration,
-visual workflows, and a dark futuristic glass UI.
-
-[![Alpha](https://img.shields.io/badge/status-alpha-orange?style=flat-square)]()
-[![Version](https://img.shields.io/badge/version-0.2.6-blue?style=flat-square)]()
-[![macOS 14+](https://img.shields.io/badge/macOS-14%2B%20Sonoma-black?style=flat-square&logo=apple&logoColor=white)]()
-[![Swift 5.9+](https://img.shields.io/badge/Swift-5.9%2B-FA7343?style=flat-square&logo=swift&logoColor=white)]()
-[![SwiftUI](https://img.shields.io/badge/SwiftUI-native-007AFF?style=flat-square&logo=swift&logoColor=white)]()
-[![License](https://img.shields.io/badge/license-TBD-lightgrey?style=flat-square)]()
-
-[Download](#installation) | [Features](#features) | [Architecture](#architecture) | [Build from Source](#build-from-source) | [Contributing](#contributing)
-
----
-
-<!--
-  Screenshot placeholder: Hero screenshot of KoboldOS dashboard
-  showing the glass UI with emerald/gold accents, sidebar navigation,
-  and the main chat interface with an active agent conversation.
-  Recommended size: 1200x750px
--->
-*Screenshot: KoboldOS main interface coming soon*
-
-</div>
-
----
-
-## What is KoboldOS?
-
-KoboldOS is a native macOS desktop application that turns your Mac into a full-featured AI workstation. It combines a multi-agent chat system, visual workflow automation, and deep system integration into a single local-first app -- no browser, no Electron, no cloud dependency required.
-
-Run local models through Ollama, connect to cloud providers when you need them, and let specialized agents collaborate to handle complex tasks autonomously.
-
----
-
-## Features
-
-### Multi-Agent Chat System
-
-Five specialized agents that can delegate tasks to each other:
-
-| Agent | Role |
-|---|---|
-| **Instructor** | General-purpose assistant, task coordination |
-| **Coder** | Code generation, debugging, file operations |
-| **Researcher** | Web search, information synthesis |
-| **Planner** | Project planning, task decomposition |
-| **Web** | Browser automation, web interaction |
-
-Agents communicate through a built-in **Agent-to-Agent (A2A) protocol** and use `DelegateTaskTool` for sub-agent orchestration.
-
-<!--
-  Screenshot placeholder: Chat view showing a multi-turn conversation
-  with an agent, including tool call bubbles and thought process indicators.
-  Recommended size: 800x600px
--->
-
-### Visual Workflow Builder
-
-Build automation pipelines with a drag-and-drop node editor:
-
-- Drag & drop nodes with real-time connections
-- Zoom and pan across large workflows
-- Condition nodes, delay nodes, webhook triggers, merger nodes
-- JSON-based Plugin SDK for custom workflow nodes
-- Execute workflows that chain multiple agents and tools
-
-<!--
-  Screenshot placeholder: Workflow editor showing connected nodes
-  (e.g., Trigger -> Agent -> Condition -> two branches) with the
-  dark glass UI and connection lines between nodes.
-  Recommended size: 800x500px
--->
-
-### Autonomous Task Management
-
-- Create tasks that agents execute independently
-- Agent delegation -- tasks can spawn sub-tasks for specialized agents
-- Scheduled execution with cron-style timing
-- Full task history and status tracking
-
-### Local-First AI
-
-| Capability | Provider |
-|---|---|
-| **LLM Inference** | [Ollama](https://ollama.com) (local), OpenAI, Anthropic, Groq |
-| **Image Generation** | Apple [ml-stable-diffusion](https://github.com/apple/ml-stable-diffusion) (CoreML, on-device) |
-| **Speech-to-Text** | Local Whisper STT |
-| **Text-to-Speech** | Native macOS TTS |
-
-### Integrations & Protocols
-
-- **MCP Client** -- Model Context Protocol support for ecosystem compatibility
-- **Plugin SDK** -- JSON-based custom workflow nodes
-- **Telegram Bot** -- Control your agents from Telegram
-- **iMessage** -- Agent-powered iMessage responses
-- **Google OAuth** -- Google services integration
-- **SoundCloud OAuth** -- Audio platform integration
-- **WebApp Server** -- Built-in web server with Cloudflare tunnel support
-
-### System Features
-
-- **Core Memory** -- Agent memories that persist across sessions (Letta-style labeled blocks)
-- **Skill System** -- Inject capabilities via `.md` skill files
-- **Secure Credential Storage** -- OAuth tokens in UserDefaults, secrets in macOS Keychain
-- **Dashboard** -- System metrics, weather widget (Open-Meteo), proactive suggestions
-- **Global Header Bar** -- Date, centered clock, weather, active agents count, notification bell on every page
-- **Workflow & Task Notifications** -- Deep-link notifications that navigate directly to result chats
-- **Sound Feedback** -- System sounds for agent events, workflow completion/failure
-- **Menu Bar Mode** -- Quick-access chat from the macOS status bar
-- **Auto-Update** -- GitHub-based update system with one-click install
-- **Configurable Agent Performance** -- Context window up to 200K, step limits, timeouts, sub-agent concurrency
-
-### Design
-
-Dark futuristic UI built entirely in SwiftUI with a custom **Glass design system**, emerald and gold accent colors, and smooth animations. The interface is currently in German with i18n-ready architecture.
-
-<!--
-  Screenshot placeholder: Dashboard view showing system metrics cards,
-  weather widget, and proactive suggestion tiles in the glass UI style.
-  Recommended size: 800x500px
--->
-
----
-
-## Installation
-
-### Download (Recommended)
-
-1. Download the latest `.dmg` from [**Releases**](https://github.com/FunkJood/KoboldOS/releases)
-2. Open the DMG and drag **KoboldOS** to your Applications folder
-3. Launch KoboldOS and follow the onboarding wizard
-4. *(Optional)* Install [Ollama](https://ollama.com) for local model inference
-
-### Build from Source
-
-```bash
-# Clone the repository
-git clone https://github.com/FunkJood/KoboldOS.git
-cd KoboldOS
-
-# Build
-swift build -c release
-
-# Create DMG
-bash scripts/build.sh
-```
-
-The DMG will be output to `dist/KoboldOS-0.2.6.dmg`.
-
-### Requirements
-
-| Requirement | Details |
-|---|---|
-| **macOS** | 14.0+ (Sonoma) |
-| **Ollama** | Recommended for local models |
-| **Xcode** | 15+ / Swift 5.9+ (build from source only) |
-
----
-
-## Architecture
-
-```
-KoboldOS Control Panel (SwiftUI)
-    |
-    | HTTP localhost:8080
-    v
-DaemonListener (in-process TCP server)
-    |
-    v
-AgentLoop (actor) ──> ToolRouter ──> Tools
-    |                                 (Shell, File, Browser, Memory,
-    |                                  MCP, Delegate, Workflow, ...)
-    v
-LLMRunner
-    ├── Ollama      (local, /api/chat)
-    ├── OpenAI      (cloud)
-    ├── Anthropic   (cloud)
-    └── Groq        (cloud)
-```
-
-### Module Structure
-
-```
-Sources/
-├── KoboldCLI/                   Command-line interface
-│   └── kobold daemon/model/metrics/trace
-│
-├── KoboldCore/                  Core framework
-│   ├── Agent/                   AgentLoop, ToolCallParser, ToolRuleEngine
-│   ├── Tools/                   15+ tools (File, Shell, Browser, MCP, Delegate, ...)
-│   ├── Memory/                  CoreMemory (actor, labeled blocks)
-│   ├── Model/                   OllamaBackend, ModelRouter, cloud providers
-│   ├── MCP/                     Model Context Protocol client
-│   ├── Headless/                DaemonListener (raw Darwin TCP sockets)
-│   ├── Runtime/                 BackupManager, CrashMonitor
-│   ├── Security/                SecretStore (Keychain), SecretsManager
-│   ├── Plugins/                 PluginRegistry, SkillLoader, Plugin SDK
-│   └── Workflows/               WorkflowEngine, node definitions
-│
-└── KoboldOSControlPanel/        macOS SwiftUI app
-    ├── MainView                 Sidebar + tab routing
-    ├── ChatView                 Chat UI with tool/thought bubbles
-    ├── WorkflowEditorView       Visual node editor with drag & drop
-    ├── DashboardView            System metrics + weather + suggestions
-    ├── SettingsView             Settings (12 sections incl. Agents, Personality)
-    ├── GlassUI/                 Design system (glass, emerald, gold)
-    ├── UpdateManager            GitHub auto-update
-    └── ...
-
-Tests/KoboldCoreTests/           Test suite
-```
-
-### API Endpoints
-
-KoboldOS exposes a local API through its TCP daemon:
-
-| Endpoint | Method | Description |
-|---|---|---|
-| `/health` | GET | Status, version, PID |
-| `/agent` | POST | Agent loop with tool calling |
-| `/agent/stream` | POST | SSE streaming agent responses |
-| `/metrics` | GET | Usage statistics |
-| `/memory` | GET/POST | Core memory management |
-| `/models` | GET | Available models (local + cloud) |
-| `/tasks` | GET/POST | Task scheduler |
-| `/trace` | GET | Activity timeline |
+**Current version: Alpha v0.2.8**
 
 ---
 
 ## Quick Start
 
-After installation, here is how to get started:
+```bash
+# 1. Install Ollama and pull a model
+brew install ollama && ollama serve
+ollama pull llama3.2  # or any other model
+
+# 2. Build and run KoboldOS
+swift build -c release
+bash scripts/build.sh  # creates ~/Desktop/KoboldOS-0.2.8.dmg
+```
+
+Or just open `~/Desktop/KoboldOS-0.2.8.dmg`, drag to Applications, and launch.
+
+---
+
+## Features
+
+- **Autonomous Agent**: Full agent loop with tool execution, memory, and multi-step reasoning
+- **25+ Built-in Tools**: Shell, File, Browser, Playwright, Screen Control, Calculator, Calendar, Contacts, Telegram, Google APIs, and more
+- **Teams (AI-Beratungsgremium)**: Parallele AI-Agenten diskutieren in 3 Runden (Analyse → Diskussion → Synthese)
+- **Playwright Browser Automation**: Chrome navigieren, klicken, ausfüllen, Screenshots, JavaScript ausführen
+- **Screen Control**: Maus/Tastatur-Steuerung, Screenshots, OCR via Vision.framework
+- **Goals System**: Langfristige Ziele unter Persönlichkeit, fließen in den Agent-System-Prompt
+- **Idle Tasks & Heartbeat**: Definierbare Aufgaben für den Agent wenn er nichts zu tun hat — konkret oder vage Richtungen
+- **Speech**: Text-to-Speech (AVSpeechSynthesizer) + Speech-to-Text (whisper.cpp via SwiftWhisper)
+- **Image Generation**: Local Stable Diffusion via Apple ml-stable-diffusion (CoreML) mit Modell-Auswahl
+- **Persistent Memory**: Three-tier memory system (Kurzzeit/Langzeit/Wissen) with vector search
+- **Connections**: Google OAuth, SoundCloud, Telegram Bot, iMessage, WebApp Server, Cloudflare Tunnel, A2A Protocol
+- **Proactive Agent**: Heartbeat-System, Idle-Tasks, Goals, System-Health-Alerts
+- **Scheduled Tasks**: Cron-based task scheduler with auto-execution + Team-Integration
+- **Workflows**: Visual workflow editor with multi-step automations + Team-Nodes
+- **Interactive Buttons**: Ja/Nein-Buttons im Chat mit Auto-Erkennung
+- **Marketplace**: Widgets, Automationen, Skills, Themes, Konnektoren (Mock)
+- **AI-Suggestions**: Ollama-basierte Vorschläge mit 4h-Cache
+- **Skills System**: Markdown-based skills that extend agent capabilities
+- **Remote Access**: Built-in web server + Cloudflare tunnel for access from any device
+- **Auto-Updates**: GitHub-based update system with DMG download and auto-install
+
+---
+
+## Architecture Overview
 
 ```
-1. Launch KoboldOS
-2. Complete the onboarding wizard (set your name, pick a model)
-3. Start chatting with the Instructor agent
-4. Try: "Create a workflow that summarizes my clipboard every 5 minutes"
-5. Explore the Dashboard for system metrics and suggestions
+┌─────────────────────────────────────────────────────────┐
+│           KoboldOS Control Panel (SwiftUI App)          │
+│  Dashboard · Chat · Aufgaben · Workflows · Teams        │
+│  Marktplatz · Gedächtnis · Agenten · Einstellungen      │
+└──────────────────────┬──────────────────────────────────┘
+                       │ HTTP (localhost:8080)
+┌──────────────────────▼──────────────────────────────────┐
+│              DaemonListener (in-process HTTP server)    │
+│  /agent  /chat  /metrics  /memory  /models  /tasks      │
+└──────────────────────┬──────────────────────────────────┘
+                       │
+┌──────────────────────▼──────────────────────────────────┐
+│                    AgentLoop (actor)                    │
+│  buildSystemPrompt() → LLMRunner → ToolCallParser       │
+│  → ToolRegistry → execute → feed result back → loop    │
+└──────────────┬────────────────────────┬─────────────────┘
+               │                        │
+┌──────────────▼───────────┐   ┌────────▼────────────────┐
+│    LLMRunner (actor)     │   │   ToolRegistry (actor)  │
+│  Ollama /api/chat        │   │  FileTool  ShellTool     │
+│  llama-server /v1/chat   │   │  PlaywrightTool  TTSTool │
+│  proper system/user roles│   │  ScreenControlTool  etc. │
+└──────────────────────────┘   └─────────────────────────┘
 ```
 
-### Using with Ollama (Local Models)
+### Key Design Decisions
+
+| Decision | Why |
+|---|---|
+| **In-process daemon** | No subprocess needed — app is self-contained and distributable |
+| **Ollama-first** | Best local model support; llama-server as fallback |
+| **Proper message roles** | `[system, user, assistant, user(tool_results)]` — models need this for reliable tool use |
+| **5-strategy ToolCallParser** | Handles markdown blocks, balanced JSON, XML, line-scan — works with any local model |
+| **NotificationCenter bridge** | Tools in KoboldCore communicate with UI managers (TTS, ImageGen, STT) via notifications |
+| **`Task.detached` per request** | Prevents actor serialization; handles concurrent requests |
+| **Memory type prefixes** | `kt.` / `lz.` / `ws.` encode short/long-term/knowledge type in label |
+
+---
+
+## Module Structure
+
+```
+Sources/
+├── KoboldCLI/               CLI tool — kobold daemon/model/metrics/trace/safe-mode
+├── KoboldCore/              Core library
+│   ├── Agent/               AgentLoop  ToolCallParser  ToolRuleEngine
+│   ├── Tools/               FileTool  ShellTool  BrowserTool  TTSTool  GenerateImageTool
+│   │                        PlaywrightTool  ScreenControlTool  CalendarTool  ContactsTool
+│   │                        TelegramSendTool  GoogleAPITool  DelegateTaskTool
+│   │                        WorkflowManageTool  SkillWriteTool
+│   ├── Memory/              CoreMemory (actor, Letta-style labeled blocks)
+│   ├── Native/              LLMRunner (Ollama + llama-server)
+│   ├── Headless/            DaemonListener (TCP HTTP server, raw Darwin sockets)
+│   ├── Plugins/             SkillLoader  CalculatorPlugin
+│   └── Security/            SecretStore (Keychain)
+└── KoboldOSControlPanel/    macOS SwiftUI app
+    ├── MainView.swift        Sidebar navigation + tab routing
+    ├── ChatView.swift        Chat UI with tool bubbles + media embedding + live thinking layers
+    ├── DashboardView.swift   Metrics + welcome + daily quotes + temperature in °C
+    ├── MemoryView.swift      Gedächtnis (Kurzzeit/Langzeit/Wissen)
+    ├── TasksView.swift       Scheduled tasks + Idle tasks with heartbeat system
+    ├── TeamsGroupView.swift  Teams: Gruppenchat, Diskursmodell, Organigramm, Persistenz
+    ├── MarketplaceView.swift Widgets, Automationen, Skills, Themes, Konnektoren
+    ├── AgentsView.swift      Per-agent model/temp/vision config + tool routing
+    ├── SettingsView.swift    12 Sektionen (Konto bis Über) + Heartbeat + Debugging
+    ├── SuggestionService.swift AI-Vorschläge via Ollama mit Cache
+    ├── ProactiveEngine.swift Heartbeat, Idle Tasks, Goals, Proactive Suggestions
+    ├── TTSManager.swift      Text-to-Speech (AVSpeechSynthesizer)
+    ├── STTManager.swift      Speech-to-Text (SwiftWhisper / whisper.cpp)
+    ├── ImageGenManager.swift Stable Diffusion pipeline (CoreML) + model selection
+    ├── GoogleOAuth.swift     Google OAuth 2.0 + API wrapper
+    ├── SoundCloudOAuth.swift SoundCloud OAuth
+    ├── TelegramBot.swift     Telegram Bot integration
+    ├── WebAppServer.swift    Web UI + Cloudflare Tunnel
+    ├── GlassUI.swift         Design system (GlassCard/Button/TextField/Bubbles)
+    ├── RuntimeViewModel.swift Chat state + daemon API + media embedding + teams
+    ├── RuntimeManager.swift  In-process daemon lifecycle + health monitor
+    └── ...
+```
+
+---
+
+## Agent System
+
+### Tool Calling Format
+
+The agent communicates exclusively via JSON:
+
+```json
+{"tool_name": "shell", "tool_args": {"command": "ls ~/Desktop"}, "thoughts": "Let me list the desktop files."}
+```
+
+The `ToolCallParser` uses 5 strategies to extract tool calls from LLM output:
+1. Markdown code blocks (` ```json ... ``` `)
+2. First-to-last brace extraction
+3. Balanced JSON block scan with `tool_name` detection
+4. XML-style `<tool_call>` fallback
+5. Line-by-line JSON accumulation
+
+Final answers go through the `response` tool: `{"tool_name": "response", "tool_args": {"text": "Here is the answer..."}}`
+
+### Available Tools
+
+| Tool | Description |
+|---|---|
+| `response` | Send final answer to user |
+| `shell` | Execute shell commands |
+| `file` | Read/write/list/search files |
+| `browser` | Web search + HTTP requests |
+| `speak` | Text-to-Speech (read text aloud) |
+| `generate_image` | Stable Diffusion image generation |
+| `calendar` | Apple Calendar events & reminders |
+| `contacts` | Apple Contacts search |
+| `telegram_send` | Send Telegram messages |
+| `google_api` | Google Drive, Gmail, YouTube, Calendar |
+| `soundcloud_api` | SoundCloud API access |
+| `playwright` | Chrome browser automation (navigate, click, fill, screenshot, evaluate) |
+| `screen_control` | Mouse/keyboard control, screenshots, OCR (Vision.framework) |
+| `core_memory_append/replace` | Memory management |
+| `delegate_task` | Delegate to sub-agents |
+| `workflow_manage` | Workflow CRUD |
+| `task_manage` | Task scheduler CRUD |
+| `skill_write` | Self-author agent skills |
+
+### Agent Types
+
+| Type | Step Limit | Rule Engine |
+|---|---|---|
+| instructor | 12 | default |
+| general | 10 | default |
+| coder | 15 | coder (allows shell/file) |
+| researcher | 20 | research (allows browser/web) |
+| planner | 8 | default |
+
+---
+
+## Memory System (Gedächtnis)
+
+Three memory types stored as CoreMemory blocks with label prefixes:
+
+| Type | Prefix | Description |
+|---|---|---|
+| Kurzzeit | `kt.` | Short-term, session context |
+| Langzeit | `lz.` | Long-term, persists across sessions |
+| Wissen | `ws.` | Knowledge base, reference facts |
+
+All blocks are compiled into every system prompt so the agent always has context.
+
+---
+
+## API Endpoints
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/health` | GET | Status + PID |
+| `/agent` | POST | Run agent loop (tool-enabled) |
+| `/chat` | POST | Direct LLM call (no tools) |
+| `/metrics` | GET | Usage stats |
+| `/metrics/reset` | POST | Reset counters |
+| `/memory` | GET | All CoreMemory blocks |
+| `/memory/update` | POST | Upsert/delete a block |
+| `/memory/snapshot` | POST | Create snapshot |
+| `/models` | GET | Available Ollama models |
+| `/model/set` | POST | Set active model |
+| `/tasks` | GET/POST | Task management |
+| `/trace` | GET | Activity timeline |
+| `/history/clear` | POST | Clear conversation history |
+
+---
+
+## CLI
 
 ```bash
-# Install Ollama
-brew install ollama
-
-# Start the Ollama server
-ollama serve
-
-# Pull a recommended model
-ollama pull llama3.2
-
-# KoboldOS will auto-detect available models
+kobold daemon --port 8080          # Start daemon
+kobold model list                  # List available models
+kobold model set llama3.2          # Set active model
+kobold metrics [--json] [--watch]  # View metrics
+kobold safe-mode status/enable/reset
+kobold trace list / get <id> / hash <id>
 ```
 
-### Using with Cloud Providers
+---
 
-Open **Settings** in KoboldOS and add your API keys:
+## Settings
 
-- **OpenAI** -- GPT-4o, GPT-4, etc.
-- **Anthropic** -- Claude Sonnet, Claude Opus, etc.
-- **Groq** -- Fast inference for open models
+Accessible via **Einstellungen** tab (14 sections):
 
-All keys are stored securely in macOS Keychain.
+- **Konto**: Profile, agent name
+- **Allgemein**: Updates, display, autostart, tools, heartbeat settings
+- **Persönlichkeit**: Kommunikation, Soul.md, Personality.md, Verhaltensregeln, Ziele, Autonomie & Proaktivität
+- **Agenten**: Per-agent model/temperature/vision config, tool routing
+- **Modelle**: Primary Ollama model, per-agent model overrides
+- **Gedächtnis**: Memory limits, recall, auto-memorization, export/import
+- **Berechtigungen**: Autonomy level (1=safe/2=normal/3=full), individual permission toggles, Playwright + Screen Control
+- **Datenschutz & Sicherheit**: Safe mode, API keys, secrets (Keychain)
+- **Verbindungen**: Google, SoundCloud, iMessage, Telegram, WebApp, Cloudflare Tunnel, A2A Protocol
+- **Sprache & Audio**: TTS (voice, rate, volume), STT (model, language), Stable Diffusion (model selection, prompts, steps, guidance)
+- **Fähigkeiten**: Skill management with enable/disable toggles
+- **Benachrichtigungen**: Notification settings
+- **Debugging & Sicherheit**: Logging, recovery, tool sandboxing
+- **Über**: Version, PID, credits, log export
 
 ---
 
 ## Development
 
 ```bash
-# Debug build
+# Build
 swift build
 
 # Run tests
 swift test
 
-# Release build + DMG
+# Build DMG
 bash scripts/build.sh
+
+# Run daemon directly
+.build/debug/kobold daemon --port 8080
 ```
 
-### Project Layout
+### Adding a New Tool
 
-| Directory | Purpose |
-|---|---|
-| `Sources/KoboldCore/` | Core framework (agents, tools, memory, MCP) |
-| `Sources/KoboldOSControlPanel/` | SwiftUI macOS app |
-| `Sources/KoboldCLI/` | Command-line interface |
-| `Tests/` | Test suite |
-| `scripts/` | Build and utility scripts |
+1. Create `Sources/KoboldCore/Tools/YourTool.swift` conforming to `AgentTool`
+2. Register in `AgentLoop.setupTools()`
+3. The tool description appears automatically in the system prompt
 
----
+### Adding a New Endpoint
 
-## Roadmap
-
-See [ROADMAP.md](ROADMAP.md) for the full development plan.
-
-Current priorities:
-- [ ] Voice Chat (TTS + microphone, natural male voice)
-- [ ] MCP server integration (infrastructure ready, wiring pending)
-- [ ] English localization (currently German, i18n-ready)
-- [ ] Plugin marketplace
-- [ ] iOS companion app
+1. Add case to `routeRequest()` in `DaemonListener.swift`
+2. Add handler method `handleYourEndpoint(body:) async -> String`
+3. Return `jsonOK(["key": "value"])` for success
 
 ---
 
-## Contributing
+## Known Issues / Limitations
 
-Contributions are welcome! KoboldOS is in early alpha, so there is plenty of room to shape the project.
-
-### How to Contribute
-
-1. **Fork** the repository
-2. **Create a branch** for your feature (`git checkout -b feature/my-feature`)
-3. **Commit** your changes with clear messages
-4. **Push** to your branch and open a **Pull Request**
-
-### Areas Where Help is Needed
-
-- English translations and i18n
-- Additional MCP tool integrations
-- Custom workflow node plugins
-- Documentation and tutorials
-- Testing on different macOS versions
-- UI/UX feedback
-
-### Reporting Issues
-
-Found a bug or have a feature request? [Open an issue](https://github.com/FunkJood/KoboldOS/issues) with:
-- macOS version
-- KoboldOS version
-- Steps to reproduce (for bugs)
-- Expected vs. actual behavior
-
----
-
-## Changelog
-
-See [CHANGELOG.md](CHANGELOG.md) for version history.
-
----
-
-## License
-
-*License to be determined.* See [LICENSE](LICENSE) for details.
-
----
-
-<div align="center">
-
-**Built with SwiftUI on macOS**
-
-[GitHub](https://github.com/FunkJood/KoboldOS) | [Releases](https://github.com/FunkJood/KoboldOS/releases) | [Issues](https://github.com/FunkJood/KoboldOS/issues)
-
-*KoboldOS is in active alpha development. APIs and features may change between releases.*
-
-</div>
+- Stable Diffusion requires CoreML model download (~2 GB) on first use
+- STT (Whisper) requires model download (~75-466 MB) on first use
+- Vision only works with multimodal models (llava, llama3.2-vision)
+- llama-server backend needs manual setup
+- Playwright requires `npm install -g playwright` and Chrome installed
+- Screen Control requires macOS Accessibility permissions (System Preferences → Security → Accessibility)
+- Teams marketplace items are mock/placeholder data
+- MCP (Model Context Protocol) infrastructure exists but is not fully wired to AgentLoop yet

@@ -1,0 +1,159 @@
+══════════════════════════════════════════════
+KOBOLDOS — CHANGELOG
+══════════════════════════════════════════════
+
+VERSION 0.2.8 ALPHA (2026-02-23)
+─────────────────────────────────
+• Teams: Echtes 3-Runden-Diskursmodell (Analyse → Diskussion → Synthese)
+• Teams: Persistenz, Organigramm mit Zielen, Chat-Controls
+• PlaywrightTool: Chrome-Automatisierung (navigate, click, fill, screenshot)
+• ScreenControlTool: Maus/Tastatur/Screenshot/OCR (CGEvent, Vision.framework)
+• Goals-System: Ziele unter Persoenlichkeit, fliessen in System-Prompt
+• Idle Tasks: User-definierbare Aufgaben (konkret + vage Richtungen)
+• Heartbeat: Konfigurierbar mit Quiet Hours und Rate-Limiting
+• Task/Workflow Team-Integration (teamId, Team-Picker, Team-Node)
+• Live Thinking Layers: Steps/Tools + Thinking-Status + Typing (nicht ueberlappend)
+• Chat-Eingabe: Doppelte Hoehe, groessere Schrift
+• Schriftgroesse wirkt auf User + Assistant Nachrichten
+• Temperatur: Dashboard zeigt °C statt Kuehlt/Normal/Hoch
+• Interactive Buttons: Strikte Ja/Nein-Erkennung (weniger Spam)
+• SD Crash Fix: Model-Loading auf Background-Thread
+• SD Modell-Auswahl aus Ordner
+• Settings: Benachrichtigungen-Sektion, Debugging & Sicherheit-Sektion
+• AI-Vorschlaege via SuggestionService (Ollama, 4h-Cache)
+• Nachrichten-Queue statt Agent-Interrupt
+• 44.572 Lines of Code
+
+VERSION 0.2.5 ALPHA (2026-02-22)
+─────────────────────────────────
+• TTS: Agent kann Text vorlesen (speak-Tool, AVSpeechSynthesizer)
+• STT: Lokale Spracherkennung via whisper.cpp (SwiftWhisper)
+• Stable Diffusion: Lokale Bildgenerierung (generate_image Tool)
+• Medien-Embedding: Bilder/Audio/Video automatisch inline im Chat
+• ToolCallParser: 5 Parsing-Strategien für robuste Tool-Erkennung
+• Verbindungen: Echte Brand-Logos, WebApp + Tunnel nebeneinander
+• A2A unter Verbindungen integriert, Proaktiv in Gedächtnis
+• Dashboard: Willkommensgruß + tägliche Sprüche
+• Freeze-Fix: UpdateManager blockierte MainThread (Deadlock)
+• Leerer Chat: Wechselnde Beispiele für echte KoboldOS-Features
+• "Skills" → "Fähigkeiten" umbenannt
+
+VERSION 0.2.0 ALPHA (2026-02-22)
+──────────────────────────────────────────────
+
+NEU: INTERAKTIVE CLI
+  - `kobold` ohne Subcommand startet interaktive Chat-Session
+  - Farbige Terminal-Ausgabe (Thinking, Tools, Antworten)
+  - SSE-Streaming mit Echtzeit-Anzeige
+  - Session-Persistenz unter ~/Library/Application Support/KoboldOS/
+  - 12 Slash-Befehle (/help, /new, /list, /load, /model, etc.)
+  - Auto-Daemon: startet automatisch wenn nicht erreichbar
+  - Session-Export als Markdown
+
+NEU: VOLLSTAENDIGE CLI-BEFEHLE
+  - kobold health       — Server-Status mit Exit-Code
+  - kobold memory       — Core Memory verwalten (list/get/set/delete/snapshot)
+  - kobold task         — Aufgaben verwalten (list/create/delete/toggle)
+  - kobold workflow     — Workflows verwalten und ausfuehren
+  - kobold history      — Chat-Verlauf loeschen
+  - kobold skill        — Markdown-Skills importieren/verwalten
+  - kobold secret       — Keychain-Secrets verwalten (verdeckte Eingabe)
+  - kobold config       — UserDefaults-Konfiguration
+  - kobold checkpoint   — Checkpoints verwalten/fortsetzen
+  - kobold card         — A2A Agent Card anzeigen/entdecken
+
+NEU: CONFIDENCE SELF-ASSESSMENT
+  - Agent bewertet jede Antwort mit Konfidenz (0.0-1.0)
+  - Farbkodierung: gruen (>0.8), gelb (0.5-0.8), rot (<0.5)
+  - Bei niedriger Konfidenz fragt Agent nach statt zu raten
+  - Confidence-Badge in GUI und CLI
+
+NEU: CHECKPOINT/RESUME
+  - Agent-State wird an Tool-Boundaries gespeichert
+  - Lange Tasks koennen pausiert und fortgesetzt werden
+  - Ctrl+C waehrend Stream speichert automatisch Checkpoint
+  - `kobold checkpoint resume <id>` zum Fortsetzen
+  - REST API: GET/POST/DELETE /checkpoints
+
+NEU: A2A AGENT CARDS
+  - /.well-known/agent.json Endpoint (Google A2A Standard)
+  - Oeffentlich zugaenglich (kein Auth noetig)
+  - Beschreibt Faehigkeiten, Endpoints, Tools, Agent-Typen
+  - `kobold card discover <url>` zum Entdecken anderer Agents
+
+NEU: MEMORY PAGING (ARCHIVAL MEMORY)
+  - Automatische Archivierung bei >80% Block-Auslastung
+  - Aelteste 50% werden in ArchivalMemoryStore verschoben
+  - Agent kann mit archival_memory_search alte Infos suchen
+  - archival_memory_insert zum manuellen Archivieren
+  - Archiv-Ansicht in GUI MemoryView
+
+NEU: MEMORY VERSIONIERUNG
+  - Git-style Versioning fuer Core Memory
+  - Automatischer Commit nach jeder Session
+  - SHA-256 Content-Hashing (keine Duplikate)
+  - kobold memory log — Versionshistorie
+  - kobold memory diff <id1> <id2> — Aenderungen vergleichen
+  - kobold memory rollback <id> — Zuruecksetzen
+  - Versions-Tab in GUI MemoryView
+
+INFRASTRUKTUR
+  - Gemeinsamer DaemonClient fuer alle CLI-Befehle
+  - ANSI Terminal-Formatter mit isatty() Erkennung
+  - SSE Stream Parser fuer Agent-Events
+  - Session-Manager mit Debounced-Save
+
+STATISTIK
+  - 22.821 Lines of Code (Swift)
+  - 78 Tests (alle bestanden)
+  - 16 CLI-Befehle
+  - 12 Slash-Commands
+  - 7 neue REST-Endpoints
+
+──────────────────────────────────────────────
+
+VERSION 0.1.9 (2026-02-21)
+──────────────────────────────────────────────
+  - Multi-Session Support (GUI)
+  - Onboarding Wizard mit Persona-Auswahl
+  - 15 Sprachen (Lokalisierung)
+  - SecretStore (Keychain)
+  - BackupManager
+  - SkillLoader (Markdown Skills)
+  - LaunchAgent Auto-Start
+  - Settings: 12 Sektionen
+  - 20.037 LOC, 78 Tests
+
+VERSION 0.1.6 (2026-02-20)
+──────────────────────────────────────────────
+  - SSE Streaming fuer Agent-Antworten
+  - Agent Tools (Shell, File, HTTP, AppleScript, Notify)
+  - ToolCallParser mit Multi-Format Support
+  - ToolRuleEngine pro Agent-Typ
+  - DelegateTaskTool (Sub-Agent Spawning)
+  - Safe Mode mit Crash Recovery
+  - Trace-System fuer Debugging
+
+VERSION 0.1.5 (2026-02-19)
+──────────────────────────────────────────────
+  - Core Memory (Letta-style, labeled blocks)
+  - Plugin System (CalculatorPlugin)
+  - MemoryStore (Vector-basiert)
+  - Agent Message Bus
+  - Multi-Agent Support (5 Typen)
+
+VERSION 0.1.4 (2026-02-18)
+──────────────────────────────────────────────
+  - SwiftUI GUI (Dark Theme, Glass Design)
+  - Dashboard, Chat, Models, Metrics Views
+  - RuntimeManager mit Health-Monitoring
+  - DMG Distribution
+
+VERSION 0.1.3 (2026-02-17)
+──────────────────────────────────────────────
+  - Erste CLI-Version
+  - Daemon mit HTTP Server
+  - Ollama Integration
+  - Grundlegende Chat-Funktion
+
+══════════════════════════════════════════════

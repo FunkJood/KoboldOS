@@ -57,29 +57,31 @@ final class ImageGenManager: ObservableObject {
             .filter { $0 != ".DS_Store" } ?? []
     }
 
+    /// Heavy pipeline work runs off MainActor to prevent UI freeze / watchdog kill.
     func loadModel(name: String) async throws {
         let dir = modelDir(for: name)
         guard FileManager.default.fileExists(atPath: dir.path) else {
             throw ImageGenError.modelNotFound(name)
         }
 
-        var config = MLModelConfiguration()
-        switch computeUnits {
-        case "cpuOnly": config.computeUnits = .cpuOnly
-        case "all": config.computeUnits = .all
-        default: config.computeUnits = .cpuAndGPU
-        }
-
-        pipeline = try StableDiffusionPipeline(
-            resourcesAt: dir,
-            controlNet: [],
-            configuration: config,
-            reduceMemory: true
-        )
-        try pipeline?.loadResources()
+        let cu = computeUnits
+        let newPipeline: StableDiffusionPipeline = try await Task.detached(priority: .userInitiated) {
+            var config = MLModelConfiguration()
+            switch cu {
+            case "cpuOnly": config.computeUnits = .cpuOnly
+            case "all":     config.computeUnits = .all
+            default:        config.computeUnits = .cpuAndGPU
+            }
+            let p = try StableDiffusionPipeline(
+                resourcesAt: dir, controlNet: [], configuration: config, reduceMemory: true
+            )
+            try p.loadResources()
+            return p
+        }.value
+        pipeline = newPipeline
         isModelLoaded = true
         currentModelName = name
-        print("[ImageGen] Model '\(name)' loaded")
+        print("[ImageGen] Model '\(name)' loaded (background)")
     }
 
     /// Load model directly from modelsDir root (used after download where files are placed directly)
@@ -149,35 +151,44 @@ final class ImageGenManager: ObservableObject {
         config.seed = randomSeed
         config.disableSafety = false
 
-        let images = try pipeline.generateImages(configuration: config) { progress in
-            Task { @MainActor in
-                self.generationProgress = Double(progress.step) / Double(progress.stepCount)
+        // Run pipeline on background thread to prevent UI freeze
+        let pipelineRef = pipeline
+        let configCopy = config
+        let outDir = outputDir
+
+        let (nsImage, outputPath): (NSImage, String) = try await Task.detached(priority: .userInitiated) {
+            let images = try pipelineRef.generateImages(configuration: configCopy) { progress in
+                Task { @MainActor in
+                    self.generationProgress = Double(progress.step) / Double(progress.stepCount)
+                }
+                return true // continue
             }
-            return true // continue
-        }
 
-        guard let cgImage = images.first ?? nil else {
-            throw ImageGenError.generationFailed
-        }
+            guard let cgImage = images.first ?? nil else {
+                throw ImageGenError.generationFailed
+            }
 
-        let nsImage = NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
+            let nsImage = NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
+
+            // Save to file
+            let timestamp = Int(Date().timeIntervalSince1970)
+            let sanitizedPrompt = prompt.prefix(40).replacingOccurrences(of: "[^a-zA-Z0-9]", with: "_", options: .regularExpression)
+            let filename = "\(sanitizedPrompt)_\(timestamp).png"
+            let outputURL = outDir.appendingPathComponent(filename)
+
+            if let tiffData = nsImage.tiffRepresentation,
+               let bitmap = NSBitmapImageRep(data: tiffData),
+               let pngData = bitmap.representation(using: .png, properties: [:]) {
+                try pngData.write(to: outputURL)
+            }
+
+            return (nsImage, outputURL.path)
+        }.value
+
         lastGeneratedImage = nsImage
-
-        // Save to file
-        let timestamp = Int(Date().timeIntervalSince1970)
-        let sanitizedPrompt = prompt.prefix(40).replacingOccurrences(of: "[^a-zA-Z0-9]", with: "_", options: .regularExpression)
-        let filename = "\(sanitizedPrompt)_\(timestamp).png"
-        let outputURL = outputDir.appendingPathComponent(filename)
-
-        if let tiffData = nsImage.tiffRepresentation,
-           let bitmap = NSBitmapImageRep(data: tiffData),
-           let pngData = bitmap.representation(using: .png, properties: [:]) {
-            try pngData.write(to: outputURL)
-        }
-
         generationProgress = 1.0
-        print("[ImageGen] Image saved to \(outputURL.path)")
-        return (image: nsImage, path: outputURL.path)
+        print("[ImageGen] Image saved to \(outputPath)")
+        return (image: nsImage, path: outputPath)
     }
 
     // MARK: - Notification Listener (from GenerateImageTool)

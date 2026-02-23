@@ -79,6 +79,37 @@ struct GoalEntry: Identifiable, Codable {
     }
 }
 
+// MARK: - IdleTask (user-defined tasks executed when user is inactive)
+
+struct IdleTask: Identifiable, Codable {
+    var id: String
+    var name: String
+    var prompt: String
+    var enabled: Bool
+    var priority: GoalEntry.GoalPriority
+    var lastRun: Date?
+    var runCount: Int
+    var cooldownMinutes: Int  // min time between runs of this task
+
+    init(id: String = UUID().uuidString, name: String, prompt: String, enabled: Bool = true,
+         priority: GoalEntry.GoalPriority = .medium, cooldownMinutes: Int = 60) {
+        self.id = id; self.name = name; self.prompt = prompt; self.enabled = enabled
+        self.priority = priority; self.lastRun = nil; self.runCount = 0; self.cooldownMinutes = cooldownMinutes
+    }
+
+    static let examples: [IdleTask] = [
+        // Konkrete Aufgaben
+        IdleTask(name: "Brew Updates prüfen", prompt: "Prüfe ob Homebrew-Pakete veraltet sind und zeig mir eine Zusammenfassung.", priority: .low, cooldownMinutes: 1440),
+        IdleTask(name: "Downloads aufräumen", prompt: "Schau in meinen Downloads-Ordner und schlage vor welche Dateien gelöscht werden können (älter als 30 Tage, doppelt, temporär).", priority: .medium, cooldownMinutes: 1440),
+        IdleTask(name: "Speicherplatz checken", prompt: "Prüfe den verfügbaren Speicherplatz und warne mich wenn weniger als 10GB frei sind.", priority: .high, cooldownMinutes: 360),
+        // Vage Richtungen / Explorativ
+        IdleTask(name: "Verbesserungen finden", prompt: "Schau dich um und finde etwas auf meinem System das man verbessern, optimieren oder aufräumen könnte. Sei kreativ — Performance, Organisation, Sicherheit, alles ist fair game.", priority: .medium, cooldownMinutes: 720),
+        IdleTask(name: "Sicherheit im Blick", prompt: "Halte Ausschau nach potenziellen Sicherheitsproblemen auf meinem System — veraltete Software, offene Ports, unsichere Berechtigungen, verdächtige Prozesse. Berichte was dir auffällt.", priority: .high, cooldownMinutes: 1440),
+        IdleTask(name: "Neues entdecken", prompt: "Recherchiere etwas Interessantes — neue Tools, Technologien oder Tipps die für mich nützlich sein könnten. Basiere das auf meiner bisherigen Nutzung und meinen Projekten.", priority: .low, cooldownMinutes: 2880),
+        IdleTask(name: "Projekte checken", prompt: "Schau in meine Projekte und Repos. Gibt es uncommitted Changes, veraltete Dependencies, TODOs im Code oder andere Dinge die Aufmerksamkeit brauchen? Fass zusammen was du findest.", priority: .medium, cooldownMinutes: 720),
+    ]
+}
+
 // MARK: - ProactiveEngine
 
 @MainActor
@@ -88,26 +119,63 @@ class ProactiveEngine: ObservableObject {
     @Published var suggestions: [ProactiveSuggestion] = []
     @Published var rules: [ProactiveRule] = []
     @Published var goals: [GoalEntry] = []
+    @Published var idleTasks: [IdleTask] = []
     @Published var isChecking = false
     @Published var heartbeatStatus: String = "Idle"
     @Published var lastHeartbeat: Date? = nil
     @Published var idleTasksCompleted: Int = 0
+    @Published var heartbeatLog: [HeartbeatLogEntry] = []
+
+    // General
     @AppStorage("kobold.proactive.enabled") var isEnabled: Bool = true
     @AppStorage("kobold.proactive.interval") var checkIntervalMinutes: Int = 10
     @AppStorage("kobold.proactive.morningBriefing") var morningBriefing: Bool = true
     @AppStorage("kobold.proactive.eveningSummary") var eveningSummary: Bool = true
     @AppStorage("kobold.proactive.errorAlerts") var errorAlerts: Bool = true
     @AppStorage("kobold.proactive.systemHealth") var systemHealth: Bool = true
+
+    // Heartbeat
+    @AppStorage("kobold.proactive.heartbeat.enabled") var heartbeatEnabled: Bool = true
+    @AppStorage("kobold.proactive.heartbeat.intervalSec") var heartbeatIntervalSec: Int = 60
+    @AppStorage("kobold.proactive.heartbeat.showInDashboard") var heartbeatShowInDashboard: Bool = true
+    @AppStorage("kobold.proactive.heartbeat.logRetention") var heartbeatLogRetention: Int = 50
+
+    // Idle Tasks
     @AppStorage("kobold.proactive.idleTasks") var idleTasksEnabled: Bool = false
+    @AppStorage("kobold.proactive.idle.minIdleMinutes") var idleMinIdleMinutes: Int = 5
+    @AppStorage("kobold.proactive.idle.maxPerHour") var idleMaxPerHour: Int = 3
+    @AppStorage("kobold.proactive.idle.allowShell") var idleAllowShell: Bool = false
+    @AppStorage("kobold.proactive.idle.allowNetwork") var idleAllowNetwork: Bool = false
+    @AppStorage("kobold.proactive.idle.allowFileWrite") var idleAllowFileWrite: Bool = false
+    @AppStorage("kobold.proactive.idle.onlyHighPriority") var idleOnlyHighPriority: Bool = true
+    @AppStorage("kobold.proactive.idle.categories") var idleCategoriesRaw: String = "system,error"
+    @AppStorage("kobold.proactive.idle.quietHoursStart") var idleQuietHoursStart: Int = 22
+    @AppStorage("kobold.proactive.idle.quietHoursEnd") var idleQuietHoursEnd: Int = 7
+    @AppStorage("kobold.proactive.idle.quietHoursEnabled") var idleQuietHoursEnabled: Bool = false
+    @AppStorage("kobold.proactive.idle.notifyOnExecution") var idleNotifyOnExecution: Bool = true
+    @AppStorage("kobold.proactive.idle.pauseOnUserActivity") var idlePauseOnUserActivity: Bool = true
+
+    var lastUserActivity: Date = Date()
+    private var idleExecutionsThisHour: Int = 0
+    private var lastHourReset: Date = Date()
 
     private var checkTimer: Timer?
     private var heartbeatTimer: Timer?
     private let rulesKey = "kobold.proactive.rules"
     private let goalsKey = "kobold.proactive.goals"
+    private let idleTasksKey = "kobold.proactive.idleTasksList"
+
+    struct HeartbeatLogEntry: Identifiable {
+        let id = UUID()
+        let timestamp: Date
+        let status: String
+        let action: String?
+    }
 
     private init() {
         loadRules()
         loadGoals()
+        loadIdleTasks()
     }
 
     /// Call on app termination to prevent timer leak
@@ -186,6 +254,39 @@ class ProactiveEngine: ObservableObject {
         saveGoals()
     }
 
+    // MARK: - Idle Tasks Persistence
+
+    func loadIdleTasks() {
+        if let data = UserDefaults.standard.data(forKey: idleTasksKey),
+           let saved = try? JSONDecoder().decode([IdleTask].self, from: data) {
+            idleTasks = saved
+        }
+    }
+
+    func saveIdleTasks() {
+        if let data = try? JSONEncoder().encode(idleTasks) {
+            UserDefaults.standard.set(data, forKey: idleTasksKey)
+        }
+    }
+
+    func addIdleTask(_ task: IdleTask) {
+        idleTasks.append(task)
+        saveIdleTasks()
+    }
+
+    func deleteIdleTask(_ id: String) {
+        idleTasks.removeAll { $0.id == id }
+        saveIdleTasks()
+    }
+
+    func markIdleTaskRun(_ id: String) {
+        if let idx = idleTasks.firstIndex(where: { $0.id == id }) {
+            idleTasks[idx].lastRun = Date()
+            idleTasks[idx].runCount += 1
+            saveIdleTasks()
+        }
+    }
+
     /// Active goals formatted for agent system prompt injection
     var activeGoalsPromptSection: String {
         let active = goals.filter { $0.isActive }
@@ -212,11 +313,14 @@ class ProactiveEngine: ObservableObject {
                 self.generateSuggestions(viewModel: viewModel)
             }
         }
-        // Heartbeat: check every 60s if agent is idle and can do proactive work
-        heartbeatTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self, weak viewModel] _ in
-            Task { @MainActor in
-                guard let self, let viewModel else { return }
-                self.heartbeat(viewModel: viewModel)
+        // Heartbeat timer
+        if heartbeatEnabled {
+            let hbInterval = TimeInterval(max(10, heartbeatIntervalSec))
+            heartbeatTimer = Timer.scheduledTimer(withTimeInterval: hbInterval, repeats: true) { [weak self, weak viewModel] _ in
+                Task { @MainActor in
+                    guard let self, let viewModel else { return }
+                    self.heartbeat(viewModel: viewModel)
+                }
             }
         }
         // Initial check after 15 seconds
@@ -234,28 +338,152 @@ class ProactiveEngine: ObservableObject {
         heartbeatTimer = nil
     }
 
+    func restartHeartbeat(viewModel: RuntimeViewModel) {
+        heartbeatTimer?.invalidate()
+        heartbeatTimer = nil
+        guard heartbeatEnabled, isEnabled else { return }
+        let hbInterval = TimeInterval(max(10, heartbeatIntervalSec))
+        heartbeatTimer = Timer.scheduledTimer(withTimeInterval: hbInterval, repeats: true) { [weak self, weak viewModel] _ in
+            Task { @MainActor in
+                guard let self, let viewModel else { return }
+                self.heartbeat(viewModel: viewModel)
+            }
+        }
+    }
+
+    /// Record user interaction to track idle time
+    func recordUserActivity() {
+        lastUserActivity = Date()
+    }
+
     // MARK: - Heartbeat (Proactive idle tasks)
 
     private func heartbeat(viewModel: RuntimeViewModel) {
         lastHeartbeat = Date()
-        guard idleTasksEnabled, !viewModel.agentLoading else {
-            heartbeatStatus = viewModel.agentLoading ? "Agent aktiv" : "Idle"
+
+        // Reset hourly counter
+        let now = Date()
+        if now.timeIntervalSince(lastHourReset) > 3600 {
+            idleExecutionsThisHour = 0
+            lastHourReset = now
+        }
+
+        // Agent busy?
+        guard !viewModel.agentLoading else {
+            heartbeatStatus = "Agent aktiv"
+            addHeartbeatLog(status: "Agent aktiv", action: nil)
             return
         }
+
+        // Idle tasks disabled?
+        guard idleTasksEnabled else {
+            heartbeatStatus = "Idle"
+            addHeartbeatLog(status: "Idle (Tasks deaktiviert)", action: nil)
+            return
+        }
+
+        // Quiet hours check
+        if idleQuietHoursEnabled {
+            let hour = Calendar.current.component(.hour, from: now)
+            let inQuiet: Bool
+            if idleQuietHoursStart > idleQuietHoursEnd {
+                inQuiet = hour >= idleQuietHoursStart || hour < idleQuietHoursEnd
+            } else {
+                inQuiet = hour >= idleQuietHoursStart && hour < idleQuietHoursEnd
+            }
+            if inQuiet {
+                heartbeatStatus = "Ruhezeit"
+                addHeartbeatLog(status: "Ruhezeit (\(idleQuietHoursStart):00–\(idleQuietHoursEnd):00)", action: nil)
+                return
+            }
+        }
+
+        // Pause on user activity?
+        if idlePauseOnUserActivity {
+            let idleMinutes = now.timeIntervalSince(lastUserActivity) / 60.0
+            if idleMinutes < Double(idleMinIdleMinutes) {
+                heartbeatStatus = "User aktiv"
+                addHeartbeatLog(status: "User aktiv (Idle: \(Int(idleMinutes))m < \(idleMinIdleMinutes)m)", action: nil)
+                return
+            }
+        }
+
+        // Rate limit
+        if idleExecutionsThisHour >= idleMaxPerHour {
+            heartbeatStatus = "Limit erreicht (\(idleMaxPerHour)/h)"
+            addHeartbeatLog(status: "Stunden-Limit erreicht", action: nil)
+            return
+        }
+
         heartbeatStatus = "Beobachtet..."
-        // Agent is idle — check if there's proactive work to do
-        let idleTasks = getIdleTasks()
-        if let task = idleTasks.first {
+
+        // 1. Try user-defined idle tasks first (have priority)
+        if let userTask = getNextUserIdleTask() {
+            heartbeatStatus = "Führt aus: \(userTask.name)"
+            addHeartbeatLog(status: "Idle-Aufgabe", action: userTask.name)
+            viewModel.sendMessage(userTask.prompt)
+            markIdleTaskRun(userTask.id)
+            idleTasksCompleted += 1
+            idleExecutionsThisHour += 1
+            return
+        }
+
+        // 2. Fallback to auto-generated suggestions
+        let autoTasks = getAutoIdleTasks()
+        if let task = autoTasks.first {
             heartbeatStatus = "Führt aus: \(task.title)"
-            // Execute idle task by sending it as a background message
+            addHeartbeatLog(status: "Auto-Aufgabe", action: task.title)
             viewModel.sendMessage(task.action)
             idleTasksCompleted += 1
+            idleExecutionsThisHour += 1
+        } else {
+            heartbeatStatus = "Keine Aufgaben"
+            addHeartbeatLog(status: "Keine passenden Aufgaben", action: nil)
         }
     }
 
-    private func getIdleTasks() -> [ProactiveSuggestion] {
-        // Only return suggestions that are actionable and haven't been shown recently
-        return suggestions.filter { $0.priority == .high && $0.category == .systemHealth }
+    private func addHeartbeatLog(status: String, action: String?) {
+        heartbeatLog.insert(HeartbeatLogEntry(timestamp: Date(), status: status, action: action), at: 0)
+        if heartbeatLog.count > heartbeatLogRetention {
+            heartbeatLog = Array(heartbeatLog.prefix(heartbeatLogRetention))
+        }
+    }
+
+    /// Next user-defined idle task that is ready to run (respects cooldown)
+    private func getNextUserIdleTask() -> IdleTask? {
+        let now = Date()
+        return idleTasks.first { task in
+            guard task.enabled else { return false }
+            if idleOnlyHighPriority && task.priority != .high { return false }
+            // Cooldown check
+            if let lastRun = task.lastRun {
+                let cooldownSec = Double(task.cooldownMinutes) * 60
+                if now.timeIntervalSince(lastRun) < cooldownSec { return false }
+            }
+            return true
+        }
+    }
+
+    /// Auto-generated suggestions filtered for idle execution
+    private func getAutoIdleTasks() -> [ProactiveSuggestion] {
+        let allowedCategories = Set(idleCategoriesRaw.split(separator: ",").map { String($0.trimmingCharacters(in: .whitespaces)) })
+
+        return suggestions.filter { s in
+            if idleOnlyHighPriority && s.priority != .high { return false }
+            let catKey: String
+            switch s.category {
+            case .systemHealth: catKey = "system"
+            case .errorRecovery: catKey = "error"
+            case .timeOfDay: catKey = "time"
+            case .idle: catKey = "idle"
+            case .custom: catKey = "custom"
+            }
+            return allowedCategories.contains(catKey)
+        }
+    }
+
+    func clearHeartbeatLog() {
+        heartbeatLog.removeAll()
     }
 
     // MARK: - Generate Suggestions

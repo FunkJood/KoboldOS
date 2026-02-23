@@ -14,6 +14,8 @@ struct TeamsGroupView: View {
     @State private var isTeamWorking = false
     @State private var editingAgent: TeamAgent? = nil
     @State private var editingTeamGoals = false
+    @AppStorage("kobold.chat.fontSize") private var chatFontSize: Double = 16.5
+    @State private var showAgentSteps: Bool = true
 
     var body: some View {
         HSplitView {
@@ -194,8 +196,54 @@ struct TeamsGroupView: View {
                 }
             }
 
-            // Input
-            HStack(spacing: 10) {
+            // Input bar with controls
+            HStack(spacing: 8) {
+                // Clear chat
+                Button(action: { clearTeamChat(teamId: team.id) }) {
+                    Image(systemName: "trash")
+                        .font(.system(size: 14))
+                        .foregroundColor(.secondary)
+                        .frame(width: 30, height: 32)
+                        .background(Color.koboldSurface.opacity(0.4))
+                        .cornerRadius(8)
+                }
+                .buttonStyle(.plain)
+                .help("Chat leeren")
+
+                // Show/hide round indicators
+                Button(action: { showAgentSteps.toggle() }) {
+                    Image(systemName: showAgentSteps ? "brain.fill" : "brain")
+                        .font(.system(size: 15))
+                        .foregroundColor(showAgentSteps ? .koboldGold : .secondary)
+                        .frame(width: 30, height: 32)
+                        .background(Color.koboldSurface.opacity(0.4))
+                        .cornerRadius(8)
+                }
+                .buttonStyle(.plain)
+                .help(showAgentSteps ? "Runden-Info ausblenden" : "Runden-Info einblenden")
+
+                // Font size controls
+                Button(action: { chatFontSize = max(12, chatFontSize - 1) }) {
+                    Text("a").font(.system(size: 13, weight: .bold))
+                        .foregroundColor(.secondary)
+                        .frame(width: 26, height: 32)
+                        .background(Color.koboldSurface.opacity(0.4))
+                        .cornerRadius(8)
+                }
+                .buttonStyle(.plain)
+                .help("Text kleiner")
+
+                Button(action: { chatFontSize = min(24, chatFontSize + 1) }) {
+                    Text("A").font(.system(size: 17, weight: .bold))
+                        .foregroundColor(.secondary)
+                        .frame(width: 26, height: 32)
+                        .background(Color.koboldSurface.opacity(0.4))
+                        .cornerRadius(8)
+                }
+                .buttonStyle(.plain)
+                .help("Text größer")
+
+                // Text input
                 TextField("Frage an das Team...", text: $groupChatInput)
                     .textFieldStyle(.plain)
                     .font(.system(size: 15.5))
@@ -206,13 +254,25 @@ struct TeamsGroupView: View {
                     .onSubmit { sendGroupMessage(team: team) }
                     .disabled(isTeamWorking)
 
-                Button(action: { sendGroupMessage(team: team) }) {
-                    Image(systemName: "paperplane.fill")
-                        .font(.system(size: 16))
-                        .foregroundColor(isTeamWorking ? .secondary : .koboldEmerald)
+                // Send / Stop
+                if isTeamWorking {
+                    Button(action: { isTeamWorking = false }) {
+                        Image(systemName: "stop.circle.fill")
+                            .font(.system(size: 18))
+                            .foregroundColor(.red)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Diskussion abbrechen")
+                } else {
+                    Button(action: { sendGroupMessage(team: team) }) {
+                        Image(systemName: "paperplane.fill")
+                            .font(.system(size: 16))
+                            .foregroundColor(.koboldEmerald)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(groupChatInput.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .help("Nachricht senden")
                 }
-                .buttonStyle(.plain)
-                .disabled(groupChatInput.trimmingCharacters(in: .whitespaces).isEmpty || isTeamWorking)
             }
             .padding(12)
         }
@@ -224,7 +284,7 @@ struct TeamsGroupView: View {
                 Spacer(minLength: 60)
                 VStack(alignment: .trailing, spacing: 2) {
                     Text(msg.content)
-                        .font(.system(size: 15.5))
+                        .font(.system(size: CGFloat(chatFontSize)))
                         .padding(.horizontal, 12)
                         .padding(.vertical, 8)
                         .background(Color.koboldEmerald.opacity(0.15))
@@ -243,12 +303,14 @@ struct TeamsGroupView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
                         Text(msg.agentName).font(.system(size: 12.5, weight: .semibold)).foregroundColor(.koboldGold)
-                        roundBadge(msg.round)
+                        if showAgentSteps {
+                            roundBadge(msg.round)
+                        }
                     }
                     if msg.isStreaming {
                         HStack(spacing: 4) {
                             ProgressView().controlSize(.mini)
-                            Text("Analysiert...").font(.system(size: 14.5)).foregroundColor(.secondary)
+                            Text("Analysiert...").font(.system(size: CGFloat(chatFontSize))).foregroundColor(.secondary)
                         }
                         .padding(.horizontal, 12)
                         .padding(.vertical, 8)
@@ -256,7 +318,7 @@ struct TeamsGroupView: View {
                         .cornerRadius(12)
                     } else {
                         Text(msg.content)
-                            .font(.system(size: 15.5))
+                            .font(.system(size: CGFloat(chatFontSize)))
                             .textSelection(.enabled)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 8)
@@ -288,6 +350,11 @@ struct TeamsGroupView: View {
                 .padding(.vertical, 1)
                 .background(Capsule().fill(color.opacity(0.15)))
         }
+    }
+
+    private func clearTeamChat(teamId: UUID) {
+        viewModel.teamMessages[teamId] = []
+        viewModel.saveTeamMessages(for: teamId)
     }
 
     // MARK: - Team Discourse Engine
@@ -374,7 +441,7 @@ struct TeamsGroupView: View {
             }
 
             // === RUNDE 3: Koordinator-Synthese ===
-            let coordinator = activeAgents.first ?? activeAgents[0]
+            let coordinator = activeAgents[0]
             let r2Messages = (viewModel.teamMessages[teamId] ?? []).filter { $0.round == 2 }
             let r2Summary = r2Messages.map { "[\($0.agentName)]: \($0.content)" }.joined(separator: "\n\n")
 

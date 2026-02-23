@@ -202,27 +202,27 @@ struct AgentsView: View {
     // MARK: - Tool Routing Visualization
 
     /// Tool routing data: which agent gets which tools and why
-    private static let toolRoutingDefaults: [(tool: String, icon: String, defaultAgents: [String], reason: String)] = [
-        ("shell",           "terminal.fill",                    ["instructor", "coder", "utility"],    "Shell-Befehle ausführen"),
-        ("file",            "doc.fill",                         ["instructor", "coder", "utility"],    "Dateien lesen/schreiben"),
-        ("browser",         "globe",                            ["instructor", "researcher", "web"],   "Webseiten laden & durchsuchen"),
-        ("http",            "network",                          ["instructor", "researcher", "web"],   "HTTP-Requests senden"),
-        ("calendar",        "calendar",                         ["instructor", "utility"],             "Kalender & Erinnerungen"),
-        ("contacts",        "person.crop.circle",               ["instructor", "utility"],             "Kontakte durchsuchen"),
-        ("applescript",     "applescript",                      ["instructor", "utility"],             "macOS-Automatisierung"),
-        ("memory_save",     "brain.head.profile",               ["instructor", "coder", "researcher"], "Erinnerungen speichern"),
-        ("memory_recall",   "magnifyingglass",                  ["instructor", "coder", "researcher"], "Erinnerungen abrufen"),
-        ("task_manage",     "checklist",                        ["instructor"],                        "Aufgaben erstellen/verwalten"),
-        ("workflow_manage", "arrow.triangle.branch",            ["instructor"],                        "Workflows verwalten"),
-        ("call_subordinate","person.2.fill",                    ["instructor"],                        "Sub-Agent delegieren"),
-        ("delegate_parallel","person.3.fill",                   ["instructor"],                        "Parallele Sub-Agents"),
-        ("skill_write",     "square.and.pencil",                ["instructor", "coder"],               "Skills erstellen"),
-        ("notify",          "bell.fill",                        ["instructor", "coder", "researcher"], "Benachrichtigungen senden"),
-        ("calculator",      "plusminus",                        ["instructor", "coder", "utility"],    "Berechnungen"),
-        ("telegram_send",   "paperplane.fill",                  ["instructor"],                        "Telegram-Nachrichten"),
-        ("google_api",      "globe",                            ["instructor", "web"],                 "Google API Zugriff"),
-        ("speak",           "speaker.wave.2.fill",              ["instructor"],                        "Text vorlesen (TTS)"),
-        ("generate_image",  "photo.artframe",                   ["instructor"],                        "Bilder generieren (SD)"),
+    private static let toolRoutingDefaults: [(tool: String, role: String, icon: String, defaultAgents: [String], reason: String)] = [
+        ("shell",           "Shell",            "terminal.fill",                    ["instructor", "coder", "utility"],    "Bash/Zsh-Befehle im Terminal ausführen, Pakete installieren, Prozesse starten"),
+        ("file",            "Dateisystem",      "doc.fill",                         ["instructor", "coder", "utility"],    "Dateien und Ordner lesen, erstellen, bearbeiten und durchsuchen"),
+        ("browser",         "Browser",          "globe",                            ["instructor", "researcher", "web"],   "Webseiten laden, DOM parsen und Inhalte extrahieren"),
+        ("http",            "Netzwerk",         "network",                          ["instructor", "researcher", "web"],   "REST-APIs aufrufen, Webhooks senden, Daten herunterladen"),
+        ("calendar",        "Kalender",         "calendar",                         ["instructor", "utility"],             "Termine erstellen, Erinnerungen setzen, Kalender abfragen"),
+        ("contacts",        "Kontakte",         "person.crop.circle",               ["instructor", "utility"],             "Kontakte nach Name, Nummer oder E-Mail durchsuchen"),
+        ("applescript",     "AppleScript",      "applescript",                      ["instructor", "utility"],             "macOS-Apps steuern: Mail, Finder, Safari, Messages etc."),
+        ("memory_save",     "Speichern",        "brain.head.profile",               ["instructor", "coder", "researcher"], "Wichtige Fakten, Entscheidungen und Kontext langfristig merken"),
+        ("memory_recall",   "Abruf",            "magnifyingglass",                  ["instructor", "coder", "researcher"], "Gespeicherte Erinnerungen und Wissen semantisch abrufen"),
+        ("task_manage",     "Aufgaben",         "checklist",                        ["instructor"],                        "Tasks erstellen, planen, zuweisen und als erledigt markieren"),
+        ("workflow_manage", "Workflows",        "arrow.triangle.branch",            ["instructor"],                        "Automatisierungs-Pipelines erstellen und ausführen"),
+        ("call_subordinate","Delegation",       "person.2.fill",                    ["instructor"],                        "Teilaufgabe an spezialisierten Sub-Agent delegieren"),
+        ("delegate_parallel","Parallel",        "person.3.fill",                    ["instructor"],                        "Mehrere Sub-Agents gleichzeitig für parallele Arbeit starten"),
+        ("skill_write",     "Skills",           "square.and.pencil",                ["instructor", "coder"],               "Wiederverwendbare Fähigkeiten als Code-Snippets speichern"),
+        ("notify",          "Benachrichtigung", "bell.fill",                        ["instructor", "coder", "researcher"], "System-Benachrichtigungen und Push-Alerts an den User senden"),
+        ("calculator",      "Rechner",          "plusminus",                        ["instructor", "coder", "utility"],    "Mathematische Berechnungen, Einheiten-Umrechnung, Formeln"),
+        ("telegram_send",   "Telegram",         "paperplane.fill",                  ["instructor"],                        "Nachrichten über Telegram-Bot an Kontakte/Gruppen senden"),
+        ("google_api",      "Google API",       "globe",                            ["instructor", "web"],                 "Google Suche, Maps, Drive und weitere Google-Dienste nutzen"),
+        ("speak",           "Sprache",          "speaker.wave.2.fill",              ["instructor"],                        "Text als gesprochene Sprache ausgeben (Text-to-Speech)"),
+        ("generate_image",  "Bildgenerator",    "photo.artframe",                   ["instructor"],                        "Bilder per Stable Diffusion aus Text-Prompts generieren"),
     ]
 
     /// Persisted tool routing overrides
@@ -267,20 +267,28 @@ struct AgentsView: View {
     var toolRoutingSection: some View {
         GlassCard(padding: 0, cornerRadius: 14) {
             VStack(alignment: .leading, spacing: 0) {
-                HStack {
-                    Label("Tool-Routing", systemImage: "arrow.triangle.swap")
-                        .font(.system(size: 16.5, weight: .semibold))
-                    Spacer()
-                    Text("\(Self.toolRoutingDefaults.count) Tools")
-                        .font(.caption).foregroundColor(.secondary)
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Label("Tool-Routing", systemImage: "arrow.triangle.swap")
+                            .font(.system(size: 16.5, weight: .semibold))
+                        Spacer()
+                        Text("\(Self.toolRoutingDefaults.count) Tools")
+                            .font(.caption).foregroundColor(.secondary)
+                    }
+                    Text("Bestimmt, welche Tools dem AgentLoop pro Agent zur Verfügung stehen. Deaktivierte Tools werden aus dem System-Prompt entfernt und können nicht aufgerufen werden.")
+                        .font(.system(size: 12, weight: .regular))
+                        .foregroundColor(.secondary)
+                        .lineLimit(2)
                 }
                 .padding(14)
 
                 Divider()
 
                 // Header
-                HStack(spacing: 0) {
-                    Text("Tool").font(.system(size: 12.5, weight: .bold)).frame(width: 140, alignment: .leading)
+                HStack(spacing: 12) {
+                    Text("Tool")
+                        .font(.system(size: 12.5, weight: .bold))
+                        .frame(width: 130, alignment: .leading)
                     // Agent emoji headers
                     HStack(spacing: 4) {
                         ForEach(store.configs, id: \.id) { config in
@@ -290,24 +298,26 @@ struct AgentsView: View {
                                 .help(config.displayName)
                         }
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    Text("Zweck").font(.system(size: 12.5, weight: .bold)).frame(width: 160, alignment: .leading)
+                    Text("Beschreibung")
+                        .font(.system(size: 12.5, weight: .bold))
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .padding(.horizontal, 14).padding(.vertical, 6)
                 .background(Color.white.opacity(0.03))
 
                 ForEach(Self.toolRoutingDefaults, id: \.tool) { item in
-                    HStack(spacing: 0) {
-                        // Tool name + icon
-                        HStack(spacing: 6) {
+                    HStack(spacing: 12) {
+                        // Icon (centered) + Role
+                        HStack(spacing: 8) {
                             Image(systemName: item.icon)
-                                .font(.system(size: 12.5))
+                                .font(.system(size: 13))
                                 .foregroundColor(.koboldEmerald)
-                                .frame(width: 16)
-                            Text(item.tool)
-                                .font(.system(size: 13.5, weight: .medium, design: .monospaced))
+                                .frame(width: 20, alignment: .center)
+                            Text(item.role)
+                                .font(.system(size: 13.5, weight: .medium))
+                                .lineLimit(1)
                         }
-                        .frame(width: 140, alignment: .leading)
+                        .frame(width: 130, alignment: .leading)
 
                         // Agent toggle badges — click to enable/disable
                         HStack(spacing: 4) {
@@ -328,13 +338,13 @@ struct AgentsView: View {
                                 .help(enabled ? "\(config.displayName): aktiv" : "\(config.displayName): deaktiviert")
                             }
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
 
-                        // Reason
+                        // Beschreibung — fills remaining space
                         Text(item.reason)
                             .font(.system(size: 12.5))
                             .foregroundColor(.secondary)
-                            .frame(width: 160, alignment: .leading)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .lineLimit(2)
                     }
                     .padding(.horizontal, 14).padding(.vertical, 5)
                     Divider().padding(.leading, 14)

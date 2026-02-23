@@ -144,7 +144,7 @@ Stored in `UserDefaults` key `kobold.ollamaModel`. The user selects via Settings
 ### Navigation
 `SidebarTab` enum (in MainView.swift) defines tab order via `CaseIterable`. The order of cases IS the sidebar order.
 
-Current order: `dashboard → chat → tasks → workflows → memory → agents → settings`
+Current order: `dashboard → chat → tasks → workflows → teams → marketplace → memory → settings`
 
 ### State management
 - `RuntimeViewModel` (`@MainActor` class) — all chat state, daemon API calls
@@ -421,12 +421,38 @@ The build script:
 
 ---
 
-## 14. Planned / TODO
+## 14. v0.2.8 — Teams, PC-Control, Goals (2026-02-23)
 
-- [ ] Actual cron scheduler daemon (background process executing tasks at schedule)
-- [ ] Workflow node connections: drag to connect/disconnect nodes
-- [ ] GPU utilization % (requires IOKit AcceleratorEntry)
-- [ ] Multi-agent delegation (Instructor → Coder/Researcher sub-agents)
-- [ ] Media display in chat (images, videos inline)
-- [ ] Backup & restore (ZIP of memory + chat history)
+### Teams (Beratungsgremium)
+- `TeamsGroupView.swift`: Vollständiges Team-System mit Gruppenchat und Organigramm
+- 3-Runden-Diskursmodell: Analyse (parallel) → Diskussion (sequentiell) → Synthese
+- Persistenz: `teams.json` + `team_messages/{teamId}.json`
+- Task/Workflow-Integration via `teamId` Property
+
+### New Tools
+- `PlaywrightTool`: Chrome automation via `node -e` mit Playwright script
+- `ScreenControlTool`: CGEvent (Maus/Tastatur), `/usr/sbin/screencapture`, Vision.framework OCR
+
+### Goals & Idle Tasks
+- `GoalEntry` in ProactiveEngine: Langfristige Ziele → Agent System-Prompt
+- `IdleTask` System: User-definierte Aufgaben mit Cooldown, Quiet Hours, Sicherheits-Toggles
+- Heartbeat-Timer prüft: Agent idle? → User idle? → Quiet Hours? → Rate Limit? → Idle Task ausführen
+
+### Key Patterns (v0.2.8)
+- `Task.detached` for ALL heavy work (SD model loading, pipeline execution) — prevents watchdog kills
+- ViewBuilder 10-view limit: Use `Group { }` wrapper when section has 10+ top-level views
+- `@AppStorage` keys: Use distinct keys for Bool toggles vs JSON persistence (collision bug fixed)
+- `isYesNoQuestion()`: Strict filtering — max 3 lines, <300 chars, trigger phrase required in last line
+
+---
+
+## 15. Planned / TODO
+
+- [ ] MCP wiring: AgentLoop.setupTools() → MCPConfigManager.connectAllServers() (infrastructure exists)
+- [ ] MCP Settings-UI in SettingsView unter Verbindungen
+- [ ] Voice Chat: TTS + Mikro (natürliche männliche Stimme)
+- [ ] Applikationen-Tab: Terminal/WebView/Programm-Runner in Sidebar
+- [ ] Agent-Autonomie: Event-Loop, Filesystem-Watcher
+- [ ] Neue Verbindungen: GitHub, Microsoft, Email, WhatsApp
 - [ ] Plugin system (load external Swift plugins)
+- [ ] GPU utilization % (requires IOKit AcceleratorEntry)

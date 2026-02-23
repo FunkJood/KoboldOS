@@ -128,6 +128,13 @@ struct TasksView: View {
     @State private var showEditTask = false
     @State private var editingTask: ScheduledTask? = nil
 
+    // Idle task add
+    @State private var showAddIdleTask = false
+    @State private var newIdleName = ""
+    @State private var newIdlePrompt = ""
+    @State private var newIdlePriority: GoalEntry.GoalPriority = .medium
+    @State private var newIdleCooldown: Int = 60
+
     enum ScheduleMode: String {
         case once = "Einmalig"
         case recurring = "Wiederkehrend"
@@ -174,6 +181,9 @@ struct TasksView: View {
                         })
                     }
                 }
+
+                // MARK: - Idle Aufgaben
+                idleTasksSection
             }
             .padding(24)
         }
@@ -181,6 +191,333 @@ struct TasksView: View {
         .task { await loadTasks() }
         .sheet(isPresented: $showAddTask) { addTaskSheet }
         .sheet(isPresented: $showEditTask) { editTaskSheet }
+        .sheet(isPresented: $showAddIdleTask) { addIdleTaskSheet }
+    }
+
+    var addIdleTaskSheet: some View {
+        VStack(spacing: 16) {
+            Text("Idle-Aufgabe hinzufügen").font(.headline)
+            Text("Diese Aufgabe wird automatisch ausgeführt, wenn du den Computer nicht benutzt.")
+                .font(.caption).foregroundColor(.secondary).multilineTextAlignment(.center)
+
+            TextField("Name (z.B. 'Downloads aufräumen')", text: $newIdleName)
+                .textFieldStyle(.roundedBorder)
+            TextField("Prompt (Anweisung an den Agent)", text: $newIdlePrompt)
+                .textFieldStyle(.roundedBorder)
+
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Priorität").font(.caption.bold()).foregroundColor(.secondary)
+                    Picker("", selection: $newIdlePriority) {
+                        ForEach(GoalEntry.GoalPriority.allCases, id: \.self) { p in
+                            Text(p.rawValue).tag(p)
+                        }
+                    }.pickerStyle(.segmented)
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Cooldown (Min.)").font(.caption.bold()).foregroundColor(.secondary)
+                    Picker("", selection: $newIdleCooldown) {
+                        Text("15m").tag(15); Text("30m").tag(30); Text("1h").tag(60)
+                        Text("6h").tag(360); Text("12h").tag(720); Text("24h").tag(1440)
+                    }.pickerStyle(.segmented)
+                }
+            }
+
+            HStack {
+                Button("Abbrechen") { showAddIdleTask = false }
+                    .buttonStyle(.bordered)
+                Spacer()
+                Button("Hinzufügen") {
+                    let task = IdleTask(name: newIdleName.trimmingCharacters(in: .whitespaces),
+                                        prompt: newIdlePrompt.trimmingCharacters(in: .whitespaces),
+                                        priority: newIdlePriority,
+                                        cooldownMinutes: newIdleCooldown)
+                    proactiveEngine.addIdleTask(task)
+                    newIdleName = ""; newIdlePrompt = ""; newIdlePriority = .medium; newIdleCooldown = 60
+                    showAddIdleTask = false
+                }
+                .buttonStyle(.borderedProminent).tint(.indigo)
+                .disabled(newIdleName.trimmingCharacters(in: .whitespaces).isEmpty || newIdlePrompt.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+        }
+        .padding(24)
+        .frame(width: 500)
+    }
+
+    // MARK: - Idle Aufgaben
+
+    @StateObject private var proactiveEngine = ProactiveEngine.shared
+
+    var idleTasksSection: some View {
+        GlassCard(padding: 0, cornerRadius: 14) {
+            VStack(alignment: .leading, spacing: 0) {
+                // Header
+                HStack {
+                    Label("Idle Aufgaben", systemImage: "moon.zzz.fill")
+                        .font(.system(size: 16.5, weight: .semibold))
+                        .foregroundColor(.indigo)
+                    Spacer()
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(proactiveEngine.idleTasksEnabled ? Color.indigo : Color.gray)
+                            .frame(width: 8, height: 8)
+                        Text(proactiveEngine.idleTasksEnabled ? proactiveEngine.heartbeatStatus : "Deaktiviert")
+                            .font(.system(size: 12.5, weight: .medium, design: .monospaced))
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .padding(14)
+
+                Text("Aufgaben die der Agent automatisch erledigt, wenn du den Computer nicht benutzt. Der Heartbeat prüft regelmäßig ob Idle-Arbeit ansteht.")
+                    .font(.caption).foregroundColor(.secondary)
+                    .padding(.horizontal, 14).padding(.bottom, 10)
+
+                Divider()
+
+                // Statistik
+                HStack(spacing: 24) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Erledigt").font(.caption2).foregroundColor(.secondary)
+                        Text("\(proactiveEngine.idleTasksCompleted)")
+                            .font(.system(size: 20, weight: .bold, design: .monospaced))
+                            .foregroundColor(.indigo)
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Heartbeat").font(.caption2).foregroundColor(.secondary)
+                        HStack(spacing: 4) {
+                            Image(systemName: proactiveEngine.heartbeatEnabled ? "heart.fill" : "heart.slash")
+                                .font(.system(size: 12))
+                                .foregroundColor(proactiveEngine.heartbeatEnabled ? .red : .gray)
+                            Text(proactiveEngine.heartbeatEnabled ? "Aktiv (\(proactiveEngine.heartbeatIntervalSec)s)" : "Aus")
+                                .font(.system(size: 13, weight: .medium))
+                        }
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Letzter Heartbeat").font(.caption2).foregroundColor(.secondary)
+                        if let last = proactiveEngine.lastHeartbeat {
+                            Text(last, style: .relative)
+                                .font(.system(size: 13, weight: .medium))
+                        } else {
+                            Text("–").font(.system(size: 13)).foregroundColor(.secondary)
+                        }
+                    }
+                    Spacer()
+                    Toggle("", isOn: $proactiveEngine.idleTasksEnabled)
+                        .toggleStyle(.switch).tint(.indigo).labelsHidden()
+                }
+                .padding(14)
+
+                Text("Der Agent führt diese Aufgaben aus wenn du ihn gerade nicht brauchst. Das können konkrete Jobs sein (z.B. Updates prüfen) oder vage Richtungen (z.B. \"such nach Verbesserungen\", \"halte Ausschau nach Problemen\").")
+                    .font(.caption).foregroundColor(.secondary)
+                    .padding(.horizontal, 14).padding(.bottom, 8)
+
+                // Aufgabenliste
+                Divider()
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text("Aufgaben").font(.system(size: 13.5, weight: .semibold))
+                        Spacer()
+                        Text("\(proactiveEngine.idleTasks.filter(\.enabled).count) aktiv")
+                            .font(.caption).foregroundColor(.secondary)
+                        Button(action: { showAddIdleTask = true }) {
+                            Label("Hinzufügen", systemImage: "plus")
+                                .font(.caption)
+                        }.buttonStyle(.bordered).controlSize(.small)
+                    }
+                    .padding(.horizontal, 14).padding(.top, 8)
+
+                    if proactiveEngine.idleTasks.isEmpty {
+                        VStack(spacing: 8) {
+                            Text("Definiere was der Agent tun soll wenn er nichts zu tun hat — konkrete Jobs oder vage Richtungen.")
+                                .font(.caption).foregroundColor(.secondary).italic()
+                            Text("Schnell hinzufügen:")
+                                .font(.caption2.bold()).foregroundColor(.secondary)
+                            ForEach(IdleTask.examples, id: \.id) { example in
+                                Button(action: {
+                                    proactiveEngine.addIdleTask(example)
+                                }) {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "plus.circle.fill")
+                                            .font(.system(size: 12)).foregroundColor(.indigo)
+                                        Text(example.name)
+                                            .font(.system(size: 13)).foregroundColor(.primary)
+                                        Spacer()
+                                        Text("Cooldown: \(example.cooldownMinutes / 60)h")
+                                            .font(.caption2).foregroundColor(.secondary)
+                                    }
+                                    .padding(.horizontal, 10).padding(.vertical, 4)
+                                    .background(Color.indigo.opacity(0.06))
+                                    .cornerRadius(6)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .padding(.horizontal, 14).padding(.bottom, 10)
+                    } else {
+                        ForEach(Array(proactiveEngine.idleTasks.enumerated()), id: \.element.id) { idx, task in
+                            HStack(spacing: 8) {
+                                Toggle("", isOn: Binding(
+                                    get: { proactiveEngine.idleTasks[idx].enabled },
+                                    set: { proactiveEngine.idleTasks[idx].enabled = $0; proactiveEngine.saveIdleTasks() }
+                                ))
+                                .toggleStyle(.switch).labelsHidden().controlSize(.mini).tint(.indigo)
+
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(task.name).font(.system(size: 13.5, weight: .medium))
+                                    Text(task.prompt).font(.system(size: 12)).foregroundColor(.secondary).lineLimit(1)
+                                }
+
+                                Spacer()
+
+                                // Cooldown + Stats
+                                VStack(alignment: .trailing, spacing: 1) {
+                                    Text("\(task.priority.rawValue)")
+                                        .font(.system(size: 10.5, weight: .semibold))
+                                        .foregroundColor(task.priority == .high ? .orange : .secondary)
+                                        .padding(.horizontal, 5).padding(.vertical, 1)
+                                        .background(Capsule().fill((task.priority == .high ? Color.orange : Color.secondary).opacity(0.15)))
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "clock").font(.system(size: 10))
+                                        Text("\(task.cooldownMinutes)m")
+                                            .font(.system(size: 11, design: .monospaced))
+                                    }.foregroundColor(.secondary)
+                                }
+
+                                if task.runCount > 0 {
+                                    Text("×\(task.runCount)")
+                                        .font(.system(size: 11.5, weight: .bold, design: .monospaced))
+                                        .foregroundColor(.indigo)
+                                }
+
+                                Button(action: { proactiveEngine.deleteIdleTask(task.id) }) {
+                                    Image(systemName: "trash").font(.system(size: 12)).foregroundColor(.red.opacity(0.6))
+                                }.buttonStyle(.plain)
+                            }
+                            .padding(.horizontal, 14).padding(.vertical, 4)
+                        }
+                        .padding(.bottom, 6)
+                    }
+                }
+
+                // Einstellungen (inline)
+                if proactiveEngine.idleTasksEnabled {
+                    Divider()
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Einstellungen").font(.system(size: 13.5, weight: .semibold))
+                            .padding(.horizontal, 14).padding(.top, 8)
+
+                        // Timing
+                        HStack {
+                            Text("Min. Leerlaufzeit").font(.caption.bold()).foregroundColor(.secondary)
+                            Picker("", selection: $proactiveEngine.idleMinIdleMinutes) {
+                                Text("2m").tag(2); Text("5m").tag(5); Text("10m").tag(10); Text("15m").tag(15); Text("30m").tag(30)
+                            }.pickerStyle(.segmented).frame(maxWidth: 300)
+                        }.padding(.horizontal, 14)
+                        Text("Wie lange du inaktiv sein musst, bevor der Agent eigenständig handelt.")
+                            .font(.caption2).foregroundColor(.secondary).padding(.horizontal, 14)
+
+                        HStack {
+                            Text("Max. pro Stunde").font(.caption.bold()).foregroundColor(.secondary)
+                            Picker("", selection: $proactiveEngine.idleMaxPerHour) {
+                                Text("1").tag(1); Text("3").tag(3); Text("5").tag(5); Text("10").tag(10); Text("∞").tag(999)
+                            }.pickerStyle(.segmented).frame(maxWidth: 280)
+                        }.padding(.horizontal, 14)
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Toggle("Bei User-Aktivität pausieren", isOn: $proactiveEngine.idlePauseOnUserActivity)
+                                .toggleStyle(.switch).tint(.indigo)
+                            Toggle("Bei Ausführung benachrichtigen", isOn: $proactiveEngine.idleNotifyOnExecution)
+                                .toggleStyle(.switch).tint(.koboldEmerald)
+                            Toggle("Nur Hochprioritäts-Tasks", isOn: $proactiveEngine.idleOnlyHighPriority)
+                                .toggleStyle(.switch).tint(.indigo)
+                        }.padding(.horizontal, 14)
+
+                        Divider().padding(.horizontal, 14)
+
+                        // Ruhezeiten
+                        VStack(alignment: .leading, spacing: 4) {
+                            Toggle("Ruhezeiten", isOn: $proactiveEngine.idleQuietHoursEnabled)
+                                .toggleStyle(.switch).tint(.indigo)
+                            if proactiveEngine.idleQuietHoursEnabled {
+                                HStack(spacing: 8) {
+                                    Text("Von").font(.caption.bold()).foregroundColor(.secondary)
+                                    Picker("", selection: $proactiveEngine.idleQuietHoursStart) {
+                                        ForEach(0..<24, id: \.self) { h in Text(String(format: "%02d:00", h)).tag(h) }
+                                    }.pickerStyle(.menu).frame(width: 80)
+                                    Text("Bis").font(.caption.bold()).foregroundColor(.secondary)
+                                    Picker("", selection: $proactiveEngine.idleQuietHoursEnd) {
+                                        ForEach(0..<24, id: \.self) { h in Text(String(format: "%02d:00", h)).tag(h) }
+                                    }.pickerStyle(.menu).frame(width: 80)
+                                }
+                                Text("Keine Idle Tasks während der Ruhezeit (z.B. nachts).")
+                                    .font(.caption2).foregroundColor(.secondary)
+                            }
+                        }.padding(.horizontal, 14)
+
+                        Divider().padding(.horizontal, 14)
+
+                        // Sicherheit
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Berechtigungen im Idle-Modus").font(.caption.bold()).foregroundColor(.secondary)
+                            Toggle("Shell-Befehle", isOn: $proactiveEngine.idleAllowShell)
+                                .toggleStyle(.switch).tint(.orange)
+                            Toggle("Netzwerk-Zugriff", isOn: $proactiveEngine.idleAllowNetwork)
+                                .toggleStyle(.switch).tint(.orange)
+                            Toggle("Dateien schreiben", isOn: $proactiveEngine.idleAllowFileWrite)
+                                .toggleStyle(.switch).tint(.orange)
+                        }.padding(.horizontal, 14)
+
+                        Divider().padding(.horizontal, 14)
+
+                        // Kategorien
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Erlaubte Kategorien").font(.caption.bold()).foregroundColor(.secondary)
+                            let categories = [("system", "System-Health"), ("error", "Fehler-Recovery"), ("time", "Tageszeit"), ("idle", "Leerlauf"), ("custom", "Benutzerdefiniert")]
+                            let activeCategories = Set(proactiveEngine.idleCategoriesRaw.split(separator: ",").map { String($0.trimmingCharacters(in: .whitespaces)) })
+                            ForEach(categories, id: \.0) { key, label in
+                                Toggle(label, isOn: Binding(
+                                    get: { activeCategories.contains(key) },
+                                    set: { enabled in
+                                        var cats = activeCategories
+                                        if enabled { cats.insert(key) } else { cats.remove(key) }
+                                        proactiveEngine.idleCategoriesRaw = cats.sorted().joined(separator: ",")
+                                    }
+                                )).toggleStyle(.switch).tint(.indigo)
+                            }
+                        }.padding(.horizontal, 14).padding(.bottom, 10)
+                    }
+                }
+
+                // Log Preview
+                if !proactiveEngine.heartbeatLog.isEmpty {
+                    Divider()
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Letzte Aktivitäten").font(.system(size: 13.5, weight: .semibold))
+                            .padding(.horizontal, 14).padding(.top, 8)
+                        ForEach(proactiveEngine.heartbeatLog.prefix(5)) { entry in
+                            HStack(spacing: 6) {
+                                Text(entry.timestamp, style: .time)
+                                    .font(.system(size: 11.5, design: .monospaced))
+                                    .foregroundColor(.secondary)
+                                    .frame(width: 60, alignment: .leading)
+                                Text(entry.status)
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundColor(entry.action != nil ? .indigo : .secondary)
+                                if let action = entry.action {
+                                    Text("→ \(action)")
+                                        .font(.system(size: 12))
+                                        .foregroundColor(.koboldGold)
+                                        .lineLimit(1)
+                                }
+                                Spacer()
+                            }
+                            .padding(.horizontal, 14)
+                        }
+                        .padding(.bottom, 8)
+                    }
+                }
+            }
+        }
     }
 
     // MARK: - Header
@@ -722,7 +1059,8 @@ struct TasksView: View {
                     prompt: item["prompt"] as? String ?? "",
                     schedule: item["schedule"] as? String ?? "",
                     lastRun: item["last_run"] as? String,
-                    enabled: item["enabled"] as? Bool ?? true
+                    enabled: item["enabled"] as? Bool ?? true,
+                    teamId: item["team_id"] as? String
                 )
             }
         } catch {

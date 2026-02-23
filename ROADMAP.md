@@ -1,62 +1,47 @@
 # KoboldOS Roadmap
 
-## Alpha v0.2.6 (Aktuell)
+## Alpha v0.2.8 (Aktuell — 2026-02-23)
 
-### Performance & UI Overhaul
-- Context Window 150K (konfigurierbar bis 200K), Agent-Limits konfigurierbar
-- GlobalHeaderBar: Datum, Uhr (mittig), Wetter, aktive Agents, Benachrichtigungen
-- Chat-Header verschlankt: Name/Model zentriert, Tools-Zeile entfernt
-- Alle Fonts +1pt, Kleeblatt-Hintergrundmuster
-- Agenten-Tab aus Sidebar in Settings verschoben
-- Settings: "Persönlichkeit" (vorher "Agent"), neue "Agenten"-Sektion, "Agent-Leistung"
-- Session-Switch: 2-Phasen-Restore, debounced saves
-- RichTextView Caching, CloverPattern GPU-Rendering
-- OAuth → UserDefaults (kein Keychain-PW-Prompt mehr)
-- Workflow/Task Deep-Link Notifications + Sounds
-- Sidebar: Chats klappbar unter Aufgaben/Workflows
-- MCP-Infrastruktur erstellt (MCPClient, MCPConfigManager, MCPBridgeTool)
-- TokenEstimator, 3-Stage Context Pruning, ArchivalMemory
+### v0.2.8 Features
+- **Teams**: Echtes 3-Runden-Diskursmodell, Persistenz, Organigramm, Chat-Controls
+- **PlaywrightTool**: Chrome-Automatisierung (navigate, click, fill, screenshot, evaluate)
+- **ScreenControlTool**: Maus/Tastatur/Screenshot/OCR (CGEvent, Vision.framework)
+- **Goals-System**: Ziele unter Persönlichkeit → Agent System-Prompt
+- **Idle Tasks**: User-definierbare Aufgaben mit Cooldown, Quiet Hours, Kategorien
+- **Heartbeat**: Konfigurierbarer Timer, Rate-Limiting, Sicherheits-Toggles
+- **Task/Workflow ← Teams**: teamId Integration, Team-Picker, Team-Node
+- **Live Thinking Layers**: Steps + Thinking + Typing nicht-überlappend
+- **SD Crash Fix**: Task.detached für Model-Loading, Modell-Auswahl aus Ordner
+- **Interactive Buttons**: Strikte Ja/Nein-Erkennung
+- **AI-Vorschläge**: SuggestionService via Ollama mit Cache
+- **Settings**: Benachrichtigungen, Debugging & Sicherheit, Heartbeat in Allgemein
 
-### Bisherige Features (v0.1.1–v0.2.5)
+### Bisherige Features (v0.2.5 und früher)
 - Agent-gesteuerter Chat mit SSE-Streaming
-- Tool-System: Shell, File, Browser, Calendar, Contacts, HTTP, AppleScript
-- CoreMemory (Kurzzeit, Langzeit, Wissen)
-- Workflow-Editor (n8n-Style Canvas)
+- 25+ Tools: Shell, File, Browser, Playwright, Screen Control, Calendar, Contacts, HTTP, AppleScript
+- TTS (AVSpeechSynthesizer), STT (SwiftWhisper), Stable Diffusion (CoreML)
+- CoreMemory (Kurzzeit, Langzeit, Wissen) mit Archivierung
+- Workflow-Editor (n8n-Style Canvas) + Teams-Tab + Marktplatz
 - Scheduled Tasks mit Cron-Expressions
 - Skills-System (.md Dateien)
-- ProactiveEngine (Dashboard-Vorschläge)
+- ProactiveEngine (Heartbeat, Idle Tasks, Goals, Suggestions)
 - Multi-Language Support (15 Sprachen)
 - Auto-Update via GitHub Releases
-- MacOS Menu Bar Integration
-- Web-Fernsteuerung
-- Strikte Session-Trennung (Chat/Task/Workflow)
-- Notification-Navigation mit Deep-Links
-
----
-
-## v0.2.7 — Voice Chat & MCP Integration
-
-### Voice Chat (Prio 1)
-- **TTS-Lautsprecher-Button** im Chat: Text-to-Speech für Agent-Antworten
-- **Mikrofon-Eingabe**: Live-Audiogespräch (wie ChatGPT Voice Mode)
-- **Natürliche männliche Stimme**: Bestes verfügbares Vocal Model
-- **STT-Integration**: Whisper-basiert (STTManager bereits vorhanden)
-
-### MCP verdrahten (Prio 1)
-- **AgentLoop.setupTools() → MCPConfigManager.connectAllServers()**: MCP-Tools im Agent verfügbar
-- **MCP Settings-UI**: Server-Konfiguration unter Settings → Verbindungen
-
-### Weitere Tasks
-- TeamView: Unused vars bereinigen, Race Conditions fixen, Trigger-Stubs implementieren
-- Applikationen-Tab: Terminal/WebView/Programm-Runner in Sidebar
+- MacOS Menu Bar Integration (brain.head.profile Icon)
+- Web-Fernsteuerung + Cloudflare Tunnel
+- Connections: Google, SoundCloud, Telegram, iMessage, A2A
 
 ---
 
 ## v0.3.0 — Kontext-Intelligenz & Memory-Revolution
 
-### Kontext-Management
-- ~~Kontextgröße einstellbar~~ ✅ (v0.2.6: bis 200K)
-- ~~Kontext-Komprimierung~~ ✅ (v0.2.6: 3-Stage Pruning + ArchivalMemory)
+### Kontext-Management (Prio 1)
+- **Kontext-Bewusstsein**: Agent ist sich IMMER über aktuelle Kontextgröße bewusst
+- **Kontextgröße einstellbar** in Settings (4K, 8K, 16K, 32K, 64K, 128K, 256K)
+- **Kontext-Komprimierung am Ende**: Wenn Kontext voll, automatisch:
+  1. Wichtigstes in Erinnerungen (CoreMemory) speichern
+  2. Stichpunkte/Zusammenfassung für neuen Kontext erstellen
+  3. Alten Kontext archivieren, neuen starten mit Zusammenfassung
 - **Dynamische Konversations-Komprimierung**: Ältere Messages automatisch zusammenfassen
 
 ### Memory-Upgrade (Prio 1)
@@ -226,15 +211,18 @@
 |---------|---------|--------|
 | Session-Trennung | v0.2.2 | Done |
 | Task-System Upgrade | v0.2.2 | Done |
-| Context 150K + konfigurierbar | v0.2.6 | Done |
-| GlobalHeaderBar | v0.2.6 | Done |
-| Performance (Caching, GPU, Debounce) | v0.2.6 | Done |
-| Workflow/Task Notifications | v0.2.6 | Done |
-| OAuth Keychain→UserDefaults | v0.2.6 | Done |
-| MCP Infrastruktur | v0.2.6 | Done |
-| Kontext-Komprimierung (3-Stage) | v0.2.6 | Done |
-| Voice Chat (TTS + Mikro) | v0.2.7 | Nächste |
-| MCP verdrahten | v0.2.7 | Nächste |
+| TTS + STT + Stable Diffusion | v0.2.5 | Done |
+| Teams (Diskursmodell) | v0.2.8 | Done |
+| Playwright Browser | v0.2.8 | Done |
+| Screen Control (Maus/Tastatur/OCR) | v0.2.8 | Done |
+| Goals-System | v0.2.8 | Done |
+| Idle Tasks + Heartbeat | v0.2.8 | Done |
+| Interactive Buttons | v0.2.8 | Done |
+| AI-Vorschläge (SuggestionService) | v0.2.8 | Done |
+| Marktplatz (Mock) | v0.2.8 | Done |
+| MCP Wiring | v0.2.9 | Geplant |
+| Voice Chat (TTS + Mikro) | v0.2.9 | Geplant |
+| Kontext-Komprimierung | v0.3.0 | Geplant |
 | Agent Self-Managed Memory | v0.3.0 | Geplant |
 | FAISS Vector-DB | v0.3.0 | Geplant |
 | WebApp UI-Spiegelung | v0.3.0 | Geplant |
@@ -242,9 +230,8 @@
 | Filesystem-Agent (PDF etc.) | v0.3.0 | Geplant |
 | A2A Protokoll | v0.4.0 | Geplant |
 | Composio/LangChain/CrewAI | v0.4.0 | Geplant |
-| Playwright Browser | v0.4.0 | Geplant |
 | REST API | v0.4.0 | Geplant |
-| Voice Wake Mode | v0.5.0 | Geplant |
+| Voice (Whisper + ElevenLabs) | v0.5.0 | Geplant |
 | Messaging (WhatsApp etc.) | v0.5.0 | Geplant |
 | Canvas/A2UI | v0.5.0 | Geplant |
 | iOS App | v0.6.0 | Geplant |
