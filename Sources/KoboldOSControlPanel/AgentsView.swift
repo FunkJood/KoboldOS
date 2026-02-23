@@ -248,6 +248,17 @@ struct AgentsView: View {
         }
     }
 
+    private func shortProfileName(_ id: String) -> String {
+        switch id {
+        case "instructor": return "Instruk"
+        case "coder":      return "Dev"
+        case "researcher": return "Res"
+        case "web":        return "Web"
+        case "utility":    return "Utility"
+        default:           return String(id.prefix(6))
+        }
+    }
+
     private func isAgentEnabled(tool: String, agent: String) -> Bool {
         loadToolRouting()[tool]?.contains(agent) ?? Self.toolRoutingDefaults.first(where: { $0.tool == tool })?.defaultAgents.contains(agent) ?? false
     }
@@ -289,13 +300,13 @@ struct AgentsView: View {
                     Text("Tool")
                         .font(.system(size: 12.5, weight: .bold))
                         .frame(width: 130, alignment: .leading)
-                    // Agent emoji headers
+                    // Agent profile name headers
                     HStack(spacing: 4) {
                         ForEach(store.configs, id: \.id) { config in
-                            Text(config.emoji)
-                                .font(.system(size: 12.5))
-                                .frame(width: 24)
-                                .help(config.displayName)
+                            Text(shortProfileName(config.id))
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundColor(.secondary)
+                                .frame(width: 48)
                         }
                     }
                     Text("Beschreibung")
@@ -326,7 +337,7 @@ struct AgentsView: View {
                                 Button(action: { toggleAgent(tool: item.tool, agent: config.id) }) {
                                     Text(config.emoji)
                                         .font(.system(size: 14.5))
-                                        .frame(width: 24, height: 24)
+                                        .frame(width: 48, height: 24)
                                         .background(RoundedRectangle(cornerRadius: 6)
                                             .fill(enabled ? Color.koboldEmerald.opacity(0.25) : Color.white.opacity(0.04)))
                                         .overlay(RoundedRectangle(cornerRadius: 6)

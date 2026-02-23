@@ -72,7 +72,7 @@ struct StatusIndicatorView: View {
 
             // Alpha version badge
             HStack(spacing: 4) {
-                Text("Alpha v0.2.6")
+                Text("Alpha v0.2.85")
                     .font(.system(size: 9.5, weight: .bold))
                     .foregroundColor(.koboldGold)
                     .padding(.horizontal, 5)

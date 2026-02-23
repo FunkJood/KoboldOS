@@ -10,7 +10,7 @@ public struct ScreenControlTool: Tool, Sendable {
 
     public let name = "screen_control"
     public let description = "Bildschirm-Kontrolle: Screenshots, Maus bewegen/klicken, Tastatur tippen, Text auf Bildschirm finden (OCR). Für visuelle PC-Automatisierung."
-    public let riskLevel: RiskLevel = .critical
+    public let riskLevel: RiskLevel = .medium
 
     public var schema: ToolSchema {
         ToolSchema(

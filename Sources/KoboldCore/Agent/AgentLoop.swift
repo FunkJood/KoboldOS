@@ -23,9 +23,9 @@ public enum AgentType: String, Sendable {
         switch self {
         case .researcher: key = "kobold.agent.researcherSteps"
         case .coder:      key = "kobold.agent.coderSteps"
-        case .instructor: key = "kobold.agent.coderSteps"
+        case .instructor: key = "kobold.agent.instructorSteps"
         case .general:    key = "kobold.agent.generalSteps"
-        case .planner:    key = "kobold.agent.generalSteps"
+        case .planner:    key = "kobold.agent.plannerSteps"
         }
         let userValue = UserDefaults.standard.integer(forKey: key)
         return userValue > 0 ? userValue : defaults
@@ -58,6 +58,7 @@ public struct AgentStep: Sendable, Encodable {
     public enum StepType: String, Sendable, Encodable {
         case think, toolCall, toolResult, finalAnswer, error
         case subAgentSpawn, subAgentResult, checkpoint
+        case context_info
     }
 
     /// JSON representation for SSE streaming
@@ -72,6 +73,11 @@ public struct AgentStep: Sendable, Encodable {
         if let sub = subAgentName { obj["subAgent"] = sub }
         if let c = confidence { obj["confidence"] = c }
         if let cp = checkpointId { obj["checkpointId"] = cp }
+        // context_info: parse prompt_tokens/completion_tokens/usage_percent/context_window from content JSON
+        if type == .context_info, let data = content.data(using: .utf8),
+           let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            for (k, v) in parsed { obj[k] = v }
+        }
         guard let data = try? JSONSerialization.data(withJSONObject: obj, options: [.sortedKeys]),
               let str = String(data: data, encoding: .utf8) else { return "{}" }
         return str
@@ -180,6 +186,8 @@ public actor AgentLoop {
         await registry.register(WorkflowManageTool())
         // New tools
         await registry.register(NotifyTool())
+        await registry.register(ChecklistTool())
+        await registry.register(SubCoordinateTeamTool())
 
         // Register platform-specific tools conditionally
         #if os(macOS)
@@ -350,7 +358,9 @@ public actor AgentLoop {
                 try await Task.sleep(nanoseconds: UInt64(self.executionTimeout * 1_000_000_000))
                 throw LLMError.generationFailed("Agent-Timeout nach 5 Minuten")
             }
-            let result = try await group.next()!
+            guard let result = try await group.next() else {
+                throw LLMError.generationFailed("Agent lieferte kein Ergebnis")
+            }
             group.cancelAll()
             return result
         }
@@ -772,6 +782,13 @@ public actor AgentLoop {
                     // Smart context management (estimate tokens, compress if needed, fallback prune)
                     self.manageContext(&messages)
 
+                    // Emit "thinking" step BEFORE LLM call so UI shows activity immediately
+                    continuation.yield(AgentStep(
+                        stepNumber: stepCount, type: .think,
+                        content: stepCount == 1 ? "Analysiere..." : "Denke nach...",
+                        toolCallName: nil, toolResultSuccess: nil, timestamp: Date()
+                    ))
+
                     let llmResponse: String
                     do {
                         let resp: LLMResponse
@@ -784,6 +801,12 @@ public actor AgentLoop {
                         // Update token tracking from API response
                         if let pt = resp.promptTokens { self.lastKnownPromptTokens = pt }
                         if let ct = resp.completionTokens { self.lastKnownCompletionTokens = ct }
+
+                        // Emit context_info after each LLM call so UI can show usage bar
+                        let ctxTokens = self.lastKnownPromptTokens > 0 ? self.lastKnownPromptTokens : TokenEstimator.estimateTokens(messages: messages)
+                        let usagePct = TokenEstimator.usagePercent(estimatedTokens: ctxTokens, contextSize: self.contextWindowSize)
+                        let ctxJSON = "{\"prompt_tokens\":\(ctxTokens),\"completion_tokens\":\(self.lastKnownCompletionTokens),\"usage_percent\":\(usagePct),\"context_window\":\(self.contextWindowSize)}"
+                        continuation.yield(AgentStep(stepNumber: stepCount, type: .context_info, content: ctxJSON))
                     } catch {
                         let errorStep = AgentStep(
                             stepNumber: stepCount, type: .error,

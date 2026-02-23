@@ -120,7 +120,9 @@ public actor ToolRegistry {
                         try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
                         throw ToolError.timeout
                     }
-                    let output = try await group.next()!
+                    guard let output = try await group.next() else {
+                        throw ToolError.executionFailed("Tool lieferte kein Ergebnis")
+                    }
                     group.cancelAll()
                     return output
                 }

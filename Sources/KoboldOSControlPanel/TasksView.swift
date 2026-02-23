@@ -94,7 +94,7 @@ struct TasksView: View {
     @EnvironmentObject var l10n: LocalizationManager
     @State private var tasks: [ScheduledTask] = []
     @State private var isLoading = false
-    @State private var showAddTask = false
+    // showAddTask replaced by activeSheet == .addTask
     @State private var statusMsg = ""
 
     // Add/Edit task form state
@@ -124,12 +124,15 @@ struct TasksView: View {
     @State private var repeatAtHour: Int = 9
     @State private var repeatAtMinute: Int = 0
 
-    // Edit mode
-    @State private var showEditTask = false
-    @State private var editingTask: ScheduledTask? = nil
+    // Sheet management (single sheet to avoid SwiftUI multiple-sheet bugs)
+    enum SheetType: Identifiable {
+        case addTask, editTask, addIdleTask
+        var id: String { String(describing: self) }
+    }
+    @State private var activeSheet: SheetType? = nil
 
-    // Idle task add
-    @State private var showAddIdleTask = false
+    // Edit mode
+    @State private var editingTask: ScheduledTask? = nil
     @State private var newIdleName = ""
     @State private var newIdlePrompt = ""
     @State private var newIdlePriority: GoalEntry.GoalPriority = .medium
@@ -171,7 +174,7 @@ struct TasksView: View {
                             newPrompt = task.prompt
                             newSchedulePreset = task.schedulePreset == .custom ? .custom : task.schedulePreset
                             newCustomCron = task.schedulePreset == .custom ? task.schedule : ""
-                            showEditTask = true
+                            activeSheet = .editTask
                         }, onDelete: {
                             Task { await deleteTask(task) }
                         }, onToggle: { enabled in
@@ -189,9 +192,13 @@ struct TasksView: View {
         }
         .background(ZStack { Color.koboldBackground; LinearGradient(colors: [Color.koboldEmerald.opacity(0.015), .clear, Color.koboldGold.opacity(0.01)], startPoint: .topLeading, endPoint: .bottomTrailing) })
         .task { await loadTasks() }
-        .sheet(isPresented: $showAddTask) { addTaskSheet }
-        .sheet(isPresented: $showEditTask) { editTaskSheet }
-        .sheet(isPresented: $showAddIdleTask) { addIdleTaskSheet }
+        .sheet(item: $activeSheet) { sheet in
+            switch sheet {
+            case .addTask: addTaskSheet
+            case .editTask: editTaskSheet
+            case .addIdleTask: addIdleTaskSheet
+            }
+        }
     }
 
     var addIdleTaskSheet: some View {
@@ -224,7 +231,7 @@ struct TasksView: View {
             }
 
             HStack {
-                Button("Abbrechen") { showAddIdleTask = false }
+                Button("Abbrechen") { activeSheet = nil }
                     .buttonStyle(.bordered)
                 Spacer()
                 Button("Hinzufügen") {
@@ -234,7 +241,7 @@ struct TasksView: View {
                                         cooldownMinutes: newIdleCooldown)
                     proactiveEngine.addIdleTask(task)
                     newIdleName = ""; newIdlePrompt = ""; newIdlePriority = .medium; newIdleCooldown = 60
-                    showAddIdleTask = false
+                    activeSheet = nil
                 }
                 .buttonStyle(.borderedProminent).tint(.indigo)
                 .disabled(newIdleName.trimmingCharacters(in: .whitespaces).isEmpty || newIdlePrompt.trimmingCharacters(in: .whitespaces).isEmpty)
@@ -319,7 +326,7 @@ struct TasksView: View {
                         Spacer()
                         Text("\(proactiveEngine.idleTasks.filter(\.enabled).count) aktiv")
                             .font(.caption).foregroundColor(.secondary)
-                        Button(action: { showAddIdleTask = true }) {
+                        Button(action: { activeSheet = .addIdleTask }) {
                             Label("Hinzufügen", systemImage: "plus")
                                 .font(.caption)
                         }.buttonStyle(.bordered).controlSize(.small)
@@ -357,8 +364,8 @@ struct TasksView: View {
                         ForEach(Array(proactiveEngine.idleTasks.enumerated()), id: \.element.id) { idx, task in
                             HStack(spacing: 8) {
                                 Toggle("", isOn: Binding(
-                                    get: { proactiveEngine.idleTasks[idx].enabled },
-                                    set: { proactiveEngine.idleTasks[idx].enabled = $0; proactiveEngine.saveIdleTasks() }
+                                    get: { guard idx < proactiveEngine.idleTasks.count else { return false }; return proactiveEngine.idleTasks[idx].enabled },
+                                    set: { newVal in guard idx < proactiveEngine.idleTasks.count else { return }; proactiveEngine.idleTasks[idx].enabled = newVal; proactiveEngine.saveIdleTasks() }
                                 ))
                                 .toggleStyle(.switch).labelsHidden().controlSize(.mini).tint(.indigo)
 
@@ -533,7 +540,7 @@ struct TasksView: View {
             if !statusMsg.isEmpty {
                 Text(statusMsg).font(.caption).foregroundColor(.koboldEmerald)
             }
-            GlassButton(title: "Neue Aufgabe", icon: "plus", isPrimary: true) { showAddTask = true }
+            GlassButton(title: "Neue Aufgabe", icon: "plus", isPrimary: true) { activeSheet = .addTask }
                 .help("Erstelle eine neue automatisierte Aufgabe")
             GlassButton(title: "Aktualisieren", icon: "arrow.clockwise", isPrimary: false) {
                 Task { await loadTasks() }
@@ -625,7 +632,7 @@ struct TasksView: View {
                     Text("Erstelle automatische Aufgaben, die dein Agent nach Zeitplan ausführt — täglich, stündlich oder auf Knopfdruck.")
                         .font(.caption).foregroundColor(.secondary).multilineTextAlignment(.center)
                         .frame(maxWidth: 320)
-                    GlassButton(title: "Erste Aufgabe erstellen", icon: "plus", isPrimary: true) { showAddTask = true }
+                    GlassButton(title: "Erste Aufgabe erstellen", icon: "plus", isPrimary: true) { activeSheet = .addTask }
                 }
                 .frame(maxWidth: .infinity).padding()
             }
@@ -644,7 +651,7 @@ struct TasksView: View {
                         Button(action: {
                             newName = suggestion.name
                             newPrompt = suggestion.prompt
-                            showAddTask = true
+                            activeSheet = .addTask
                         }) {
                             HStack(spacing: 10) {
                                 Image(systemName: suggestion.icon)
@@ -688,7 +695,7 @@ struct TasksView: View {
                 HStack {
                     Text("Neue Aufgabe").font(.title3.bold())
                     Spacer()
-                    Button(action: { showAddTask = false; resetForm() }) {
+                    Button(action: { activeSheet = nil; resetForm() }) {
                         Image(systemName: "xmark.circle.fill").foregroundColor(.secondary).font(.title3)
                     }.buttonStyle(.plain)
                 }
@@ -742,7 +749,7 @@ struct TasksView: View {
                 HStack(spacing: 12) {
                     Spacer()
                     GlassButton(title: "Abbrechen", isPrimary: false) {
-                        showAddTask = false; resetForm()
+                        activeSheet = nil; resetForm()
                     }
                     GlassButton(title: "Erstellen", icon: "plus", isPrimary: true,
                                 isDisabled: newName.trimmingCharacters(in: .whitespaces).isEmpty) {
@@ -972,7 +979,7 @@ struct TasksView: View {
                 HStack {
                     Text("Aufgabe bearbeiten").font(.title3.bold())
                     Spacer()
-                    Button(action: { showEditTask = false; editingTask = nil; resetForm() }) {
+                    Button(action: { activeSheet = nil; editingTask = nil; resetForm() }) {
                         Image(systemName: "xmark.circle.fill").foregroundColor(.secondary).font(.title3)
                     }.buttonStyle(.plain)
                 }
@@ -998,7 +1005,7 @@ struct TasksView: View {
                 HStack(spacing: 12) {
                     Spacer()
                     GlassButton(title: "Abbrechen", isPrimary: false) {
-                        showEditTask = false; editingTask = nil; resetForm()
+                        activeSheet = nil; editingTask = nil; resetForm()
                     }
                     GlassButton(title: "Speichern", icon: "checkmark", isPrimary: true,
                                 isDisabled: newName.trimmingCharacters(in: .whitespaces).isEmpty) {
@@ -1090,7 +1097,7 @@ struct TasksView: View {
         } catch {
             statusMsg = "Erstellen fehlgeschlagen"
         }
-        showAddTask = false
+        activeSheet = nil
         resetForm()
         await loadTasks()
     }
@@ -1118,7 +1125,7 @@ struct TasksView: View {
         } catch {
             statusMsg = "Aktualisieren fehlgeschlagen"
         }
-        showEditTask = false
+        activeSheet = nil
         editingTask = nil
         resetForm()
         await loadTasks()

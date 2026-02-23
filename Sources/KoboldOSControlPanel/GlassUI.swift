@@ -311,7 +311,6 @@ struct GlassStatusBadge: View {
             if let icon { Image(systemName: icon).font(.caption2) }
             Text(label)
                 .font(.caption.weight(.medium))
-            if let icon { Image(systemName: icon).font(.caption2) }
         }
         .foregroundColor(.primary)
         .padding(.horizontal, 8)
@@ -975,6 +974,9 @@ struct ThinkingPanelBubble: View {
     let isLive: Bool
     var isNewest: Bool = false
     @State private var expanded: Bool
+    @State private var pulse = false
+    @State private var verbIndex = Int.random(in: 0..<ThinkingPlaceholderBubble.thinkingVerbs.count)
+    @State private var verbTimer: Task<Void, Never>?
 
     init(entries: [ThinkingEntry], isLive: Bool, isNewest: Bool = false) {
         self.entries = entries
@@ -987,47 +989,61 @@ struct ThinkingPanelBubble: View {
         entries.contains { $0.type == .subAgentSpawn || $0.type == .subAgentResult }
     }
 
+    private var thinkingVerb: String {
+        ThinkingPlaceholderBubble.thinkingVerbs[verbIndex % ThinkingPlaceholderBubble.thinkingVerbs.count]
+    }
+
+    private func startVerbRotation() {
+        verbTimer?.cancel()
+        verbTimer = Task { @MainActor in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 3_500_000_000) // 3.5s rotation
+                guard !Task.isCancelled else { break }
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    verbIndex = (verbIndex + 1) % ThinkingPlaceholderBubble.thinkingVerbs.count
+                }
+            }
+        }
+    }
+
     var body: some View {
         HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 0) {
-                // Header — collapsible toggle
-                Button(action: {
-                    // Live panels stay expanded, only allow collapse for old messages
-                    if !isLive {
-                        withAnimation(.easeInOut(duration: 0.2)) { expanded.toggle() }
-                    }
-                }) {
-                    HStack(spacing: 6) {
-                        Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                            .font(.system(size: 11.5, weight: .bold))
-                            .foregroundColor(.koboldGold)
-                        Image(systemName: "brain")
-                            .font(.system(size: 13.5))
-                            .foregroundColor(.koboldGold)
-                        Text(isLive ? "\(ThinkingPlaceholderBubble.thinkingVerbs[abs(entries.count.hashValue) % ThinkingPlaceholderBubble.thinkingVerbs.count].dropLast(3))... (\(entries.count) Schritte)" : "\(entries.count) Schritte")
-                            .font(.system(size: 14.5, weight: .semibold))
-                            .foregroundColor(.koboldGold)
-                        if isLive {
-                            ProgressView()
-                                .controlSize(.mini)
-                                .scaleEffect(0.7)
-                        }
-                        Spacer()
+                // Header — collapsible toggle (live: not collapsible)
+                if !entries.isEmpty {
+                    Button(action: {
                         if !isLive {
-                            Button(action: { copyAllSteps() }) {
-                                Image(systemName: "doc.on.doc")
-                                    .font(.system(size: 12.5))
-                                    .foregroundColor(.secondary)
-                            }
-                            .buttonStyle(.plain)
-                            .help("Alle Schritte kopieren")
+                            withAnimation(.easeInOut(duration: 0.2)) { expanded.toggle() }
                         }
+                    }) {
+                        HStack(spacing: 6) {
+                            Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                                .font(.system(size: 11.5, weight: .bold))
+                                .foregroundColor(.koboldGold)
+                            Image(systemName: "brain")
+                                .font(.system(size: 13.5))
+                                .foregroundColor(.koboldGold)
+                            Text(isLive ? "\(entries.count) Schritte" : "\(entries.count) Schritte")
+                                .font(.system(size: 14.5, weight: .semibold))
+                                .foregroundColor(.koboldGold)
+                            Spacer()
+                            if !isLive {
+                                Button(action: { copyAllSteps() }) {
+                                    Image(systemName: "doc.on.doc")
+                                        .font(.system(size: 12.5))
+                                        .foregroundColor(.secondary)
+                                }
+                                .buttonStyle(.plain)
+                                .help("Alle Schritte kopieren")
+                            }
+                        }
+                        .contentShape(Rectangle())
                     }
-                    .contentShape(Rectangle())
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
 
-                if expanded {
+                // Stream content — always expanded when live
+                if expanded && !entries.isEmpty {
                     ScrollViewReader { scrollProxy in
                         ScrollView {
                             VStack(alignment: .leading, spacing: 4) {
@@ -1040,21 +1056,39 @@ struct ThinkingPanelBubble: View {
                         }
                         .frame(maxHeight: isLive ? 500 : 300)
                         .onChange(of: entries.count) {
-                            // Keep live panels always expanded
                             if isLive && !expanded {
                                 withAnimation(.easeInOut(duration: 0.2)) { expanded = true }
                             }
-                            // Auto-expand when sub-agent events arrive
                             if hasSubAgentActivity && !expanded {
                                 withAnimation(.easeInOut(duration: 0.2)) { expanded = true }
                             }
-                            // Auto-scroll to latest entry during live generation
                             if isLive, let lastEntry = entries.last {
                                 withAnimation(.easeOut(duration: 0.15)) {
                                     scrollProxy.scrollTo(lastEntry.id, anchor: .bottom)
                                 }
                             }
                         }
+                    }
+                }
+
+                // Warte-Sprüche am unteren Rand (nur live)
+                if isLive {
+                    if !entries.isEmpty {
+                        Divider().opacity(0.3).padding(.vertical, 4)
+                    }
+                    HStack(spacing: 8) {
+                        Image(systemName: "brain")
+                            .font(.system(size: 14.5))
+                            .foregroundColor(.koboldGold)
+                            .scaleEffect(pulse ? 1.15 : 0.9)
+                            .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: pulse)
+                        Text(thinkingVerb)
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(.koboldGold)
+                        ProgressView()
+                            .controlSize(.mini)
+                            .scaleEffect(0.7)
+                        Spacer()
                     }
                 }
             }
@@ -1066,6 +1100,13 @@ struct ThinkingPanelBubble: View {
             )
             Spacer(minLength: 80)
         }
+        .onAppear {
+            if isLive {
+                pulse = true
+                startVerbRotation()
+            }
+        }
+        .onDisappear { verbTimer?.cancel() }
     }
 
     @ViewBuilder
@@ -1081,12 +1122,17 @@ struct ThinkingPanelBubble: View {
                         .font(.system(size: 12.5, weight: .bold, design: .monospaced))
                         .foregroundColor(colorFor(entry))
                 }
-                Text(isLive
-                     ? entry.content
-                     : (entry.content.count > 200 ? String(entry.content.prefix(200)) + "..." : entry.content))
-                    .font(.system(size: 13.5, design: .monospaced))
-                    .foregroundColor(.secondary)
-                    .textSelection(.enabled)
+                if isLive {
+                    TypewriterText(fullText: entry.content, speed: 0.008)
+                        .font(.system(size: 13.5, design: .monospaced))
+                        .foregroundColor(.secondary)
+                        .textSelection(.enabled)
+                } else {
+                    Text(entry.content.count > 200 ? String(entry.content.prefix(200)) + "..." : entry.content)
+                        .font(.system(size: 13.5, design: .monospaced))
+                        .foregroundColor(.secondary)
+                        .textSelection(.enabled)
+                }
             }
         }
         .padding(.vertical, 2)
@@ -1119,6 +1165,40 @@ struct ThinkingPanelBubble: View {
         }.joined(separator: "\n")
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
+    }
+}
+
+// MARK: - TypewriterText (character-by-character streaming effect)
+
+struct TypewriterText: View {
+    let fullText: String
+    let speed: Double // seconds per character
+
+    @State private var visibleCount: Int = 0
+    @State private var timerTask: Task<Void, Never>?
+
+    var body: some View {
+        Text(String(fullText.prefix(visibleCount)))
+            .onAppear { startTyping() }
+            .onChange(of: fullText) {
+                // If text changed (new content appended), continue from current position
+                if visibleCount < fullText.count {
+                    startTyping()
+                }
+            }
+    }
+
+    private func startTyping() {
+        timerTask?.cancel()
+        if visibleCount >= fullText.count { return }
+        timerTask = Task { @MainActor in
+            while visibleCount < fullText.count && !Task.isCancelled {
+                // Type in chunks of 3 chars for smoother feel
+                let step = min(3, fullText.count - visibleCount)
+                visibleCount += step
+                try? await Task.sleep(nanoseconds: UInt64(speed * Double(step) * 1_000_000_000))
+            }
+        }
     }
 }
 

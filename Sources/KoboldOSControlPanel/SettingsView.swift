@@ -307,7 +307,106 @@ struct SettingsView: View {
     private func generalSection() -> some View {
         sectionTitle("Allgemeine Einstellungen")
 
-        // Row 0: Updates + Verbindung + Darstellung
+        // MARK: Heartbeat (ganz oben)
+        sectionTitle("Heartbeat")
+
+        HStack(alignment: .top, spacing: 12) {
+            FuturisticBox(icon: "heart.fill", title: "Heartbeat-System", accent: .red) {
+                Text("Der Heartbeat ist der Puls des Agenten — ein regelmäßiger Timer der prüft, ob der Agent bereit ist und ob es proaktive Arbeit gibt. Ohne Heartbeat bleibt der Agent passiv und wartet nur auf deine Eingaben.")
+                    .font(.caption).foregroundColor(.secondary)
+
+                Toggle("Heartbeat aktivieren", isOn: $proactiveEngine.heartbeatEnabled)
+                    .toggleStyle(.switch).tint(.red)
+
+                HStack {
+                    Text("Intervall").font(.caption.bold()).foregroundColor(.secondary)
+                    Picker("", selection: $proactiveEngine.heartbeatIntervalSec) {
+                        Text("10s").tag(10)
+                        Text("30s").tag(30)
+                        Text("60s").tag(60)
+                        Text("120s").tag(120)
+                        Text("300s").tag(300)
+                    }.pickerStyle(.segmented).frame(maxWidth: 350)
+                }
+                Text("Wie oft der Agent seinen Status prüft. Kürzere Intervalle = reaktiver, aber mehr CPU.")
+                    .font(.caption2).foregroundColor(.secondary)
+
+                Toggle("Im Dashboard anzeigen", isOn: $proactiveEngine.heartbeatShowInDashboard)
+                    .toggleStyle(.switch).tint(.koboldEmerald)
+
+                Divider()
+
+                HStack(spacing: 12) {
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(proactiveEngine.heartbeatEnabled ? Color.green : Color.gray)
+                            .frame(width: 8, height: 8)
+                        Text(proactiveEngine.heartbeatStatus)
+                            .font(.system(size: 13, weight: .medium, design: .monospaced))
+                    }
+                    Spacer()
+                    if let last = proactiveEngine.lastHeartbeat {
+                        Text("Letzter: \(last, style: .relative) her")
+                            .font(.caption2).foregroundColor(.secondary)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .top)
+
+            FuturisticBox(icon: "list.clipboard.fill", title: "Heartbeat-Log", accent: .secondary) {
+                Text("Protokoll der letzten Heartbeat-Zyklen. Zeigt was der Agent bei jedem Takt geprüft und entschieden hat.")
+                    .font(.caption).foregroundColor(.secondary)
+
+                HStack {
+                    Text("Aufbewahrung").font(.caption.bold()).foregroundColor(.secondary)
+                    Picker("", selection: $proactiveEngine.heartbeatLogRetention) {
+                        Text("20").tag(20)
+                        Text("50").tag(50)
+                        Text("100").tag(100)
+                        Text("200").tag(200)
+                    }.pickerStyle(.segmented).frame(maxWidth: 250)
+                    Text("Einträge").font(.caption).foregroundColor(.secondary)
+                }
+
+                if proactiveEngine.heartbeatLog.isEmpty {
+                    Text("Noch keine Heartbeat-Einträge. Starte den Heartbeat, um das Protokoll zu füllen.")
+                        .font(.caption2).foregroundColor(.secondary).italic()
+                        .padding(.vertical, 8)
+                } else {
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 2) {
+                            ForEach(proactiveEngine.heartbeatLog.prefix(30)) { entry in
+                                HStack(spacing: 6) {
+                                    Text(entry.timestamp, style: .time)
+                                        .font(.system(size: 11.5, design: .monospaced))
+                                        .foregroundColor(.secondary)
+                                        .frame(width: 65, alignment: .leading)
+                                    Text(entry.status)
+                                        .font(.system(size: 12, weight: .medium))
+                                        .foregroundColor(entry.action != nil ? .koboldEmerald : .secondary)
+                                    if let action = entry.action {
+                                        Text("→ \(action)")
+                                            .font(.system(size: 12))
+                                            .foregroundColor(.koboldGold)
+                                            .lineLimit(1)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    .frame(maxHeight: 180)
+
+                    HStack {
+                        Spacer()
+                        Button("Log löschen") { proactiveEngine.clearHeartbeatLog() }
+                            .font(.caption).buttonStyle(.bordered)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .top)
+        }
+
+        // Row 0: Updates + Darstellung
         HStack(alignment: .top, spacing: 12) {
             FuturisticBox(icon: "arrow.down.circle.fill", title: "Updates", accent: .koboldEmerald) {
                 HStack {
@@ -381,65 +480,37 @@ struct SettingsView: View {
             .frame(maxHeight: .infinity, alignment: .top)
         }
 
-        // Row 2: Arbeitsverzeichnis + Wetter
-        HStack(alignment: .top, spacing: 12) {
-            FuturisticBox(icon: "folder.fill", title: "Arbeitsverzeichnis", accent: .koboldGold) {
-                HStack {
-                    Text(defaultWorkDir)
-                        .font(.system(.caption, design: .monospaced))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .foregroundColor(.secondary)
-                    Spacer()
-                    Button("Ändern…") {
-                        let panel = NSOpenPanel()
-                        panel.canChooseFiles = false
-                        panel.canChooseDirectories = true
-                        panel.allowsMultipleSelection = false
-                        panel.canCreateDirectories = true
-                        panel.prompt = "Auswählen"
-                        if panel.runModal() == .OK, let url = panel.url {
-                            defaultWorkDir = url.path
-                        }
+        // Row 2: Arbeitsverzeichnis
+        FuturisticBox(icon: "folder.fill", title: "Arbeitsverzeichnis", accent: .koboldGold) {
+            HStack {
+                Text(defaultWorkDir)
+                    .font(.system(.caption, design: .monospaced))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .foregroundColor(.secondary)
+                Spacer()
+                Button("Ändern…") {
+                    let panel = NSOpenPanel()
+                    panel.canChooseFiles = false
+                    panel.canChooseDirectories = true
+                    panel.allowsMultipleSelection = false
+                    panel.canCreateDirectories = true
+                    panel.prompt = "Auswählen"
+                    if panel.runModal() == .OK, let url = panel.url {
+                        defaultWorkDir = url.path
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    Button("Öffnen") {
-                        let expanded = NSString(string: defaultWorkDir).expandingTildeInPath
-                        let url = URL(fileURLWithPath: expanded)
-                        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-                        NSWorkspace.shared.open(url)
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
                 }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                Button("Öffnen") {
+                    let expanded = NSString(string: defaultWorkDir).expandingTildeInPath
+                    let url = URL(fileURLWithPath: expanded)
+                    try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+                    NSWorkspace.shared.open(url)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
             }
-            .frame(maxHeight: .infinity, alignment: .top)
-
-            FuturisticBox(icon: "cloud.sun.fill", title: "Wetter-Widget", accent: .koboldGold) {
-                Text("Open-Meteo (kostenlos, kein API-Key nötig)")
-                    .font(.caption).foregroundColor(.secondary)
-                HStack {
-                    Text("Stadt").font(.caption).foregroundColor(.secondary)
-                    TextField("Leer = automatisch", text: $weatherMgr.manualCity)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 14.5))
-                }
-                if let temp = weatherMgr.temperature {
-                    HStack(spacing: 6) {
-                        Image(systemName: weatherMgr.iconName)
-                            .foregroundColor(.koboldGold)
-                            .shadow(color: .koboldGold.opacity(0.5), radius: 4)
-                        Text(String(format: "%.0f°C", temp)).font(.system(size: 15.5, weight: .semibold))
-                        if !weatherMgr.cityName.isEmpty {
-                            Text(weatherMgr.cityName).font(.caption).foregroundColor(.secondary)
-                        }
-                    }
-                }
-                Button("Wetter abrufen") { weatherMgr.fetchWeather() }
-                    .buttonStyle(.bordered).controlSize(.small)
-            }
-            .frame(maxHeight: .infinity, alignment: .top)
         }
 
         // Row 3: Menüleiste + Autostart + Einrichtungsassistent + Debug (4 columns)
@@ -487,15 +558,7 @@ struct SettingsView: View {
             }
             .frame(maxHeight: .infinity, alignment: .top)
 
-            FuturisticBox(icon: "ladybug.fill", title: "Debug", accent: .red) {
-                Toggle("Verbose Logging",
-                       isOn: AppStorageToggle("kobold.log.verbose", default: false))
-                    .toggleStyle(.switch)
-                Toggle("Raw Prompts",
-                       isOn: AppStorageToggle("kobold.dev.showRawPrompts", default: false))
-                    .toggleStyle(.switch)
-            }
-            .frame(maxHeight: .infinity, alignment: .top)
+            // Debug box removed — use "Debugging & Sicherheit" section instead
         }
 
         // Row 5: Verfügbare Tools
@@ -597,106 +660,6 @@ struct SettingsView: View {
             }
             .padding()
         }
-        // MARK: Heartbeat
-        sectionTitle("Heartbeat")
-
-        HStack(alignment: .top, spacing: 12) {
-            FuturisticBox(icon: "heart.fill", title: "Heartbeat-System", accent: .red) {
-                Text("Der Heartbeat ist der Puls des Agenten — ein regelmäßiger Timer der prüft, ob der Agent bereit ist und ob es proaktive Arbeit gibt. Ohne Heartbeat bleibt der Agent passiv und wartet nur auf deine Eingaben.")
-                    .font(.caption).foregroundColor(.secondary)
-
-                Toggle("Heartbeat aktivieren", isOn: $proactiveEngine.heartbeatEnabled)
-                    .toggleStyle(.switch).tint(.red)
-
-                HStack {
-                    Text("Intervall").font(.caption.bold()).foregroundColor(.secondary)
-                    Picker("", selection: $proactiveEngine.heartbeatIntervalSec) {
-                        Text("10s").tag(10)
-                        Text("30s").tag(30)
-                        Text("60s").tag(60)
-                        Text("120s").tag(120)
-                        Text("300s").tag(300)
-                    }.pickerStyle(.segmented).frame(maxWidth: 350)
-                }
-                Text("Wie oft der Agent seinen Status prüft. Kürzere Intervalle = reaktiver, aber mehr CPU.")
-                    .font(.caption2).foregroundColor(.secondary)
-
-                Toggle("Im Dashboard anzeigen", isOn: $proactiveEngine.heartbeatShowInDashboard)
-                    .toggleStyle(.switch).tint(.koboldEmerald)
-
-                Divider()
-
-                // Status
-                HStack(spacing: 12) {
-                    HStack(spacing: 4) {
-                        Circle()
-                            .fill(proactiveEngine.heartbeatEnabled ? Color.green : Color.gray)
-                            .frame(width: 8, height: 8)
-                        Text(proactiveEngine.heartbeatStatus)
-                            .font(.system(size: 13, weight: .medium, design: .monospaced))
-                    }
-                    Spacer()
-                    if let last = proactiveEngine.lastHeartbeat {
-                        Text("Letzter: \(last, style: .relative) her")
-                            .font(.caption2).foregroundColor(.secondary)
-                    }
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .top)
-
-            FuturisticBox(icon: "list.clipboard.fill", title: "Heartbeat-Log", accent: .secondary) {
-                Text("Protokoll der letzten Heartbeat-Zyklen. Zeigt was der Agent bei jedem Takt geprüft und entschieden hat.")
-                    .font(.caption).foregroundColor(.secondary)
-
-                HStack {
-                    Text("Aufbewahrung").font(.caption.bold()).foregroundColor(.secondary)
-                    Picker("", selection: $proactiveEngine.heartbeatLogRetention) {
-                        Text("20").tag(20)
-                        Text("50").tag(50)
-                        Text("100").tag(100)
-                        Text("200").tag(200)
-                    }.pickerStyle(.segmented).frame(maxWidth: 250)
-                    Text("Einträge").font(.caption).foregroundColor(.secondary)
-                }
-
-                if proactiveEngine.heartbeatLog.isEmpty {
-                    Text("Noch keine Heartbeat-Einträge. Starte den Heartbeat, um das Protokoll zu füllen.")
-                        .font(.caption2).foregroundColor(.secondary).italic()
-                        .padding(.vertical, 8)
-                } else {
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 2) {
-                            ForEach(proactiveEngine.heartbeatLog.prefix(30)) { entry in
-                                HStack(spacing: 6) {
-                                    Text(entry.timestamp, style: .time)
-                                        .font(.system(size: 11.5, design: .monospaced))
-                                        .foregroundColor(.secondary)
-                                        .frame(width: 65, alignment: .leading)
-                                    Text(entry.status)
-                                        .font(.system(size: 12, weight: .medium))
-                                        .foregroundColor(entry.action != nil ? .koboldEmerald : .secondary)
-                                    if let action = entry.action {
-                                        Text("→ \(action)")
-                                            .font(.system(size: 12))
-                                            .foregroundColor(.koboldGold)
-                                            .lineLimit(1)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    .frame(maxHeight: 180)
-
-                    HStack {
-                        Spacer()
-                        Button("Log löschen") { proactiveEngine.clearHeartbeatLog() }
-                            .font(.caption).buttonStyle(.bordered)
-                    }
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .top)
-        }
-
         settingsSaveButton(section: "Allgemein")
     }
 
@@ -980,23 +943,32 @@ struct SettingsView: View {
                                 }
                             }
 
-                            Button("Laden") {
-                                Task {
-                                    let selected = UserDefaults.standard.string(forKey: "kobold.sd.selectedModel") ?? ""
-                                    do {
+                            if ImageGenManager.shared.isLoadingModel {
+                                HStack(spacing: 6) {
+                                    ProgressView().controlSize(.small)
+                                    Text("Lade Modell...").font(.caption).foregroundColor(.secondary)
+                                }
+                            } else {
+                                Button("Laden") {
+                                    Task {
+                                        let selected = UserDefaults.standard.string(forKey: "kobold.sd.selectedModel") ?? ""
                                         if selected.isEmpty {
-                                            try await ImageGenManager.shared.loadModelFromRoot()
+                                            await ImageGenManager.shared.loadModelFromRoot()
                                         } else {
-                                            try await ImageGenManager.shared.loadModel(name: selected)
+                                            await ImageGenManager.shared.loadModel(name: selected)
                                         }
-                                    } catch {
-                                        print("[SD] Load error: \(error)")
                                     }
                                 }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
                             }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
                         }
+                    }
+
+                    if let err = ImageGenManager.shared.loadError {
+                        Text(err)
+                            .font(.caption).foregroundColor(.red)
+                            .padding(.horizontal, 4)
                     }
 
                     HStack(spacing: 8) {
@@ -1948,7 +1920,7 @@ struct SettingsView: View {
         }
     }
 
-    @StateObject private var weatherMgr = WeatherManager.shared
+    // weatherMgr removed — weather uses auto-location now
 
     @ViewBuilder
     private func connectionsSection() -> some View {
@@ -4194,7 +4166,7 @@ struct SettingsView: View {
                     )
                 VStack(alignment: .leading, spacing: 4) {
                     Text("KoboldOS").font(.title.bold())
-                    Text("Alpha v0.2.8").font(.title3).foregroundColor(.koboldGold)
+                    Text("Alpha v0.2.85").font(.title3).foregroundColor(.koboldGold)
                     Text("Dein lokaler KI-Assistent für macOS")
                         .font(.subheadline).foregroundColor(.secondary)
                 }
@@ -4204,7 +4176,7 @@ struct SettingsView: View {
         }
 
         FuturisticBox(icon: "info.circle", title: "Build-Info", accent: .koboldGold) {
-                infoRow("Version", "Alpha v0.2.8")
+                infoRow("Version", "Alpha v0.2.85")
                 infoRow("Build", "2026-02-23")
                 infoRow("Swift", "6.0")
                 infoRow("Plattform", "macOS 14+ (Sonoma)")

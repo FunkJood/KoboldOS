@@ -13,6 +13,8 @@ final class ImageGenManager: ObservableObject {
     @Published var isGenerating = false
     @Published var generationProgress: Double = 0
     @Published var isModelLoaded = false
+    @Published var isLoadingModel = false
+    @Published var loadError: String?
     @Published var isDownloading = false
     @Published var downloadProgress: Double = 0
     @Published var currentModelName: String = ""
@@ -58,58 +60,93 @@ final class ImageGenManager: ObservableObject {
     }
 
     /// Heavy pipeline work runs off MainActor to prevent UI freeze / watchdog kill.
-    func loadModel(name: String) async throws {
+    func loadModel(name: String) async {
+        guard !isLoadingModel else { return }
+        isLoadingModel = true
+        loadError = nil
+
         let dir = modelDir(for: name)
         guard FileManager.default.fileExists(atPath: dir.path) else {
-            throw ImageGenError.modelNotFound(name)
+            loadError = "Modell '\(name)' nicht gefunden."
+            isLoadingModel = false
+            return
+        }
+
+        // Verify at least one .mlmodelc exists
+        let contents = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
+        guard contents.contains(where: { $0.hasSuffix(".mlmodelc") }) else {
+            loadError = "Ordner '\(name)' enthält keine CoreML-Modelle (.mlmodelc)."
+            isLoadingModel = false
+            return
         }
 
         let cu = computeUnits
-        let newPipeline: StableDiffusionPipeline = try await Task.detached(priority: .userInitiated) {
-            var config = MLModelConfiguration()
-            switch cu {
-            case "cpuOnly": config.computeUnits = .cpuOnly
-            case "all":     config.computeUnits = .all
-            default:        config.computeUnits = .cpuAndGPU
-            }
-            let p = try StableDiffusionPipeline(
-                resourcesAt: dir, controlNet: [], configuration: config, reduceMemory: true
-            )
-            try p.loadResources()
-            return p
-        }.value
-        pipeline = newPipeline
-        isModelLoaded = true
-        currentModelName = name
-        print("[ImageGen] Model '\(name)' loaded (background)")
+        do {
+            let newPipeline: StableDiffusionPipeline = try await Task.detached(priority: .userInitiated) {
+                var config = MLModelConfiguration()
+                switch cu {
+                case "cpuOnly": config.computeUnits = .cpuOnly
+                case "all":     config.computeUnits = .all
+                default:        config.computeUnits = .cpuAndGPU
+                }
+                let p = try StableDiffusionPipeline(
+                    resourcesAt: dir, controlNet: [], configuration: config, reduceMemory: true
+                )
+                try p.loadResources()
+                return p
+            }.value
+            pipeline = newPipeline
+            isModelLoaded = true
+            currentModelName = name
+            loadError = nil
+            print("[ImageGen] Model '\(name)' loaded (background)")
+        } catch {
+            loadError = "Laden fehlgeschlagen: \(error.localizedDescription)"
+            print("[ImageGen] Load error: \(error)")
+        }
+        isLoadingModel = false
     }
 
     /// Load model directly from modelsDir root (used after download where files are placed directly)
-    /// Heavy pipeline work runs off MainActor to prevent UI freeze / watchdog kill.
-    func loadModelFromRoot() async throws {
+    func loadModelFromRoot() async {
+        guard !isLoadingModel else { return }
+        isLoadingModel = true
+        loadError = nil
+
         let dir = modelsDir
-        guard FileManager.default.fileExists(atPath: dir.appendingPathComponent("TextEncoder.mlmodelc").path) else {
-            throw ImageGenError.modelNotFound("root")
+        // Check for any .mlmodelc in root
+        let contents = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
+        guard contents.contains(where: { $0.hasSuffix(".mlmodelc") }) else {
+            loadError = "Kein CoreML-Modell im Hauptordner gefunden. Bitte zuerst herunterladen."
+            isLoadingModel = false
+            return
         }
+
         let cu = computeUnits
-        // Heavy work on background thread
-        let newPipeline: StableDiffusionPipeline = try await Task.detached(priority: .userInitiated) {
-            var config = MLModelConfiguration()
-            switch cu {
-            case "cpuOnly": config.computeUnits = .cpuOnly
-            case "all":     config.computeUnits = .all
-            default:        config.computeUnits = .cpuAndGPU
-            }
-            let p = try StableDiffusionPipeline(
-                resourcesAt: dir, controlNet: [], configuration: config, reduceMemory: true
-            )
-            try p.loadResources()
-            return p
-        }.value
-        pipeline = newPipeline
-        isModelLoaded = true
-        currentModelName = "stable-diffusion-2.1-base"
-        print("[ImageGen] Model loaded from root directory (background)")
+        do {
+            let newPipeline: StableDiffusionPipeline = try await Task.detached(priority: .userInitiated) {
+                var config = MLModelConfiguration()
+                switch cu {
+                case "cpuOnly": config.computeUnits = .cpuOnly
+                case "all":     config.computeUnits = .all
+                default:        config.computeUnits = .cpuAndGPU
+                }
+                let p = try StableDiffusionPipeline(
+                    resourcesAt: dir, controlNet: [], configuration: config, reduceMemory: true
+                )
+                try p.loadResources()
+                return p
+            }.value
+            pipeline = newPipeline
+            isModelLoaded = true
+            currentModelName = "stable-diffusion-2.1-base"
+            loadError = nil
+            print("[ImageGen] Model loaded from root directory (background)")
+        } catch {
+            loadError = "Laden fehlgeschlagen: \(error.localizedDescription)"
+            print("[ImageGen] Root load error: \(error)")
+        }
+        isLoadingModel = false
     }
 
     func unloadModel() {

@@ -486,7 +486,7 @@ struct DashboardView: View {
                     shortcutTile(title: "Aufgaben", icon: "checklist", color: .koboldGold, tab: .tasks)
                     shortcutTile(title: "Gedächtnis", icon: "brain.filled.head.profile", color: .koboldEmerald, tab: .memory)
                     shortcutTile(title: "Workflows", icon: "point.3.connected.trianglepath.dotted", color: .koboldGold, tab: .workflows)
-                    shortcutTile(title: "Agenten", icon: "person.3.fill", color: .koboldEmerald, tab: .settings)
+                    shortcutTile(title: "Teams", icon: "person.3.sequence.fill", color: .koboldEmerald, tab: .teams)
                 }
             }
         }

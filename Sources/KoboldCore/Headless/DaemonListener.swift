@@ -189,7 +189,7 @@ public actor DaemonListener {
         case "/health":
             return jsonOK([
                 "status": "ok",
-                "version": "0.2.5",
+                "version": "0.2.85",
                 "pid": Int(ProcessInfo.processInfo.processIdentifier),
                 "uptime": Int(Date().timeIntervalSince(startTime))
             ])
@@ -459,6 +459,8 @@ public actor DaemonListener {
         // Set SO_NOSIGPIPE to prevent crashes on client disconnect
         var yes: Int32 = 1
         setsockopt(client.fd, SOL_SOCKET, SO_NOSIGPIPE, &yes, socklen_t(MemoryLayout<Int32>.size))
+        // Disable Nagle's algorithm for instant SSE delivery (no TCP buffering)
+        setsockopt(client.fd, IPPROTO_TCP, TCP_NODELAY, &yes, socklen_t(MemoryLayout<Int32>.size))
 
         // Stream steps with provider config
         let providerConfig = LLMProviderConfig(provider: provider, model: model, apiKey: apiKey, temperature: temperature)
@@ -696,7 +698,7 @@ public actor DaemonListener {
             return jsonOK(["ok": true, "id": id])
         case "delete":
             guard let id = json["id"] as? String else { return jsonError("Missing 'id'") }
-            workflows.removeAll { $0.id == id || $0.id.hasPrefix(id) }
+            workflows.removeAll { $0.id == id }
             saveWorkflowDefinitions(workflows)
             return jsonOK(["ok": true])
         default:
@@ -709,7 +711,7 @@ public actor DaemonListener {
     private func buildAgentCard() -> [String: Any] {
         [
             "name": "KoboldOS",
-            "version": "0.2.5",
+            "version": "0.2.85",
             "description": "Native macOS AI Agent Runtime — local-first, privacy-focused",
             "capabilities": [
                 "streaming": true,

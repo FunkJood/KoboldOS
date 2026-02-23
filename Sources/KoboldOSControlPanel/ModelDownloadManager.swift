@@ -133,44 +133,43 @@ class ModelDownloadManager: ObservableObject {
         Task {
             do {
                 let destDir = sdModelDirectory()
-                // On force re-download, remove existing files first
                 if force && FileManager.default.fileExists(atPath: destDir.path) {
                     try? FileManager.default.removeItem(at: destDir)
                 }
                 try FileManager.default.createDirectory(at: destDir, withIntermediateDirectories: true)
 
-                // Download compiled CoreML model files from HuggingFace
-                let baseURL = "https://huggingface.co/\(recommendedSDModel)/resolve/main"
-                let files = [
-                    "merges.txt",
-                    "vocab.json",
-                    "TextEncoder.mlmodelc/model.mil",
-                    "TextEncoder.mlmodelc/coremldata.bin",
-                    "Unet.mlmodelc/model.mil",
-                    "Unet.mlmodelc/coremldata.bin",
-                    "VAEDecoder.mlmodelc/model.mil",
-                    "VAEDecoder.mlmodelc/coremldata.bin",
-                ]
+                // Use HuggingFace API to discover all files in the compiled model
+                let repo = recommendedSDModel
+                let subfolder = "original/compiled"  // CPU+GPU compiled variant
+                sdStatus = "Lade Dateiliste von HuggingFace..."
+
+                let files = try await fetchHuggingFaceFileList(repo: repo, path: subfolder)
+                guard !files.isEmpty else {
+                    lastError = "Keine Modell-Dateien auf HuggingFace gefunden."
+                    isDownloadingSD = false
+                    return
+                }
 
                 sdStatus = "Lade SD-Modell (\(files.count) Dateien)..."
                 for (index, file) in files.enumerated() {
-                    guard let url = URL(string: "\(baseURL)/\(file.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? file)") else {
-                        sdStatus = "Fehler: Ungültige URL für \(file)"
-                        continue
-                    }
-                    let destFile = destDir.appendingPathComponent(file)
+                    let relativePath = file.hasPrefix(subfolder + "/") ? String(file.dropFirst(subfolder.count + 1)) : file
+                    let encoded = file.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? file
+                    guard let url = URL(string: "https://huggingface.co/\(repo)/resolve/main/\(encoded)") else { continue }
 
-                    // Create subdirectories
+                    let destFile = destDir.appendingPathComponent(relativePath)
                     let dir = destFile.deletingLastPathComponent()
                     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
 
-                    // Skip if already exists (unless force)
                     if !force && FileManager.default.fileExists(atPath: destFile.path) {
                         sdProgress = Double(index + 1) / Double(files.count)
                         continue
                     }
 
-                    let (data, _) = try await URLSession.shared.data(from: url)
+                    let (data, response) = try await URLSession.shared.data(from: url)
+                    if let httpResp = response as? HTTPURLResponse, httpResp.statusCode != 200 {
+                        print("[SD] Skipping \(relativePath): HTTP \(httpResp.statusCode)")
+                        continue
+                    }
                     try data.write(to: destFile)
                     sdProgress = Double(index + 1) / Double(files.count)
                     sdStatus = "Lade... (\(index + 1)/\(files.count))"
@@ -179,14 +178,13 @@ class ModelDownloadManager: ObservableObject {
                 sdProgress = 1.0
                 sdStatus = "SD-Modell installiert! Lade Engine..."
                 sdModelInstalled = true
-                isDownloadingSD = false  // UI sofort freigeben
+                isDownloadingSD = false
 
-                // Load model in background to avoid blocking UI / watchdog kill
-                do {
-                    try await ImageGenManager.shared.loadModelFromRoot()
+                await ImageGenManager.shared.loadModelFromRoot()
+                if ImageGenManager.shared.isModelLoaded {
                     sdStatus = "SD-Modell geladen und bereit!"
-                } catch {
-                    sdStatus = "Installiert (Laden: \(error.localizedDescription))"
+                } else {
+                    sdStatus = "Installiert (Laden fehlgeschlagen: \(ImageGenManager.shared.loadError ?? "unbekannt"))"
                 }
             } catch {
                 lastError = error.localizedDescription
@@ -194,6 +192,27 @@ class ModelDownloadManager: ObservableObject {
                 isDownloadingSD = false
             }
         }
+    }
+
+    /// Fetch file list from HuggingFace API (recursive)
+    private func fetchHuggingFaceFileList(repo: String, path: String) async throws -> [String] {
+        let encoded = path.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? path
+        guard let url = URL(string: "https://huggingface.co/api/models/\(repo)/tree/main/\(encoded)") else { return [] }
+
+        let (data, _) = try await URLSession.shared.data(from: url)
+        guard let items = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return [] }
+
+        var files: [String] = []
+        for item in items {
+            guard let rpath = item["path"] as? String, let type = item["type"] as? String else { continue }
+            if type == "file" {
+                files.append(rpath)
+            } else if type == "directory" {
+                let subFiles = try await fetchHuggingFaceFileList(repo: repo, path: rpath)
+                files.append(contentsOf: subFiles)
+            }
+        }
+        return files
     }
 
     // MARK: - Helpers

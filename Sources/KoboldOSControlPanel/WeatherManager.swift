@@ -34,16 +34,12 @@ class WeatherManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         isLoading = true
         lastError = nil
 
-        if !manualCity.isEmpty {
-            geocodeAndFetch(manualCity)
-        } else {
-            // Use CoreLocation for automatic detection
-            locationManager = CLLocationManager()
-            locationManager?.delegate = self
-            locationManager?.desiredAccuracy = kCLLocationAccuracyKilometer
-            locationManager?.requestWhenInUseAuthorization()
-            locationManager?.requestLocation()
-        }
+        // Always use CoreLocation for automatic detection
+        locationManager = CLLocationManager()
+        locationManager?.delegate = self
+        locationManager?.desiredAccuracy = kCLLocationAccuracyKilometer
+        locationManager?.requestWhenInUseAuthorization()
+        locationManager?.requestLocation()
     }
 
     // MARK: - Geocoding (city name -> lat/lon via Apple CLGeocoder)
@@ -148,10 +144,8 @@ class WeatherManager: NSObject, ObservableObject, CLLocationManagerDelegate {
 
     nonisolated func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
         Task { @MainActor in
-            if self.manualCity.isEmpty {
-                // Fallback: Berlin coordinates
-                self.fetchByLocation(lat: 52.52, lon: 13.405, resolvedCity: "Berlin")
-            }
+            // Fallback: Berlin coordinates when CoreLocation fails
+            self.fetchByLocation(lat: 52.52, lon: 13.405, resolvedCity: "Berlin")
             self.locationManager = nil
         }
     }

@@ -97,7 +97,9 @@ public actor ToolRouter {
                         try await Task.sleep(nanoseconds: UInt64(effectiveTimeout * 1_000_000_000))
                         throw ToolError.timeout
                     }
-                    let first = try await group.next()!
+                    guard let first = try await group.next() else {
+                        throw ToolError.timeout
+                    }
                     group.cancelAll()
                     return first
                 }

@@ -128,7 +128,9 @@ public struct DelegateTaskTool: Tool, Sendable {
                     try await Task.sleep(nanoseconds: timeoutNs)
                     throw ToolError.executionFailed("Sub-Agent Timeout nach \(timeoutSecs > 0 ? timeoutSecs : 300) Sekunden")
                 }
-                let first = try await group.next()!
+                guard let first = try await group.next() else {
+                    throw ToolError.executionFailed("Sub-Agent lieferte kein Ergebnis")
+                }
                 group.cancelAll()
                 return first
             }
@@ -151,7 +153,7 @@ public struct DelegateTaskTool: Tool, Sendable {
                 break
             case .error:
                 stepsSummary += "⚠️ \(step.content.prefix(200))\n"
-            case .subAgentSpawn, .subAgentResult, .checkpoint:
+            case .subAgentSpawn, .subAgentResult, .checkpoint, .context_info:
                 break
             }
         }

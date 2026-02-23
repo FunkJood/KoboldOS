@@ -21,7 +21,8 @@ struct ChatView: View {
         case "coder":      return "Coder"
         case "researcher": return "Researcher"
         case "planner":    return "Planner"
-        default:           return "Instructor"
+        case "instructor": return "Instructor"
+        default:           return "Allgemein"
         }
     }
 
@@ -40,21 +41,15 @@ struct ChatView: View {
                                 .id(msg.id)
                         }
 
-                        // Live thinking/streaming area (layered, non-overlapping)
+                        // Live thinking/streaming area — single unified box
                         if viewModel.isAgentLoadingInCurrentChat {
-                            // Top layer: Steps/Tool stream (always expanded)
-                            if !viewModel.activeThinkingSteps.isEmpty {
-                                ThinkingPanelBubble(entries: viewModel.activeThinkingSteps, isLive: true)
-                                    .id("thinking-live")
-                                SubAgentActivityBanner(entries: viewModel.activeThinkingSteps)
-                                    .id("subagent-banner")
-                            }
+                            // Unified thinking box: stream above, warte-sprüche below
+                            ThinkingPanelBubble(entries: viewModel.activeThinkingSteps, isLive: true)
+                                .id("thinking-live")
+                            SubAgentActivityBanner(entries: viewModel.activeThinkingSteps)
+                                .id("subagent-banner")
 
-                            // Middle layer: Thinking/Waiting status
-                            ThinkingPlaceholderBubble()
-                                .id("thinking-placeholder")
-
-                            // Bottom layer: Typing animation
+                            // Typing animation dots
                             GlassChatBubble(message: "", isUser: false, timestamp: Date(), isLoading: true)
                                 .id("loading")
                         }
@@ -77,13 +72,29 @@ struct ChatView: View {
                 AgentChecklistOverlay(items: viewModel.agentChecklist)
             }
 
-            // Message queue indicator
+            // Message queue indicator with send-now + clear buttons
             if !viewModel.messageQueue.isEmpty && viewModel.agentLoading {
                 HStack(spacing: 6) {
                     Image(systemName: "tray.full.fill").font(.system(size: 12.5)).foregroundColor(.koboldGold)
                     Text("\(viewModel.messageQueue.count) Nachricht\(viewModel.messageQueue.count > 1 ? "en" : "") in Warteschlange")
                         .font(.system(size: 12.5, weight: .medium)).foregroundColor(.koboldGold)
                     Spacer()
+                    // Send next immediately
+                    Button(action: { viewModel.sendNextQueued() }) {
+                        Image(systemName: "paperplane.fill")
+                            .font(.system(size: 11))
+                            .foregroundColor(.koboldEmerald)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Nächste sofort senden")
+                    // Clear queue
+                    Button(action: { viewModel.clearMessageQueue() }) {
+                        Image(systemName: "trash")
+                            .font(.system(size: 11))
+                            .foregroundColor(.red.opacity(0.7))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Warteschlange leeren")
                 }
                 .padding(.horizontal, 16).padding(.vertical, 4)
                 .background(Color.koboldGold.opacity(0.08))
@@ -329,8 +340,10 @@ struct ChatView: View {
 
     @State private var activeTips: [String] = []
     @State private var tipRotation: Double = 0
+    @State private var welcomeMessage: String = ""
 
     private func loadRandomTips() {
+        // Try AI-generated suggestions first, fallback to hardcoded
         let aiTips = SuggestionService.shared.chatSuggestions
         if !aiTips.isEmpty {
             activeTips = Array(aiTips.shuffled().prefix(4))
@@ -341,6 +354,21 @@ struct ChatView: View {
         withAnimation(.easeInOut(duration: 0.3)) {
             tipRotation += 360
         }
+        // Also refresh welcome message
+        let greeting = SuggestionService.shared.dashboardGreeting
+        welcomeMessage = greeting.isEmpty ? Self.randomWelcome() : greeting
+    }
+
+    private static let welcomeMessages = [
+        "ist bereit.", "wartet auf dich.", "hat Ideen.",
+        "ist motiviert.", "hat aufgeräumt.", "ist wach.",
+        "steht bereit.", "ist einsatzbereit.",
+        "hat Kaffee gekocht.", "denkt schon nach.",
+        "freut sich auf Arbeit.", "wartet ungeduldig.",
+    ]
+
+    private static func randomWelcome() -> String {
+        welcomeMessages.randomElement() ?? "ist bereit."
     }
 
     var emptyState: some View {
@@ -348,7 +376,7 @@ struct ChatView: View {
             Spacer(minLength: 80)
             Text(l10n.language.startConversation)
                 .font(.system(size: 23, weight: .semibold))
-            Text("\(koboldName.isEmpty ? "KoboldOS" : koboldName) ist bereit.")
+            Text("\(koboldName.isEmpty ? "KoboldOS" : koboldName) \(welcomeMessage.isEmpty ? "ist bereit." : welcomeMessage)")
                 .font(.system(size: 17.5)).foregroundColor(.secondary)
             GlassCard(padding: 16, cornerRadius: 12) {
                 VStack(alignment: .leading, spacing: 10) {
@@ -395,7 +423,11 @@ struct ChatView: View {
                 }
             }
             .frame(maxWidth: 400)
-            .onAppear { if activeTips.isEmpty { loadRandomTips() } }
+            .onAppear {
+                loadRandomTips()
+                // Also trigger SuggestionService refresh in background
+                Task { await SuggestionService.shared.generateSuggestions() }
+            }
             Spacer()
         }
         .frame(maxWidth: .infinity)
@@ -491,6 +523,31 @@ struct ChatView: View {
                     }
                     .buttonStyle(.plain)
                     .help("Agent stoppen")
+                } else if viewModel.agentWasStopped && viewModel.lastAgentPrompt != nil {
+                    // Resume button after agent was stopped
+                    HStack(spacing: 6) {
+                        Button(action: { viewModel.resumeAgent() }) {
+                            Image(systemName: "play.circle.fill")
+                                .font(.system(size: 18.5, weight: .semibold))
+                                .foregroundColor(.white)
+                                .frame(width: 36, height: 36)
+                                .background(Color.koboldEmerald)
+                                .cornerRadius(10)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Agent fortsetzen")
+
+                        Button(action: send) {
+                            Image(systemName: "paperplane.fill")
+                                .font(.system(size: 18.5, weight: .semibold))
+                                .foregroundColor(.white)
+                                .frame(width: 36, height: 36)
+                                .background(Color.koboldEmerald.opacity(0.6))
+                                .cornerRadius(10)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(inputText.trimmingCharacters(in: .whitespaces).isEmpty && pendingAttachments.isEmpty)
+                    }
                 } else {
                     Button(action: send) {
                         Image(systemName: "paperplane.fill")

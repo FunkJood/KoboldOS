@@ -12,6 +12,7 @@ struct TeamsGroupView: View {
     @State private var showOrgChart = false
     @State private var groupChatInput: String = ""
     @State private var isTeamWorking = false
+    @State private var teamWorkTask: Task<Void, Never>?
     @State private var editingAgent: TeamAgent? = nil
     @State private var editingTeamGoals = false
     @AppStorage("kobold.chat.fontSize") private var chatFontSize: Double = 16.5
@@ -256,7 +257,7 @@ struct TeamsGroupView: View {
 
                 // Send / Stop
                 if isTeamWorking {
-                    Button(action: { isTeamWorking = false }) {
+                    Button(action: { teamWorkTask?.cancel(); isTeamWorking = false }) {
                         Image(systemName: "stop.circle.fill")
                             .font(.system(size: 18))
                             .foregroundColor(.red)
@@ -383,7 +384,8 @@ struct TeamsGroupView: View {
             appendMessage(teamId: teamId, msg: placeholder)
         }
 
-        Task {
+        teamWorkTask?.cancel()
+        teamWorkTask = Task {
             // === RUNDE 1: Einzelanalyse (parallel) ===
             var round1Results: [(agentName: String, agentId: UUID, output: String)] = []
             await withTaskGroup(of: (UUID, String, String).self) { group in
@@ -403,7 +405,6 @@ struct TeamsGroupView: View {
                 }
                 for await (agentId, agentName, output) in group {
                     round1Results.append((agentName: agentName, agentId: agentId, output: output))
-                    // Replace placeholder with real result
                     if let phId = placeholderIds[agentId] {
                         await MainActor.run {
                             replacePlaceholder(teamId: teamId, placeholderId: phId, content: output, round: 1)
@@ -412,10 +413,13 @@ struct TeamsGroupView: View {
                 }
             }
 
+            guard !Task.isCancelled else { await MainActor.run { isTeamWorking = false }; return }
+
             // === RUNDE 2: Diskussion (sequentiell — jeder sieht Runde 1) ===
             let r1Summary = round1Results.map { "[\($0.agentName)]: \($0.output)" }.joined(separator: "\n\n---\n\n")
 
             for agent in activeAgents {
+                guard !Task.isCancelled else { break }
                 let myR1 = round1Results.first { $0.agentId == agent.id }?.output ?? ""
                 let othersR1 = round1Results.filter { $0.agentId != agent.id }
                     .map { "[\($0.agentName)]: \($0.output)" }.joined(separator: "\n\n")
@@ -439,6 +443,8 @@ struct TeamsGroupView: View {
                     appendMessage(teamId: teamId, msg: GroupMessage(content: discussionResult, isUser: false, agentName: agent.name, round: 2))
                 }
             }
+
+            guard !Task.isCancelled else { await MainActor.run { isTeamWorking = false }; return }
 
             // === RUNDE 3: Koordinator-Synthese ===
             let coordinator = activeAgents[0]

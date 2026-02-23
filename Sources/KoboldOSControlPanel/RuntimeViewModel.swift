@@ -154,6 +154,14 @@ class RuntimeViewModel: ObservableObject {
     /// Message cap per session (generous — 2000 messages before trimming)
     private let maxMessagesPerSession = 2000
 
+    /// Rate-limit Ja/Nein buttons — only every 5th eligible message shows interactive buttons
+    private var messagesSinceLastInteractive: Int = 0
+    private let interactiveInterval = 5
+
+    /// Last prompt sent to agent (for resume after stop)
+    @Published var lastAgentPrompt: String? = nil
+    @Published var agentWasStopped: Bool = false
+
     // Workflow Execution
     @Published var workflowLastResponse: String? = nil
 
@@ -190,6 +198,15 @@ class RuntimeViewModel: ObservableObject {
 
     var baseURL: String { "http://localhost:\(storedPort)" }
     var authToken: String { storedToken }
+
+    /// Dedicated URLSession for SSE streaming — no caching, no buffering
+    private lazy var sseSession: URLSession = {
+        let config = URLSessionConfiguration.default
+        config.requestCachePolicy = .reloadIgnoringLocalCacheData
+        config.urlCache = nil
+        config.httpShouldSetCookies = false
+        return URLSession(configuration: config)
+    }()
 
     /// Creates an authorized URLRequest with Bearer token
     func authorizedRequest(url: URL, method: String = "GET") -> URLRequest {
@@ -279,6 +296,52 @@ class RuntimeViewModel: ObservableObject {
         ) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.loadProjects()
+            }
+        }
+
+        // Listen for team coordination requests from SubCoordinateTeamTool
+        NotificationCenter.default.addObserver(
+            forName: Notification.Name("koboldCoordinateTeam"),
+            object: nil, queue: .main
+        ) { [weak self] notif in
+            guard let self = self else { return }
+            let teamName = notif.userInfo?["team_name"] as? String ?? ""
+            let question = notif.userInfo?["question"] as? String ?? ""
+            let context = notif.userInfo?["context"] as? String ?? ""
+            let resultId = notif.userInfo?["result_id"] as? String ?? ""
+
+            Task { @MainActor in
+                let result = await self.runTeamDiscussion(teamName: teamName, question: question, context: context)
+                await TeamResultWaiter.shared.deliverResult(id: resultId, result: result)
+            }
+        }
+
+        // Listen for checklist events from ChecklistTool
+        NotificationCenter.default.addObserver(
+            forName: Notification.Name("koboldChecklist"),
+            object: nil, queue: .main
+        ) { [weak self] notif in
+            let action = notif.userInfo?["action"] as? String ?? ""
+            let items = notif.userInfo?["items"] as? [String]
+            let index = notif.userInfo?["index"] as? Int
+            MainActor.assumeIsolated {
+                guard let self = self else { return }
+                switch action {
+                case "set":
+                    if let items = items {
+                        self.agentChecklist = items.enumerated().map { (i, label) in
+                            AgentChecklistItem(id: "step_\(i)", label: label)
+                        }
+                    }
+                case "check":
+                    if let index = index, index < self.agentChecklist.count {
+                        self.agentChecklist[index].isCompleted = true
+                    }
+                case "clear":
+                    self.agentChecklist = []
+                default:
+                    break
+                }
             }
         }
     }
@@ -470,6 +533,7 @@ class RuntimeViewModel: ObservableObject {
     func sendMessage(_ text: String, agentText: String? = nil, attachments: [MediaAttachment] = []) {
         let trimmed = text.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty || !attachments.isEmpty else { return }
+        agentWasStopped = false  // Clear play-button state on new message
         var msg = ChatMessage(kind: .user(text: trimmed.isEmpty ? "📎" : trimmed), timestamp: Date())
         msg.attachments = attachments
         messages.append(msg)
@@ -509,10 +573,8 @@ class RuntimeViewModel: ObservableObject {
             let origModel = activeOllamaModel
             if let ao = agentOverride, !ao.isEmpty { agentTypeStr = ao }
             if let mo = modelOverride, !mo.isEmpty { activeOllamaModel = mo }
+            defer { agentTypeStr = origAgent; activeOllamaModel = origModel }
             await sendWithAgent(message: trimmed)
-            // Restore
-            agentTypeStr = origAgent
-            activeOllamaModel = origModel
         }
     }
 
@@ -525,6 +587,7 @@ class RuntimeViewModel: ObservableObject {
         agentLoading = false
         activeAgentOriginSession = nil
         activeThinkingSteps = []
+        agentWasStopped = true
         appendToSession(ChatMessage(kind: .assistant(text: "⏸ Agent gestoppt."), timestamp: Date()), originSession: originSession)
         if currentSessionId == originSession {
             saveChatHistory()
@@ -532,6 +595,29 @@ class RuntimeViewModel: ObservableObject {
         saveSessions()
         saveTaskSessions()
         saveWorkflowSessions()
+    }
+
+    /// Resume agent with last prompt after stop
+    func resumeAgent() {
+        guard let prompt = lastAgentPrompt, !prompt.isEmpty else { return }
+        agentWasStopped = false
+        activeStreamTask?.cancel()
+        activeStreamTask = nil
+        appendToSession(ChatMessage(kind: .user(text: "▶ Weiter: \(String(prompt.prefix(80)))…"), timestamp: Date()), originSession: currentSessionId)
+        activeStreamTask = Task { await sendWithAgent(message: prompt) }
+    }
+
+    /// Send next queued message immediately (cancels current agent)
+    func sendNextQueued() {
+        guard !messageQueue.isEmpty else { return }
+        let nextMsg = messageQueue.removeFirst()
+        cancelAgent()
+        sendMessage(nextMsg)
+    }
+
+    /// Clear entire message queue
+    func clearMessageQueue() {
+        messageQueue.removeAll()
     }
 
     /// Cancel all background tasks (call on view disappear / deinit)
@@ -716,6 +802,15 @@ class RuntimeViewModel: ObservableObject {
         }
     }
 
+    /// Check if interactive buttons should be shown (rate-limited: only every 5th eligible message)
+    func shouldShowInteractive(_ text: String) -> Bool {
+        messagesSinceLastInteractive += 1
+        guard Self.isYesNoQuestion(text) else { return false }
+        guard messagesSinceLastInteractive >= interactiveInterval else { return false }
+        messagesSinceLastInteractive = 0
+        return true
+    }
+
     /// Detect if a final answer is a clear, direct yes/no question → show interactive buttons.
     /// Only triggers when the text is SHORT and ends with a direct question — avoids polluting
     /// longer explanations or multi-paragraph answers with unnecessary Ja/Nein buttons.
@@ -761,6 +856,8 @@ class RuntimeViewModel: ObservableObject {
 
     func sendWithAgent(message: String, attachments: [MediaAttachment] = []) async {
         agentLoading = true
+        agentWasStopped = false
+        lastAgentPrompt = message
         let originChatSession = currentSessionId
         activeAgentOriginSession = originChatSession
         let sessionId = UUID()
@@ -775,8 +872,6 @@ class RuntimeViewModel: ObservableObject {
         if activeSessions.count > 20 { activeSessions = Array(activeSessions.prefix(20)) }
 
         defer {
-            agentLoading = false
-            activeAgentOriginSession = nil
             // Auto-clear checklist after 2s if all completed
             if !agentChecklist.isEmpty && agentChecklist.allSatisfy(\.isCompleted) {
                 Task { @MainActor in
@@ -795,13 +890,18 @@ class RuntimeViewModel: ObservableObject {
                 try? await Task.sleep(nanoseconds: 60_000_000_000)
                 activeSessions.removeAll { $0.id == sid && $0.status != .running }
             }
-            // Process message queue
+            // Process message queue BEFORE clearing agentLoading to prevent race
             if !messageQueue.isEmpty {
                 let nextMsg = messageQueue.removeFirst()
+                // Keep agentLoading=true — the next sendWithAgent will manage it
+                activeAgentOriginSession = nil
                 Task { @MainActor in
                     try? await Task.sleep(nanoseconds: 500_000_000) // 0.5s pause
-                    activeStreamTask = Task { await sendWithAgent(message: nextMsg) }
+                    self.activeStreamTask = Task { await self.sendWithAgent(message: nextMsg) }
                 }
+            } else {
+                agentLoading = false
+                activeAgentOriginSession = nil
             }
         }
 
@@ -844,7 +944,7 @@ class RuntimeViewModel: ObservableObject {
         req.timeoutInterval = 300
 
         do {
-            let (bytes, resp) = try await URLSession.shared.bytes(for: req)
+            let (bytes, resp) = try await sseSession.bytes(for: req)
             guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else {
                 let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
                 appendToSession(ChatMessage(kind: .assistant(text: "HTTP Error \(code)"), timestamp: Date()), originSession: originChatSession)
@@ -860,8 +960,10 @@ class RuntimeViewModel: ObservableObject {
             var lastConfidence: Double? = nil
             var pendingSteps: [ThinkingEntry] = []
             var lastUIFlush = DispatchTime.now()
-            let uiFlushInterval: UInt64 = 300_000_000  // 300ms between UI updates (was 50ms!)
+            let uiFlushInterval: UInt64 = 300_000_000  // 300ms between UI updates
+            let firstFlushInterval: UInt64 = 0          // First step shows instantly
             var toolStepCount = 0
+            var isFirstFlush = true
             activeThinkingSteps = []
 
             for try await line in bytes.lines {
@@ -962,9 +1064,11 @@ class RuntimeViewModel: ObservableObject {
                     pendingSteps = Array(pendingSteps.suffix(400))
                 }
 
-                // ── COALESCED UI UPDATE every 300ms (not per-step!) ──
+                // ── COALESCED UI UPDATE — first step instant, then every 300ms ──
                 let now = DispatchTime.now()
-                if !pendingSteps.isEmpty && (now.uptimeNanoseconds - lastUIFlush.uptimeNanoseconds) > uiFlushInterval {
+                let flushDelay = isFirstFlush ? firstFlushInterval : uiFlushInterval
+                if !pendingSteps.isEmpty && (now.uptimeNanoseconds - lastUIFlush.uptimeNanoseconds) >= flushDelay {
+                    isFirstFlush = false
                     activeThinkingSteps.append(contentsOf: pendingSteps)
                     pendingSteps.removeAll()
                     lastUIFlush = now
@@ -1001,8 +1105,8 @@ class RuntimeViewModel: ObservableObject {
 
             // Final answer
             if !lastFinalAnswer.isEmpty {
-                // Auto-detect yes/no questions → show interactive buttons
-                if Self.isYesNoQuestion(lastFinalAnswer) {
+                // Auto-detect yes/no questions → show interactive buttons (rate-limited)
+                if shouldShowInteractive(lastFinalAnswer) {
                     appendToSession(
                         ChatMessage(kind: .interactive(text: lastFinalAnswer, options: [
                             InteractiveOption(id: "yes", label: "Ja", icon: "checkmark"),
@@ -1272,6 +1376,94 @@ class RuntimeViewModel: ObservableObject {
         } catch {
             return "Fehler: \(error.localizedDescription)"
         }
+    }
+
+    /// Run full team discussion (R1 Analysis → R2 Discussion → R3 Synthesis) and return synthesized result
+    func runTeamDiscussion(teamName: String, question: String, context: String) async -> String {
+        // Find team by name or use first available
+        let team: AgentTeam
+        if !teamName.isEmpty, let found = teams.first(where: { $0.name.lowercased().contains(teamName.lowercased()) }) {
+            team = found
+        } else if let first = teams.first {
+            team = first
+        } else {
+            return "Kein Team verfügbar. Bitte erstelle zuerst ein Team."
+        }
+
+        let activeAgents = team.agents.filter { $0.isActive }
+        guard !activeAgents.isEmpty else {
+            return "Team '\(team.name)' hat keine aktiven Agenten."
+        }
+
+        let fullQuestion = context.isEmpty ? question : "\(question)\n\nKontext:\n\(context)"
+
+        // R1: Parallel analysis
+        var round1Results: [(agentName: String, output: String)] = []
+        await withTaskGroup(of: (String, String).self) { group in
+            for agent in activeAgents {
+                group.addTask {
+                    let prompt = """
+                    Du bist \(agent.name) (\(agent.role)) in einem Beratungsteam.
+                    Deine Anweisungen: \(agent.instructions)
+
+                    Die Frage: \(fullQuestion)
+
+                    Analysiere aus deiner Perspektive. Sei konkret und präzise. Antworte auf Deutsch.
+                    """
+                    let result = await self.sendTeamAgentMessage(prompt: prompt, profile: agent.profile)
+                    return (agent.name, result)
+                }
+            }
+            for await (name, output) in group {
+                round1Results.append((agentName: name, output: output))
+            }
+        }
+
+        // R2: Sequential discussion
+        let r1Summary = round1Results.map { "[\($0.agentName)]: \($0.output)" }.joined(separator: "\n\n---\n\n")
+        var round2Results: [(agentName: String, output: String)] = []
+
+        for agent in activeAgents {
+            let myR1 = round1Results.first { $0.agentName == agent.name }?.output ?? ""
+            let othersR1 = round1Results.filter { $0.agentName != agent.name }
+                .map { "[\($0.agentName)]: \($0.output)" }.joined(separator: "\n\n")
+            guard !othersR1.isEmpty else { continue }
+
+            let prompt = """
+            Du bist \(agent.name) (\(agent.role)).
+
+            Frage: \(fullQuestion)
+
+            Deine Analyse: \(myR1)
+
+            Die anderen haben gesagt:
+            \(othersR1)
+
+            Reagiere kurz: Stimmst du zu? Widersprichst du? Was fehlt? Antworte auf Deutsch.
+            """
+            let result = await sendTeamAgentMessage(prompt: prompt, profile: agent.profile)
+            round2Results.append((agentName: agent.name, output: result))
+        }
+
+        // R3: Coordinator synthesis
+        let coordinator = activeAgents[0]
+        let r2Summary = round2Results.map { "[\($0.agentName)]: \($0.output)" }.joined(separator: "\n\n")
+
+        let synthesisPrompt = """
+        Du bist \(coordinator.name) und fasst die Team-Beratung zusammen.
+
+        Frage: \(fullQuestion)
+
+        Runde 1 — Analysen:
+        \(r1Summary)
+
+        Runde 2 — Diskussion:
+        \(r2Summary)
+
+        Fasse zusammen: 1. Konsens 2. Offene Punkte 3. Empfehlung. Antworte auf Deutsch.
+        """
+        let synthesis = await sendTeamAgentMessage(prompt: synthesisPrompt, profile: coordinator.profile)
+        return "[Team: \(team.name)] Synthese:\n\n\(synthesis)"
     }
 
     func loadSessions() {

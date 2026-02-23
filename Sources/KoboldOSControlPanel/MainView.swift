@@ -1235,7 +1235,7 @@ struct SidebarSessionRow: View {
 
             // Delete button — visible on hover or current
             Button(action: onDelete) {
-                Image(systemName: "xmark")
+                Image(systemName: "trash")
                     .font(.system(size: 10.5))
                     .foregroundColor(.secondary.opacity(0.5))
                     .frame(width: 20, height: 20)
@@ -1313,7 +1313,7 @@ struct SidebarProjectRow: View {
             .buttonStyle(.plain)
 
             Button(action: onDelete) {
-                Image(systemName: "xmark")
+                Image(systemName: "trash")
                     .font(.system(size: 11.5))
                     .foregroundColor(.secondary.opacity(0.6))
                     .padding(.trailing, 8)
