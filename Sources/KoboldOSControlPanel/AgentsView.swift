@@ -119,7 +119,7 @@ class AgentsStore: ObservableObject {
 
 struct AgentsView: View {
     @ObservedObject var viewModel: RuntimeViewModel
-    @StateObject private var store = AgentsStore.shared
+    @ObservedObject private var store = AgentsStore.shared
     @State private var expandedId: String? = nil
 
     var body: some View {

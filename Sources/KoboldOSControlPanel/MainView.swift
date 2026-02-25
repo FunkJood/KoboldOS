@@ -1447,7 +1447,7 @@ struct PersistentThinkingBar: View {
 struct GlobalHeaderBar: View {
     @ObservedObject var viewModel: RuntimeViewModel
     @Binding var showNotifications: Bool
-    @StateObject private var weatherManager = WeatherManager.shared
+    @ObservedObject private var weatherManager = WeatherManager.shared
     @StateObject private var sysMonitor = SystemMetricsMonitor()
     @State private var sysTimer: Timer? = nil
 

@@ -488,7 +488,7 @@ struct OnboardingView: View {
 
     // MARK: - Models Download View
 
-    @StateObject private var modelManager = ModelDownloadManager.shared
+    @ObservedObject private var modelManager = ModelDownloadManager.shared
     @State private var downloadChat: Bool = true
 
     var modelsView: some View {

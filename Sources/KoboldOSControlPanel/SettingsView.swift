@@ -13,10 +13,10 @@ import KoboldCore
 struct SettingsView: View {
     @ObservedObject var viewModel: RuntimeViewModel
     @EnvironmentObject var l10n: LocalizationManager
-    @StateObject private var launchAgent = LaunchAgentManager.shared
-    @StateObject private var agentsStore = AgentsStore.shared
-    @StateObject private var updateManager = UpdateManager.shared
-    @StateObject private var toolEnv = ToolEnvironment.shared
+    @ObservedObject private var launchAgent = LaunchAgentManager.shared
+    @ObservedObject private var agentsStore = AgentsStore.shared
+    @ObservedObject private var updateManager = UpdateManager.shared
+    @ObservedObject private var toolEnv = ToolEnvironment.shared
 
     @State private var selectedSection: String = "Allgemein"
     @State private var ollamaModels: [String] = []
@@ -1555,7 +1555,6 @@ struct SettingsView: View {
 
     // MARK: - Verbindungen
 
-    @AppStorage("kobold.notificationChannel") private var notificationChannel: String = "gui"
     @State private var iMessageAvailable: Bool = false
 
     // MARK: - Weather Settings
@@ -1751,27 +1750,6 @@ struct SettingsView: View {
     @ViewBuilder
     private func connectionsSection() -> some View {
         sectionTitle("Verbindungen")
-
-        // Standardnachrichtenkanal
-        FuturisticBox(icon: "bell.badge.fill", title: "Standardnachrichtenkanal", accent: .koboldGold) {
-                Text("Wähle wo Updates und Benachrichtigungen ankommen.")
-                    .font(.caption).foregroundColor(.secondary)
-
-                Picker("Kanal", selection: $notificationChannel) {
-                    Label("GUI (Standard)", systemImage: "desktopcomputer").tag("gui")
-                    Label("Telegram", systemImage: "paperplane.fill").tag("telegram")
-                    Label("GUI + Telegram", systemImage: "bell.and.waves.left.and.right.fill").tag("both")
-                }
-                .pickerStyle(.segmented)
-                .frame(maxWidth: 400)
-
-                if notificationChannel.contains("telegram") || notificationChannel == "both" {
-                    if !telegramRunning {
-                        Label("Telegram-Bot ist nicht aktiv — konfiguriere ihn weiter unten.", systemImage: "exclamationmark.triangle.fill")
-                            .font(.caption).foregroundColor(.orange)
-                    }
-                }
-        }
 
         // Row 1: Google + SoundCloud
         HStack(alignment: .top, spacing: 12) {
@@ -4109,7 +4087,7 @@ struct SettingsView: View {
 
     // MARK: - Proaktive Einstellungen
 
-    @StateObject private var proactiveEngine = ProactiveEngine.shared
+    @ObservedObject private var proactiveEngine = ProactiveEngine.shared
 
     // proactiveSettingsSection moved into memorySettingsSection above
 
@@ -4284,7 +4262,7 @@ private extension Int {
 // MARK: - Idle Tasks Settings (eingebettet in Allgemein)
 
 struct IdleTasksSettingsView: View {
-    @StateObject private var proactiveEngine = ProactiveEngine.shared
+    @ObservedObject private var proactiveEngine = ProactiveEngine.shared
     @State private var showAddForm = false
     @State private var newIdleName = ""
     @State private var newIdlePrompt = ""

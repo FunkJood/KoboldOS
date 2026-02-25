@@ -97,13 +97,13 @@ struct DashboardView: View {
     @ObservedObject var viewModel: RuntimeViewModel
     @EnvironmentObject var l10n: LocalizationManager
     @StateObject private var sysMonitor = SystemMetricsMonitor()
-    @StateObject private var proactiveEngine = ProactiveEngine.shared
-    @StateObject private var suggestionService = SuggestionService.shared
+    @ObservedObject private var proactiveEngine = ProactiveEngine.shared
+    @ObservedObject private var suggestionService = SuggestionService.shared
     @State private var refreshTimer: Timer? = nil
     @State private var selectedPeriod: MetricsPeriod = .session
     @AppStorage("kobold.koboldName") private var koboldName: String = "KoboldOS"
     @AppStorage("kobold.showAdvancedStats") private var showAdvancedStats: Bool = false
-    @StateObject private var weatherManager = WeatherManager.shared
+    @ObservedObject private var weatherManager = WeatherManager.shared
     @State private var showErrorPopover: Bool = false
     @State private var showProcessManager: Bool = false
     @State private var showWidgetPicker: Bool = false
