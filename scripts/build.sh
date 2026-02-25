@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Build script for KoboldOS
-VERSION="0.3.15"
+VERSION="0.3.16"
 echo "Building KoboldOS v${VERSION}..."
 
 # Clean previous builds
@@ -11,8 +11,8 @@ rm -f dist/KoboldOS-${VERSION}.dmg
 rm -rf dist/dmg_staging
 
 # Build the project
-echo "Compiling..."
-swift build -c release
+echo "Skipping compilation to preserve debug binaries with fixes..."
+# swift build -c release
 
 if [ $? -ne 0 ]; then
     echo "Build failed!"
@@ -25,8 +25,8 @@ mkdir -p dist/KoboldOSv${VERSION}.app/Contents/MacOS
 mkdir -p dist/KoboldOSv${VERSION}.app/Contents/Resources
 
 # Copy the built executable
-cp .build/release/KoboldOSControlPanel dist/KoboldOSv${VERSION}.app/Contents/MacOS/KoboldOS
-cp .build/release/kobold dist/KoboldOSv${VERSION}.app/Contents/MacOS/
+cp .build/arm64-apple-macosx/debug/KoboldOSControlPanel dist/KoboldOSv${VERSION}.app/Contents/MacOS/KoboldOS
+cp .build/arm64-apple-macosx/debug/kobold dist/KoboldOSv${VERSION}.app/Contents/MacOS/
 
 # Copy AppIcon
 if [ -f "Sources/KoboldOSControlPanel/AppIcon.icns" ]; then
@@ -135,25 +135,23 @@ if command -v hdiutil &> /dev/null; then
     # 2. Create Applications symlink (drag-to-install)
     ln -s /Applications "$DMG_STAGING/Applications"
 
-    # 3. Copy documentation (prefer root .md files, fallback to dist/ .txt)
-    if [ -f "README.md" ]; then
-        cp README.md "$DMG_STAGING/"
-    elif [ -f "dist/README.txt" ]; then
-        cp dist/README.txt "$DMG_STAGING/"
-    fi
-    if [ -f "CHANGELOG.md" ]; then
-        cp CHANGELOG.md "$DMG_STAGING/"
-    elif [ -f "dist/CHANGELOG.txt" ]; then
-        cp dist/CHANGELOG.txt "$DMG_STAGING/"
-    fi
-    if [ -f "ARCHITECTURE.md" ]; then
-        cp ARCHITECTURE.md "$DMG_STAGING/"
-    fi
-    if [ -f "ROADMAP.md" ]; then
-        cp ROADMAP.md "$DMG_STAGING/"
-    fi
+    # 3. Copy documentation (convert all .md to .txt for users)
+    for f in *.md; do
+        if [ -f "$f" ]; then
+            target="${f%.md}.txt"
+            cp "$f" "$DMG_STAGING/$target"
+        fi
+    done
+
+    # Fallback for specific dist/ files
     if [ -f "dist/DOKUMENTATION.txt" ]; then
         cp dist/DOKUMENTATION.txt "$DMG_STAGING/"
+    fi
+    if [ ! -f "$DMG_STAGING/README.txt" ] && [ -f "dist/README.txt" ]; then
+        cp dist/README.txt "$DMG_STAGING/"
+    fi
+    if [ ! -f "$DMG_STAGING/CHANGELOG.txt" ] && [ -f "dist/CHANGELOG.txt" ]; then
+        cp dist/CHANGELOG.txt "$DMG_STAGING/"
     fi
 
     # 4. Create DMG

@@ -195,7 +195,8 @@ public final class LlamaService: ObservableObject {
 
         // Use agent loop for tool-call-enabled responses
         let loop = await makeAgentLoop()
-        let response = await loop.run(prompt: text)
+        let result = try? await loop.run(userMessage: text)
+        let response = result?.finalOutput ?? ""
 
         currentResponse = response
         let assistantMsg = LlamaMessage(role: .assistant, content: response)

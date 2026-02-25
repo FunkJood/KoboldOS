@@ -1,5 +1,30 @@
 # KoboldOS Changelog
 
+## Alpha v0.3.16 — 2026-02-25
+
+### Sub-Agent Live-Streaming
+- **SubAgentStepRelay Actor**: Leitet Sub-Agent-Schritte live an den Parent-Stream weiter.
+- **DelegateTaskTool**: Nutzt jetzt `runStreaming()` statt `run()` für Echtzeit-Feedback.
+- **Thinking-Box**: Sub-Agent Think/ToolCall/ToolResult erscheinen live im UI.
+- **Profil-Tags**: Steps werden mit `[profil]` getaggt für visuelle Unterscheidung.
+- **AgentLoop**: `agentID` als public Property gespeichert.
+
+### @StateObject Render-Loop Fix
+- **@ObservedObject Migration**: 12x `@StateObject` mit `.shared` Singletons wurden durch `@ObservedObject` ersetzt.
+- **Betroffene Views**: DashboardView, SettingsView, MainView, OnboardingView, AgentsView.
+- **CPU-Optimierung**: Verhindert kaskadierende `objectWillChange` Render-Loops.
+
+### Timeouts & Stabilität
+- **Sub-Agent Default**: Timeout auf 600s (10 Min) erhöht (war 300s).
+- **Tool-Timeout**: Auf 300s erhöht (war 120s).
+- **Delegate-Timeout**: Auf 900s (15 Min) erhöht (war 300s).
+- **SettingsView Fix**: Defekte MCP-Referenzen und Code-Fragmentierung bereinigt.
+
+### Statistik
+- ~48.400 Lines of Code (Swift)
+
+---
+
 ## Alpha v0.3.15 — 2026-02-25
 
 ### Semantisches RAG-System (Echte Vektorsuche für Gedächtnis)

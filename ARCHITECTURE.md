@@ -69,6 +69,9 @@ while readSoFar < remaining {
 ### PID-based stale instance detection
 The `/health` response includes the process PID. On startup, `RuntimeViewModel.checkHealthIsOurProcess()` verifies the PID matches `ProcessInfo.processInfo.processIdentifier`. If a stale daemon from a previous app instance is detected, `RuntimeManager.pingHealth()` kills it with `SIGTERM` and restarts.
 
+### Sub-Agent Live-Streaming
+New in v0.3.16: `SubAgentStepRelay` (actor) allows streaming events from delegated sub-agents back to the primary agent's stream. This enables the UI to show "Thinking..." steps from sub-agents in real-time.
+
 ---
 
 ## 3. The Agent Loop

@@ -2,7 +2,7 @@
 
 **KoboldOS** is a native macOS application that runs a self-contained AI agent system locally on your Mac. It wraps an Ollama-backed LLM in a full agent loop with tools, persistent memory, a scheduling system, and a polished SwiftUI control panel — no cloud required.
 
-**Current version: Alpha v0.3.15**
+**Current version: Alpha v0.3.16**
 
 ---
 
@@ -15,10 +15,10 @@ ollama pull llama3.2  # or any other model
 
 # 2. Build and run KoboldOS
 swift build -c release
-bash scripts/build.sh  # creates ~/Desktop/KoboldOS-0.3.15.dmg
+bash scripts/build.sh  # creates ~/Desktop/KoboldOS-0.3.16.dmg
 ```
 
-Or just open `~/Desktop/KoboldOS-0.3.15.dmg`, drag to Applications, and launch.
+Or just open `~/Desktop/KoboldOS-0.3.16.dmg`, drag to Applications, and launch.
 
 ---
 
