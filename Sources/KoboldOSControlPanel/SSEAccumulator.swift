@@ -76,25 +76,30 @@ actor SSEAccumulator {
         let subAgent = json["subAgent"] as? String
         let confidence = json["confidence"] as? Double
 
+        // Tag content with sub-agent name if present (for live streaming from sub-agents)
+        let isSubStep = subAgent != nil && type != "subAgentSpawn" && type != "subAgentResult"
+        let displayContent = isSubStep ? "[\(subAgent!)] \(content)" : content
+        let displayTool = isSubStep ? "[\(subAgent!)] \(tool)" : tool
+
         switch type {
         case "think":
-            let entry = ThinkingEntry(type: .thought, content: content, toolName: "", success: true)
+            let entry = ThinkingEntry(type: .thought, content: displayContent, toolName: "", success: true)
             pendingSteps.append(entry)
-            let preview = content.count > 100 ? String(content.prefix(97)) + "..." : content
+            let preview = displayContent.count > 100 ? String(displayContent.prefix(97)) + "..." : displayContent
             pendingThoughtNotifications.append(preview)
 
         case "toolCall":
             totalToolStepCount += 1
-            let entry = ThinkingEntry(type: .toolCall, content: content, toolName: tool, success: true)
+            let entry = ThinkingEntry(type: .toolCall, content: displayContent, toolName: displayTool, success: true)
             pendingSteps.append(entry)
-            pendingToolNotifications.append(tool)
+            pendingToolNotifications.append(displayTool)
             // Detect checklist tool calls
             if tool == "checklist" {
                 parseChecklistAction(content)
             }
 
         case "toolResult":
-            let entry = ThinkingEntry(type: .toolResult, content: content, toolName: tool, success: success)
+            let entry = ThinkingEntry(type: .toolResult, content: displayContent, toolName: displayTool, success: success)
             pendingSteps.append(entry)
 
         case "finalAnswer":

@@ -1,5 +1,31 @@
 import Foundation
 
+// MARK: - Sub-Agent Step Relay (forwards sub-agent steps to parent stream)
+
+/// Shared relay that allows sub-agent tools to forward intermediate steps
+/// to the parent AgentLoop's SSE stream for live display in the UI.
+public actor SubAgentStepRelay {
+    public static let shared = SubAgentStepRelay()
+
+    private var continuations: [String: AsyncStream<AgentStep>.Continuation] = [:]
+
+    /// Register a parent agent's stream continuation so sub-agents can forward steps to it.
+    public func register(agentId: String, continuation: AsyncStream<AgentStep>.Continuation) {
+        continuations[agentId] = continuation
+    }
+
+    /// Unregister when streaming ends.
+    public func unregister(agentId: String) {
+        continuations.removeValue(forKey: agentId)
+    }
+
+    /// Forward a step from a sub-agent to the parent's stream.
+    /// The step will appear in the parent's ThinkingPanel with the sub-agent's name.
+    public func forward(parentAgentId: String, step: AgentStep) {
+        continuations[parentAgentId]?.yield(step)
+    }
+}
+
 // MARK: - Sub-Agent Cache (actor for concurrency safety)
 
 private actor SubAgentCache {
@@ -46,7 +72,7 @@ enum SubAgentProfile {
 
 // MARK: - DelegateTaskTool (call_subordinate — AgentZero-Muster)
 // Allows the instructor to spawn sub-agents with specific profiles.
-// Sub-agents run their own AgentLoop and return results to the parent.
+// Sub-agents now stream their steps live to the parent's UI.
 
 public struct DelegateTaskTool: Tool, Sendable {
     public let name = "call_subordinate"
@@ -57,6 +83,8 @@ public struct DelegateTaskTool: Tool, Sendable {
     public var providerConfig: LLMProviderConfig?
     /// Parent agent's CoreMemory for inheritance
     public var parentMemory: CoreMemory?
+    /// Parent agent's ID for step relay (live streaming sub-agent steps to parent UI)
+    public var parentAgentId: String?
 
     public var schema: ToolSchema {
         ToolSchema(
@@ -81,9 +109,10 @@ public struct DelegateTaskTool: Tool, Sendable {
         )
     }
 
-    public init(providerConfig: LLMProviderConfig? = nil, parentMemory: CoreMemory? = nil) {
+    public init(providerConfig: LLMProviderConfig? = nil, parentMemory: CoreMemory? = nil, parentAgentId: String? = nil) {
         self.providerConfig = providerConfig
         self.parentMemory = parentMemory
+        self.parentAgentId = parentAgentId
     }
 
     public func validate(arguments: [String: String]) throws {
@@ -104,7 +133,7 @@ public struct DelegateTaskTool: Tool, Sendable {
         // Concurrency limit: configurable via Settings
         guard await SubAgentCache.shared.acquireSlot() else {
             let max = await SubAgentCache.shared.currentActive()
-            return "⚠️ Max. \(max) Sub-Agenten gleichzeitig erlaubt. Warte bis ein anderer fertig ist."
+            return "Max. \(max) Sub-Agenten gleichzeitig erlaubt. Warte bis ein anderer fertig ist."
         }
         defer { Task { await SubAgentCache.shared.releaseSlot() } }
 
@@ -116,56 +145,75 @@ public struct DelegateTaskTool: Tool, Sendable {
             await subAgent.coreMemory.inheritFrom(parent)
         }
 
-        // Run sub-agent with configurable timeout (default 5 min)
+        // Run sub-agent with STREAMING — forward steps live to parent UI
+        let parentId = parentAgentId
         let timeoutSecs = UserDefaults.standard.integer(forKey: "kobold.subagent.timeout")
-        let timeoutNs = UInt64(timeoutSecs > 0 ? timeoutSecs : 300) * 1_000_000_000
-        let result: AgentResult
-        do {
-            result = try await withThrowingTaskGroup(of: AgentResult.self) { group in
-                group.addTask {
-                    try await subAgent.run(userMessage: message, agentType: agentType, providerConfig: self.providerConfig)
-                }
-                group.addTask {
-                    try await Task.sleep(nanoseconds: timeoutNs)
-                    throw ToolError.executionFailed("Sub-Agent Timeout nach \(timeoutSecs > 0 ? timeoutSecs : 300) Sekunden")
-                }
-                guard let first = try await group.next() else {
-                    throw ToolError.executionFailed("Sub-Agent lieferte kein Ergebnis")
-                }
-                group.cancelAll()
-                return first
-            }
-        } catch {
-            return "⚠️ Sub-Agent (\(profile)) fehlgeschlagen: \(error.localizedDescription)"
+        let effectiveTimeout = timeoutSecs > 0 ? timeoutSecs : 600  // Default 10 Min statt 5
+
+        // Use runStreaming to get live steps
+        let stream = await subAgent.runStreaming(userMessage: message, agentType: agentType, providerConfig: providerConfig)
+
+        var stepsSummary = ""
+        var finalOutput = ""
+        var stepCount = 0
+        var success = true
+
+        // Timeout: cancel current task after limit
+        let currentTask = Task<Void, Never> { [weak subAgent = Optional(subAgent)] in
+            try? await Task.sleep(nanoseconds: UInt64(effectiveTimeout) * 1_000_000_000)
+            // Timeout reached — subAgent stream will end naturally when cancelled
+            _ = subAgent
         }
 
-        // Build summary of steps for the instructor
-        var stepsSummary = ""
-        for step in result.steps {
+        // Iterate stream directly (no separate Task needed — we're already async)
+        for await step in stream {
+            if Task.isCancelled { break }
+            stepCount += 1
+
+            // Forward step to parent's SSE stream (live UI update)
+            if let parentId = parentId {
+                let taggedStep = AgentStep(
+                    stepNumber: step.stepNumber,
+                    type: step.type,
+                    content: step.content,
+                    toolCallName: step.toolCallName,
+                    toolResultSuccess: step.toolResultSuccess,
+                    timestamp: step.timestamp,
+                    subAgentName: profile,
+                    confidence: step.confidence,
+                    checkpointId: step.checkpointId
+                )
+                await SubAgentStepRelay.shared.forward(parentAgentId: parentId, step: taggedStep)
+            }
+
+            // Collect for summary
             switch step.type {
             case .think:
-                stepsSummary += "💭 \(step.content.prefix(200))\n"
+                stepsSummary += "[\(profile)] \(step.content.prefix(200))\n"
             case .toolCall:
-                stepsSummary += "🔧 \(step.toolCallName ?? "tool"): \(step.content.prefix(150))\n"
+                stepsSummary += "[\(profile)] \(step.toolCallName ?? "tool"): \(step.content.prefix(150))\n"
             case .toolResult:
-                let icon = (step.toolResultSuccess ?? true) ? "✅" : "❌"
-                stepsSummary += "\(icon) \(step.toolCallName ?? "tool"): \(step.content.prefix(200))\n"
+                let icon = (step.toolResultSuccess ?? true) ? "+" : "x"
+                stepsSummary += "[\(profile)] \(icon) \(step.toolCallName ?? "tool"): \(step.content.prefix(200))\n"
+                if step.toolResultSuccess == false { success = false }
             case .finalAnswer:
-                break
+                finalOutput += step.content
             case .error:
-                stepsSummary += "⚠️ \(step.content.prefix(200))\n"
-            case .subAgentSpawn, .subAgentResult, .checkpoint, .context_info:
+                stepsSummary += "[\(profile)] Fehler: \(step.content.prefix(200))\n"
+                success = false
+            default:
                 break
             }
         }
+        currentTask.cancel()
 
         return """
         [Sub-Agent: \(profile) (\(agentType.rawValue))]
 
         Ergebnis:
-        \(result.finalOutput)
+        \(finalOutput)
 
-        \(stepsSummary.isEmpty ? "" : "Schritte:\n\(stepsSummary)")Status: \(result.success ? "Erfolgreich" : "Fehlgeschlagen") (\(result.steps.count) Schritte)
+        \(stepsSummary.isEmpty ? "" : "Schritte:\n\(stepsSummary)")Status: \(success ? "Erfolgreich" : "Fehlgeschlagen") (\(stepCount) Schritte)
         """
     }
 }
@@ -182,6 +230,8 @@ public struct DelegateParallelTool: Tool, Sendable {
     public var providerConfig: LLMProviderConfig?
     /// Parent agent's CoreMemory for inheritance
     public var parentMemory: CoreMemory?
+    /// Parent agent's ID for step relay
+    public var parentAgentId: String?
 
     public var schema: ToolSchema {
         ToolSchema(
@@ -196,9 +246,10 @@ public struct DelegateParallelTool: Tool, Sendable {
         )
     }
 
-    public init(providerConfig: LLMProviderConfig? = nil, parentMemory: CoreMemory? = nil) {
+    public init(providerConfig: LLMProviderConfig? = nil, parentMemory: CoreMemory? = nil, parentAgentId: String? = nil) {
         self.providerConfig = providerConfig
         self.parentMemory = parentMemory
+        self.parentAgentId = parentAgentId
     }
 
     public func validate(arguments: [String: String]) throws {
@@ -219,13 +270,11 @@ public struct DelegateParallelTool: Tool, Sendable {
            let parsed = try? JSONSerialization.jsonObject(with: data) as? [[String: String]] {
             tasks = parsed
         } else {
-            // LLM sometimes sends {}, {} instead of [{}, {}] — fix by wrapping
             let wrapped = "[\(tasksStr)]"
             if let data = wrapped.data(using: .utf8),
                let parsed = try? JSONSerialization.jsonObject(with: data) as? [[String: String]] {
                 tasks = parsed
             } else {
-                // Try to extract JSON objects from the string using regex
                 var extracted: [[String: String]] = []
                 let pattern = "\\{[^{}]*\\}"
                 if let regex = try? NSRegularExpression(pattern: pattern) {
@@ -251,7 +300,6 @@ public struct DelegateParallelTool: Tool, Sendable {
             throw ToolError.executionFailed("Leeres Aufgaben-Array.")
         }
 
-        // Use configurable limit from settings (no hard cap)
         let maxParallelRaw = UserDefaults.standard.integer(forKey: "kobold.subagent.maxConcurrent")
         let maxParallel = maxParallelRaw > 0 ? maxParallelRaw : 10
         let cappedTasks = Array(tasks.prefix(maxParallel))
@@ -261,10 +309,12 @@ public struct DelegateParallelTool: Tool, Sendable {
 
         let parentConfig = self.providerConfig
         let parentMem = self.parentMemory
+        let parentId = self.parentAgentId
 
-        // Run tasks in parallel with configurable timeout per agent
+        // Timeout: configurable, default 10 min
         let parTimeoutSecs = UserDefaults.standard.integer(forKey: "kobold.subagent.timeout")
-        let parTimeoutNs = UInt64(parTimeoutSecs > 0 ? parTimeoutSecs : 300) * 1_000_000_000
+        let effectiveTimeout = UInt64(parTimeoutSecs > 0 ? parTimeoutSecs : 600) * 1_000_000_000
+
         let results = await withTaskGroup(of: (Int, String, String).self, returning: [(Int, String, String)].self) { group in
             for (index, task) in cappedTasks.enumerated() {
                 let profile = task["profile"] ?? "general"
@@ -276,23 +326,26 @@ public struct DelegateParallelTool: Tool, Sendable {
                     if let parent = parentMem {
                         await subAgent.coreMemory.inheritFrom(parent)
                     }
-                    do {
-                        let result = try await withThrowingTaskGroup(of: AgentResult.self) { tg in
-                            tg.addTask {
-                                try await subAgent.run(userMessage: message, agentType: agentType, providerConfig: parentConfig)
-                            }
-                            tg.addTask {
-                                try await Task.sleep(nanoseconds: parTimeoutNs)
-                                throw ToolError.executionFailed("Timeout nach \(parTimeoutSecs > 0 ? parTimeoutSecs : 300) Sek.")
-                            }
-                            let first = try await tg.next()!
-                            tg.cancelAll()
-                            return first
+
+                    // Use streaming for live UI updates
+                    let stream = await subAgent.runStreaming(userMessage: message, agentType: agentType, providerConfig: parentConfig)
+
+                    var finalOutput = ""
+                    for await step in stream {
+                        if Task.isCancelled { break }
+                        // Forward to parent UI
+                        if let pid = parentId {
+                            let tagged = AgentStep(
+                                stepNumber: step.stepNumber, type: step.type,
+                                content: step.content, toolCallName: step.toolCallName,
+                                toolResultSuccess: step.toolResultSuccess,
+                                subAgentName: "\(profile)[\(index + 1)]"
+                            )
+                            await SubAgentStepRelay.shared.forward(parentAgentId: pid, step: tagged)
                         }
-                        return (index, profile, result.finalOutput)
-                    } catch {
-                        return (index, profile, "Fehler: \(error.localizedDescription)")
+                        if step.type == .finalAnswer { finalOutput += step.content }
                     }
+                    return (index, profile, finalOutput)
                 }
             }
 

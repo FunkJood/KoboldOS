@@ -97,6 +97,7 @@ public struct AgentResult: Sendable {
 public actor AgentLoop {
     private let registry: ToolRegistry
     private let parser: ToolCallParser
+    public let agentID: String
     public let coreMemory: CoreMemory
     private var ruleEngine: ToolRuleEngine
     /// Dedicated LLMRunner for this AgentLoop instance.
@@ -158,6 +159,7 @@ public actor AgentLoop {
     ///   - llmRunner: Optional dedicated LLMRunner. If nil, uses llmRunner.
     ///     Pass a fresh LLMRunner() to avoid actor serialization with concurrent sessions.
     public init(agentID: String = "default", llmRunner: LLMRunner? = nil) {
+        self.agentID = agentID
         self.registry = ToolRegistry()
         self.parser = ToolCallParser()
         self.coreMemory = CoreMemory(agentID: agentID)
@@ -224,9 +226,9 @@ public actor AgentLoop {
         await registry.register(ScreenControlTool())
         #endif
 
-        // Sub-agent delegation (AgentZero-style call_subordinate) — pass provider config + parent memory
-        await registry.register(DelegateTaskTool(providerConfig: providerConfig, parentMemory: coreMemory))
-        await registry.register(DelegateParallelTool(providerConfig: providerConfig, parentMemory: coreMemory))
+        // Sub-agent delegation (AgentZero-style call_subordinate) — pass provider config + parent memory + agentId for live streaming
+        await registry.register(DelegateTaskTool(providerConfig: providerConfig, parentMemory: coreMemory, parentAgentId: agentID))
+        await registry.register(DelegateParallelTool(providerConfig: providerConfig, parentMemory: coreMemory, parentAgentId: agentID))
         // OAuth API tools - macOS only
         #if os(macOS)
         await registry.register(GoogleApiTool())
@@ -832,6 +834,10 @@ public actor AgentLoop {
         return AsyncStream { continuation in
             Task {
               do {
+                // Register continuation for sub-agent step relay (live UI streaming)
+                let relayId = self.agentID
+                await SubAgentStepRelay.shared.register(agentId: relayId, continuation: continuation)
+                defer { Task { await SubAgentStepRelay.shared.unregister(agentId: relayId) } }
                 self.agentType = agentType
                 // Store provider config for sub-agent delegation
                 if let pc = providerConfig, self.currentProviderConfig == nil || self.currentProviderConfig?.apiKey != pc.apiKey {
@@ -1042,7 +1048,7 @@ public actor AgentLoop {
                     }
 
                     // Tool execution with timeout to prevent infinite hangs
-                    let toolTimeoutSecs: UInt64 = call.name.contains("subordinate") || call.name.contains("parallel") || call.name.contains("delegate") ? 300 : 120
+                    let toolTimeoutSecs: UInt64 = call.name.contains("subordinate") || call.name.contains("parallel") || call.name.contains("delegate") ? 900 : 300
                     let result: ToolResult
                     do {
                         result = try await withThrowingTaskGroup(of: ToolResult.self) { group in
