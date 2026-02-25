@@ -1448,6 +1448,8 @@ struct GlobalHeaderBar: View {
     @ObservedObject var viewModel: RuntimeViewModel
     @Binding var showNotifications: Bool
     @StateObject private var weatherManager = WeatherManager.shared
+    @StateObject private var sysMonitor = SystemMetricsMonitor()
+    @State private var sysTimer: Timer? = nil
 
     private var formattedDate: String {
         let f = DateFormatter()
@@ -1476,10 +1478,33 @@ struct GlobalHeaderBar: View {
 
             Spacer()
 
-            // Uhrzeit mittig
-            Text(formattedTime)
-                .font(.system(size: 15.5, weight: .semibold, design: .monospaced))
-                .foregroundColor(.koboldEmerald)
+            // CPU | Uhr | RAM (mittig)
+            HStack(spacing: 12) {
+                // CPU links neben der Uhr
+                HStack(spacing: 4) {
+                    Image(systemName: "cpu.fill")
+                        .font(.system(size: 11.5))
+                        .foregroundColor(sysMonitor.cpuUsage > 80 ? .red : sysMonitor.cpuUsage > 60 ? .orange : .secondary)
+                    Text(String(format: "%.0f%%", sysMonitor.cpuUsage))
+                        .font(.system(size: 13, weight: .medium, design: .monospaced))
+                        .foregroundColor(sysMonitor.cpuUsage > 80 ? .red : sysMonitor.cpuUsage > 60 ? .orange : .secondary)
+                }
+
+                // Uhrzeit mittig
+                Text(formattedTime)
+                    .font(.system(size: 15.5, weight: .semibold, design: .monospaced))
+                    .foregroundColor(.koboldEmerald)
+
+                // RAM rechts neben der Uhr
+                HStack(spacing: 4) {
+                    Text(String(format: "%.1f GB", sysMonitor.ramUsedGB))
+                        .font(.system(size: 13, weight: .medium, design: .monospaced))
+                        .foregroundColor(sysMonitor.ramUsedGB / max(1, sysMonitor.ramTotalGB) > 0.85 ? .red : .secondary)
+                    Image(systemName: "memorychip.fill")
+                        .font(.system(size: 11.5))
+                        .foregroundColor(sysMonitor.ramUsedGB / max(1, sysMonitor.ramTotalGB) > 0.85 ? .red : .secondary)
+                }
+            }
 
             Spacer()
 
@@ -1499,21 +1524,6 @@ struct GlobalHeaderBar: View {
                             .foregroundColor(.secondary)
                     }
                 }
-            }
-
-            // Aktive Agents
-            let runningAgents = viewModel.activeSessions.filter { $0.status == .running }.count
-            if runningAgents > 0 {
-                HStack(spacing: 4) {
-                    Circle()
-                        .fill(Color.koboldEmerald)
-                        .frame(width: 6, height: 6)
-                    Text("\(runningAgents) Agent\(runningAgents == 1 ? "" : "s")")
-                        .font(.system(size: 13.5, weight: .semibold))
-                        .foregroundColor(.koboldEmerald)
-                }
-                .padding(.horizontal, 8).padding(.vertical, 3)
-                .background(Capsule().fill(Color.koboldEmerald.opacity(0.12)))
             }
 
             // Online badge
@@ -1548,7 +1558,17 @@ struct GlobalHeaderBar: View {
             }
         }
         .padding(.horizontal, 4)
-        .onAppear { weatherManager.fetchWeatherIfNeeded() }
+        .onAppear {
+            weatherManager.fetchWeatherIfNeeded()
+            sysMonitor.update()
+            sysTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { _ in
+                Task { @MainActor in sysMonitor.update() }
+            }
+        }
+        .onDisappear {
+            sysTimer?.invalidate()
+            sysTimer = nil
+        }
         .padding(.vertical, 10).padding(.horizontal, 14)
         .background(
             ZStack {

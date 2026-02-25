@@ -438,6 +438,6 @@ public actor SkillLoader {
         UserDefaults.standard.set(enableByDefault, forKey: enabledKey)
 
         // Write versioned marker so upgrades can install new skills
-        try? "v0.1.7".write(to: marker, atomically: true, encoding: .utf8)
+        try? currentSkillsVersion.write(to: marker, atomically: true, encoding: .utf8)
     }
 }

@@ -143,10 +143,12 @@ final class SessionAgentState {
     var contextPromptTokens: Int = 0
     var contextCompletionTokens: Int = 0
     var contextUsagePercent: Double = 0.0
-    var contextWindowSize: Int = 150_000
+    var contextWindowSize: Int
 
     init(sessionId: UUID) {
         self.sessionId = sessionId
+        let stored = UserDefaults.standard.integer(forKey: "kobold.context.windowSize")
+        self.contextWindowSize = stored > 0 ? stored : 32768
     }
 
     func cancel() {
@@ -267,7 +269,8 @@ class RuntimeViewModel: ObservableObject {
         let newPT = state?.contextPromptTokens ?? 0
         let newCT = state?.contextCompletionTokens ?? 0
         let newPct = state?.contextUsagePercent ?? 0.0
-        let newWS = state?.contextWindowSize ?? 150_000
+        let fallbackCtx = UserDefaults.standard.integer(forKey: "kobold.context.windowSize")
+        let newWS = state?.contextWindowSize ?? (fallbackCtx > 0 ? fallbackCtx : 32768)
         if contextPromptTokens != newPT { contextPromptTokens = newPT }
         if contextCompletionTokens != newCT { contextCompletionTokens = newCT }
         if contextUsagePercent != newPct { contextUsagePercent = newPct }
@@ -296,7 +299,10 @@ class RuntimeViewModel: ObservableObject {
     var contextPromptTokens: Int = 0
     var contextCompletionTokens: Int = 0
     var contextUsagePercent: Double = 0.0
-    var contextWindowSize: Int = 150_000
+    var contextWindowSize: Int = {
+        let stored = UserDefaults.standard.integer(forKey: "kobold.context.windowSize")
+        return stored > 0 ? stored : 32768
+    }()
 
     // Notifications
     @Published var notifications: [KoboldNotification] = []
@@ -2366,6 +2372,8 @@ class RuntimeViewModel: ObservableObject {
     }
 
     func switchToSession(_ session: ChatSession) {
+        // Guard: Keine Aktion wenn bereits aktive Session geklickt wird
+        guard session.id != currentSessionId else { return }
         ksession("SWITCH from=\(currentSessionId.uuidString.prefix(8)) to=\(session.id.uuidString.prefix(8))", session.id,
                  ["msgCount": session.messages.count, "title": String(session.title.prefix(30))])
         // Flush ALL session buffers before switching — no message loss

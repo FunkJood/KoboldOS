@@ -145,7 +145,7 @@ struct DashboardView: View {
     private var enabledWidgets: [DashboardWidgetId] {
         // Cache decoded widgets to avoid JSON decode on every SwiftUI render pass
         if enabledWidgetsJSON == lastWidgetsJSON, let cached = cachedWidgets { return cached }
-        let defaults: [DashboardWidgetId] = [.koboldPet, .systemStatus, .shortcuts, .metrics, .recentActivity]
+        let defaults: [DashboardWidgetId] = [.koboldPet, .shortcuts, .metrics, .recentActivity]
         guard !enabledWidgetsJSON.isEmpty,
               let data = enabledWidgetsJSON.data(using: .utf8),
               let ids = try? JSONDecoder().decode([String].self, from: data) else {
