@@ -196,7 +196,7 @@ struct OnboardingView: View {
         var agentType: String {
             switch self {
             case .coding: return "coder"
-            case .research: return "researcher"
+            case .research: return "web"
             default: return "general"
             }
         }
@@ -489,7 +489,6 @@ struct OnboardingView: View {
     // MARK: - Models Download View
 
     @StateObject private var modelManager = ModelDownloadManager.shared
-    @State private var downloadSD: Bool = true
     @State private var downloadChat: Bool = true
 
     var modelsView: some View {
@@ -500,7 +499,7 @@ struct OnboardingView: View {
                 .font(.system(size: 29, weight: .bold))
                 .foregroundColor(.primary)
 
-            Text("Lade empfohlene KI-Modelle für Chat und Bildgenerierung.")
+            Text("Lade das KI-Modell für den Chat.")
                 .font(.body)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
@@ -529,28 +528,6 @@ struct OnboardingView: View {
                     }
                 }
 
-                // SD model
-                GlassCard(padding: 12, cornerRadius: 10) {
-                    HStack {
-                        Toggle(isOn: $downloadSD) {
-                            VStack(alignment: .leading, spacing: 4) {
-                                HStack(spacing: 6) {
-                                    Image(systemName: modelManager.sdModelInstalled ? "checkmark.circle.fill" : "photo.fill")
-                                        .foregroundColor(modelManager.sdModelInstalled ? .koboldEmerald : .koboldGold)
-                                    Text("Bild-Modell").font(.system(size: 15.5, weight: .semibold))
-                                    Text("(Stable Diffusion)").font(.caption).foregroundColor(.secondary)
-                                }
-                                Text(modelManager.sdModelInstalled ? "Bereits installiert" : "Optional — CoreML Bildgenerierung (~1.5 GB)")
-                                    .font(.caption).foregroundColor(.secondary)
-                            }
-                        }
-                        .toggleStyle(.checkbox)
-                    }
-
-                    if modelManager.isDownloadingSD {
-                        GlassProgressBar(value: modelManager.sdProgress, label: modelManager.sdStatus)
-                    }
-                }
             }
             .frame(maxWidth: 420)
 
@@ -567,9 +544,6 @@ struct OnboardingView: View {
                 GlassButton(title: "Herunterladen & Starten", icon: "sparkles", isPrimary: true) {
                     if downloadChat && !modelManager.chatModelInstalled {
                         modelManager.downloadChatModel()
-                    }
-                    if downloadSD && !modelManager.sdModelInstalled {
-                        modelManager.downloadSDModel()
                     }
                     // Start hatching (downloads continue in background)
                     withAnimation(.spring()) { step = .hatching }

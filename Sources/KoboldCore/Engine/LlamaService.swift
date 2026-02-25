@@ -157,6 +157,7 @@ public final class LlamaService: ObservableObject {
         // Add user message
         let userMsg = LlamaMessage(role: .user, content: text)
         conversationHistory.append(userMsg)
+        trimHistoryIfNeeded()
 
         do {
             // Build conversation prompt
@@ -167,6 +168,7 @@ public final class LlamaService: ObservableObject {
             // Add assistant response
             let assistantMsg = LlamaMessage(role: .assistant, content: response)
             conversationHistory.append(assistantMsg)
+            trimHistoryIfNeeded()
 
             // Persist history
             saveHistory()
@@ -215,6 +217,14 @@ public final class LlamaService: ObservableObject {
             case .assistant: return "Assistant: \(msg.content)"
             }
         }.joined(separator: "\n")
+    }
+
+    /// Trim in-memory history to prevent unbounded growth
+    private func trimHistoryIfNeeded() {
+        let maxHistory = 200
+        if conversationHistory.count > maxHistory {
+            conversationHistory = Array(conversationHistory.suffix(maxHistory))
+        }
     }
 
     // MARK: - History Persistence (max 100 messages)

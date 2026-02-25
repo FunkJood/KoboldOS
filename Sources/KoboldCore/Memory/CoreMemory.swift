@@ -118,7 +118,7 @@ public actor CoreMemory {
             - skill_write: Skills erstellen/verwalten (.md Dateien die dein Verhalten erweitern)
             - task_manage: Geplante Aufgaben erstellen und verwalten (cron-artig)
             - workflow_manage: Workflow-Definitionen erstellen
-            - call_subordinate: Sub-Agenten delegieren (coder, researcher, planner, reviewer)
+            - call_subordinate: Sub-Agenten delegieren (coder, web, planner, reviewer)
             - delegate_parallel: Mehrere Sub-Agenten gleichzeitig starten
             - calendar: Apple Kalender-Events und Erinnerungen verwalten
             - contacts: Apple Kontakte durchsuchen und lesen

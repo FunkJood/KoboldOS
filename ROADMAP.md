@@ -1,241 +1,141 @@
-# KoboldOS Roadmap
+# KoboldOS — Roadmap & Planung
 
-## Alpha v0.2.8 (Aktuell — 2026-02-23)
-
-### v0.2.8 Features
-- **Teams**: Echtes 3-Runden-Diskursmodell, Persistenz, Organigramm, Chat-Controls
-- **PlaywrightTool**: Chrome-Automatisierung (navigate, click, fill, screenshot, evaluate)
-- **ScreenControlTool**: Maus/Tastatur/Screenshot/OCR (CGEvent, Vision.framework)
-- **Goals-System**: Ziele unter Persönlichkeit → Agent System-Prompt
-- **Idle Tasks**: User-definierbare Aufgaben mit Cooldown, Quiet Hours, Kategorien
-- **Heartbeat**: Konfigurierbarer Timer, Rate-Limiting, Sicherheits-Toggles
-- **Task/Workflow ← Teams**: teamId Integration, Team-Picker, Team-Node
-- **Live Thinking Layers**: Steps + Thinking + Typing nicht-überlappend
-- **SD Crash Fix**: Task.detached für Model-Loading, Modell-Auswahl aus Ordner
-- **Interactive Buttons**: Strikte Ja/Nein-Erkennung
-- **AI-Vorschläge**: SuggestionService via Ollama mit Cache
-- **Settings**: Benachrichtigungen, Debugging & Sicherheit, Heartbeat in Allgemein
-
-### Bisherige Features (v0.2.5 und früher)
-- Agent-gesteuerter Chat mit SSE-Streaming
-- 25+ Tools: Shell, File, Browser, Playwright, Screen Control, Calendar, Contacts, HTTP, AppleScript
-- TTS (AVSpeechSynthesizer), STT (SwiftWhisper), Stable Diffusion (CoreML)
-- CoreMemory (Kurzzeit, Langzeit, Wissen) mit Archivierung
-- Workflow-Editor (n8n-Style Canvas) + Teams-Tab + Marktplatz
-- Scheduled Tasks mit Cron-Expressions
-- Skills-System (.md Dateien)
-- ProactiveEngine (Heartbeat, Idle Tasks, Goals, Suggestions)
-- Multi-Language Support (15 Sprachen)
-- Auto-Update via GitHub Releases
-- MacOS Menu Bar Integration (brain.head.profile Icon)
-- Web-Fernsteuerung + Cloudflare Tunnel
-- Connections: Google, SoundCloud, Telegram, iMessage, A2A
+> Stand: Alpha v0.3.15 — 25. Feb 2026
+> Dieses Dokument beschreibt geplante Features, Überarbeitungen und Entfernungen für zukünftige Versionen.
 
 ---
 
-## v0.3.0 — Kontext-Intelligenz & Memory-Revolution
+## Nächste Version: Alpha v0.4.0 — "Teams & Apps Rewrite"
 
-### Kontext-Management (Prio 1)
-- **Kontext-Bewusstsein**: Agent ist sich IMMER über aktuelle Kontextgröße bewusst
-- **Kontextgröße einstellbar** in Settings (4K, 8K, 16K, 32K, 64K, 128K, 256K)
-- **Kontext-Komprimierung am Ende**: Wenn Kontext voll, automatisch:
-  1. Wichtigstes in Erinnerungen (CoreMemory) speichern
-  2. Stichpunkte/Zusammenfassung für neuen Kontext erstellen
-  3. Alten Kontext archivieren, neuen starten mit Zusammenfassung
-- **Dynamische Konversations-Komprimierung**: Ältere Messages automatisch zusammenfassen
+### Teams-System — Komplette Überarbeitung
 
-### Memory-Upgrade (Prio 1)
-- **Agent verwaltet Memory selbst**: Entscheidet autonom was archiviert/vergessen wird
-- **AI-gefilterte Memory-Retrieval**: LLM filtert relevante Erinnerungen beim Abruf
-- **AI-konsolidierte Memory-Speicherung**: LLM merged Duplikate beim Speichern
-- **Solutions-Memory**: Gespeicherte Code-Snippets und bewährte Patterns
-- **FAISS Vector-DB**: Echte semantische Suche statt TF-IDF
-- **Shared Memory Blocks**: Geteiltes Wissen zwischen Agents
-- **Jeder Agent hat persistente Identität** über Sessions hinweg
+**Aktueller Stand (v0.3.15):**
+- `TeamsGroupView.swift`, `TeamView.swift`, `SubCoordinateTeamTool.swift` existieren
+- Teams funktionieren grundsätzlich (R1/R2/R3 Diskursmodell), sind aber eng mit dem Workflow-Builder verwoben
+- Team-Node im Workflow-Builder ist vorhanden
+- Team-Delegation für ScheduledTasks funktioniert
 
-### Filesystem-Agent
-- **Agent kann PDFs, Dokumente organisieren und referenzieren**
-- Dokument-Indexierung (PDF, Word, Markdown, Code)
-- RAG über lokale Dateien (Retrieval-Augmented Generation)
-- Datei-Zusammenfassungen und Metadaten-Extraktion
+**Problem:**
+- Teams-Code ist über RuntimeViewModel, TasksView, TeamView und TeamsGroupView verteilt
+- Datenmodelle (AgentTeam, TeamAgent, GroupMessage) und View-Code in derselben Datei
+- SubCoordinateTeamTool nutzt Notification-Pattern (ineffizient, schwer debugbar)
+- Team-Node im Workflow-Builder macht den Workflow-Code unnötig komplex
 
-### WebApp als echte UI-Spiegelung
-- **Komplette Spiegelung der nativen SwiftUI-UI** als WebApp
-- Alle Views: Chat, Dashboard, Memory, Tasks, Workflows, Settings
-- Echtzeit-Sync zwischen nativer App und WebApp
-- Responsive Design für Mobile-Browser
+**Geplante Änderungen:**
+- **Teams aus Workflow-Builder lösen** — Team-Node-Typ entfernen, Teams werden eigenständig
+- **Eigene Teams-Ansicht** als klar abgetrennter Bereich (nicht als Sidebar-Tab, sondern modal/sheet)
+- **Vereinfachtes UI** — weniger Boilerplate, klarere Konfiguration von Agents pro Team
+- **Klare Trennung**: Datenmodelle in eigene Datei `TeamModels.swift`
+- **SubCoordinateTeamTool** überarbeiten: direkter async-Aufruf statt Notification-Pattern
+- **Team-Ergebnisse** werden in eigenem Kontext angezeigt, nicht in Chat eingebettet
 
-### Eigene Model-Engine
-- Native GGUF Model Loading (ohne Ollama-Abhängigkeit)
-- Metal-beschleunigte Inferenz auf Apple Silicon
-- Model-Download & Management direkt in der App
-- Quantisierungs-Optionen (Q4, Q5, Q8)
-- Prompt-Caching für schnellere Antworten
+**Konkrete Schritte für v0.4.0:**
+1. `SubCoordinateTeamTool.swift` — Notification-Pattern ersetzen durch direkten async-Aufruf
+2. `TeamView.swift` — Team-Node-Type und `teamId`-Property aus WorkflowNode entfernen
+3. `TeamsGroupView.swift` — Datenmodelle in eigene Datei `TeamModels.swift` auslagern
+4. `RuntimeViewModel.swift` — Team-Code in eigenen `TeamManager` auslagern
+5. `TasksView.swift` — Team-Delegation vereinfachen
 
 ---
 
-## v0.4.0 — Multi-Agent & Tool-Ökosystem
+### Apps-Ansicht — Neuimplementierung
 
-### Multi-Agent System v2
-- **Agent-to-Agent (A2A) Protokoll**: Standardisierte Inter-Agent-Kommunikation
-- **Subordinate Agents**: Eigene Prompts, Tools und Extensions pro Sub-Agent
-- **Multi-Agent Routing**: "Most-specific wins" Hierarchie
-- **Deterministische Routing-Regeln** (peer > role > guild > account > channel)
-- **Isolierte Agents**: Eigene Credentials und Kanäle pro Agent
+**Aktueller Stand (v0.3.15):**
+- `ApplicationsView.swift` und `AppMenuManager.swift` wurden in v0.3.1 entfernt (CPU-Hauptverursacher)
+- Settings → "Apps"-Sektion in v0.3.15 entfernt
+- AppBrowserTool + AppTerminalTool navigieren nicht mehr zu einem Apps-Tab
 
-### Extension & Hook System
-- **Lifecycle Hooks**: before_llm_call, after_tool_result, monologue_end, etc.
-- **Auto-Loading externer Tool-Libraries**: Plugins dynamisch nachladen
-- **Composio Integration**: 1000+ App-Verbindungen (Google, Slack, GitHub, etc.)
-- **LangChain Tool-Kompatibilität**: Bestehende LangChain-Tools nutzen
-- **CrewAI Tool-Kompatibilität**: CrewAI-Tools einbinden
+**Warum entfernt:**
+- Die alte Implementierung nutzte permanente Timer → hohe CPU-Last auch im Idle
+- Screenshots statt echter Fenstereinbettung → keine echte App-Interaktion möglich
+- Redundant mit Shell-Tool + Browser-Tool für die meisten Anwendungsfälle
 
-### Playwright Browser-Automation
-- Vollständige Browser-Steuerung (nicht nur HTTP-Requests)
-- Seiten navigieren, Formulare ausfüllen, Screenshots machen
-- JavaScript-Ausführung auf Webseiten
-- Login-Sessions persistent halten
+**Geplante Neuimplementierung:**
+- **Echte Fenstereinbettung** via `NSWindowController` + `addChildWindow(_:ordered:)` (kein Screenshot)
+- **Lazy Loading** — nur rendern wenn Tab aktiv, sofort pausieren wenn nicht sichtbar
+- **Kein permanenter Timer** — Event-basiertes Update (Fenster-Änderungs-Benachrichtigungen)
+- **Terminal** als PTY-basierter Terminal-Emulator (SwiftTerm oder eigene Implementierung)
+- **Browser** als WKWebView mit Agent-Steuerung (AppBrowserTool navigiert direkt)
+- **Settings** zurückbringen: Shell-Auswahl (zsh/bash), Browser-Startseite, Cookie-Blocking
 
-### Task-System v2
-- Task-Ketten (Task A → Task B → Task C)
-- Bedingte Ausführung (nur wenn Bedingung erfüllt)
-- Heartbeat Scheduler für autonome wiederkehrende Aktionen
-- Task-Protokoll mit Erfolgs/Fehler-History
-
-### REST API
-- **Vollständige REST API** für externe App-Integration
-- Authentifizierung via API-Keys
-- Swagger/OpenAPI Dokumentation
-- Webhooks für Events (Task fertig, Agent-Antwort, etc.)
-
-### Apps-Tab
-- `SidebarTab.apps` im Enum
-- Installierte Skills (.md), CLI-Tools, Python-Scripts als "Apps"
-- Jedes App hat: Name, Icon, Beschreibung, "Ausführen"-Button
-- Interaktives Terminal-Fenster für Skript-Output
-- Node.js Code-Ausführung (neben Python und Bash)
+**Konkrete Schritte für v0.4.0:**
+1. `ApplicationsView.swift` neu schreiben mit echter Fenstereinbettung
+2. `AppMenuManager.swift` ohne Timer, rein event-basiert
+3. `AppBrowserTool.swift` — Navigation zu neuem Apps-Tab reaktivieren
+4. `AppTerminalTool.swift` — Terminal-Sub-Tab reaktivieren
+5. Settings → "Apps"-Sektion zurückbringen (nur sinnvolle Einstellungen)
 
 ---
 
-## v0.5.0 — Voice, Messaging & Canvas
+## Mittelfristig: Alpha v0.4.x
 
-### Voice-Interface
-- **Voice Wake Mode**: Always-on Spracherkennung ("Hey Kobold")
-- **Talk Mode**: Bidirektionale Sprachkonversation
-- **Whisper Integration**: Lokale Speech-to-Text Transkription
-- **ElevenLabs TTS**: Natürliche Sprachausgabe
-- **Voice-Notizen**: Spracheingabe → Agent verarbeitet
+### Memory-System Verbesserungen
+- **Tag-Vorschläge** beim Hinzufügen (basierend auf vorhandenen Tags)
+- **Bulk-Edit**: Mehrere Einträge gleichzeitig löschen oder Typ ändern
+- **Memory-Import**: JSON-Import für Backups einzelner Einträge
+- **Auto-Re-Embedding** wenn Embedding-Modell gewechselt wird
 
-### Messaging-Kanäle
-- **WhatsApp Integration** (Business API / Baileys)
-- **Telegram Integration** (Bot API)
-- **Slack Integration** (Bot/App)
-- **Discord Integration** (Bot)
-- **Signal Integration**
-- **iMessage Integration** (BlueBubbles)
-- **Microsoft Teams Integration**
-- **Google Chat Integration**
-- **Matrix Integration** (offenes Protokoll)
-- **WebChat Widget** (embeddable für eigene Websites)
-- Einheitlicher Message-Router für alle Kanäle
+### Agent-Verbesserungen
+- **Streaming für Sub-Agents**: Ergebnisse live gestreamt statt als Block
+- **Context-Komprimierung**: Automatisches Zusammenfassen älterer Nachrichten
+- **Tool-Timeouts** konfigurierbar pro Tool (nicht nur global)
+- **Agent-Profile**: Gespeicherte Persönlichkeits-Presets schnell wechselbar
 
-### Canvas / A2UI
-- **Visueller Workspace**: Agent kann strukturierten Output als Canvas rendern
-- Code-Editor mit Syntax-Highlighting
-- Diagramme und Flowcharts (Mermaid)
-- Tabellen und Daten-Visualisierungen
-- Interaktive Formulare vom Agent generiert
+### Performance
+- **Lazy MemoryStore**: Entries on-demand laden, nicht alle beim Start
+- **EmbeddingRunner-Cache**: Häufig abgefragte Embeddings in LRU-Cache
+- **DaemonListener**: HTTP/1.1 Keep-Alive für weniger Connection-Overhead
+
+### UI
+- **Chat-Export**: Einzelnen Chat als Markdown/PDF exportieren
+- **Suche über alle Chats**: Volltext-Suche in Chat-History
+- **Keyboard Shortcuts**: Navigations-Shortcuts für alle Haupt-Bereiche
+- **Drag & Drop**: Dateien direkt in Chat ziehen
 
 ---
 
-## v0.6.0 — Cross-Platform & Ecosystem
+## Langfristig: Alpha v0.5+
 
-### Cross-Platform Support
-- **iOS/iPadOS Companion App** (SwiftUI, shared KoboldCore)
-- **Android Companion App** (Kotlin)
-- **Linux-Support** (CLI + headless Daemon)
-- **Windows-Support** (via Electron oder .NET MAUI)
-- **Sync zwischen Geräten** (iCloud / eigener Server)
+### Lokale Modelle
+- **GGUF direkt laden**: Ohne Ollama, direkt via llama.cpp Swift-Bindings
+- **Model-Benchmarking**: Welches Modell ist am schnellsten für welche Task?
+- **Spezialisierte Modelle per Agent**: Web-Agent → Mistral, Coder → DeepSeek
 
-### Docker Deployment
-- **Docker Image** für Self-Hosting
-- Docker Compose mit allen Abhängigkeiten
-- Sandboxed Code-Ausführung in Container
-- One-Click Deploy auf VPS
+### Multi-Agent-Orchestrierung
+- **Agent-Netzwerke**: N Agents koordinieren ohne zentralen Instructor
+- **Ergebnis-Voting**: Mehrere Agents, bestes Ergebnis gewinnt
+- **Parallele Tool-Ausführung**: Mehrere Tools gleichzeitig in einer Agent-Runde
 
-### Skill Marketplace
-- **Community Skill Registry** (KoboldHub)
-- Ein-Klick-Installation von Skills
-- Bewertungen und Reviews
-- Portable Skill Format (YAML-basiert)
-- Automatische Skill-Updates
-- Skill-Verifizierung und Sicherheits-Scan
-
-### CLI Distribution
-- **Homebrew Package**: `brew install koboldos`
-- **PyPI Package**: `pip install koboldos-lite` (headless Agent)
-- **npm Package**: CLI-Tools für Node.js Integration
-- Onboarding CLI Wizard (`kobold init`)
+### Plattform-Erweiterung
+- **iOS-Companion**: Einfache Chat-App die mit Mac-Daemon kommuniziert
+- **API-Server**: KoboldOS als lokaler AI-API-Provider für andere Apps
 
 ---
 
-## Langfristige Vision (v1.0+)
+## Bekannte technische Schulden
 
-### Autonomes OS-Layer
-- KoboldOS als intelligente Schicht über macOS/iOS/Linux/Windows
-- Automatische Erkennung von Benutzeraktionen und proaktive Hilfe
-- System-weite Hotkeys und Shortcuts
-
-### Smart Home & IoT
-- HomeKit-Integration für IoT-Steuerung
-- Szenen-Automatisierung via Agent
-- Sensor-Daten als Agent-Kontext
-
-### Enterprise Features
-- Team-Accounts mit Rollen und Berechtigungen
-- Audit-Log für alle Agent-Aktionen
-- Compliance-Modi (DSGVO, SOC2)
-- On-Premise Deployment Guide
-
-### Lokale RAG Pipeline
-- Vollständige Retrieval-Augmented Generation
-- Automatische Indexierung von ~/Documents
-- Chunking, Embedding, Re-Ranking
-- Antworten mit Quellenangaben
+| Bereich | Problem | Priorität |
+|---------|---------|-----------|
+| RuntimeViewModel | 3500+ Zeilen — braucht Aufspaltung in Manager-Klassen | Hoch |
+| AgentLoop | System-Prompt kann bei vielen Tools > 15K Tokens werden | Hoch |
+| TeamsGroupView | Datenmodelle + View in einer Datei gemischt | Mittel |
+| MemoryStore | Kein shared singleton — jede Instanz lädt von Disk | Mittel |
+| EmbeddingStore | Kein automatisches Re-embedding bei Modellwechsel | Mittel |
+| DaemonListener | Custom TCP HTTP-Parser — fehleranfällig bei Edge Cases | Niedrig |
 
 ---
 
-## Feature-Tracker
+## Entscheidungslog
 
-| Feature | Version | Status |
-|---------|---------|--------|
-| Session-Trennung | v0.2.2 | Done |
-| Task-System Upgrade | v0.2.2 | Done |
-| TTS + STT + Stable Diffusion | v0.2.5 | Done |
-| Teams (Diskursmodell) | v0.2.8 | Done |
-| Playwright Browser | v0.2.8 | Done |
-| Screen Control (Maus/Tastatur/OCR) | v0.2.8 | Done |
-| Goals-System | v0.2.8 | Done |
-| Idle Tasks + Heartbeat | v0.2.8 | Done |
-| Interactive Buttons | v0.2.8 | Done |
-| AI-Vorschläge (SuggestionService) | v0.2.8 | Done |
-| Marktplatz (Mock) | v0.2.8 | Done |
-| MCP Wiring | v0.2.9 | Geplant |
-| Voice Chat (TTS + Mikro) | v0.2.9 | Geplant |
-| Kontext-Komprimierung | v0.3.0 | Geplant |
-| Agent Self-Managed Memory | v0.3.0 | Geplant |
-| FAISS Vector-DB | v0.3.0 | Geplant |
-| WebApp UI-Spiegelung | v0.3.0 | Geplant |
-| Eigene Model-Engine | v0.3.0 | Geplant |
-| Filesystem-Agent (PDF etc.) | v0.3.0 | Geplant |
-| A2A Protokoll | v0.4.0 | Geplant |
-| Composio/LangChain/CrewAI | v0.4.0 | Geplant |
-| REST API | v0.4.0 | Geplant |
-| Voice (Whisper + ElevenLabs) | v0.5.0 | Geplant |
-| Messaging (WhatsApp etc.) | v0.5.0 | Geplant |
-| Canvas/A2UI | v0.5.0 | Geplant |
-| iOS App | v0.6.0 | Geplant |
-| Android App | v0.6.0 | Geplant |
-| Linux/Windows | v0.6.0 | Geplant |
-| Docker | v0.6.0 | Geplant |
-| Skill Marketplace | v0.6.0 | Geplant |
+| Version | Entscheidung | Grund |
+|---------|-------------|-------|
+| v0.3.1 | ApplicationsView + AppMenuManager entfernt | Hauptverursacher CPU-Last (Timer-Loop) |
+| v0.3.1 | SidebarTab.applications entfernt | Abhängig von obigem |
+| v0.3.1 | TypewriterText: 12 chars/40ms statt 3/8ms | 85% weniger MainActor-Updates |
+| v0.3.15 | Settings → "Apps"-Sektion entfernt | Tote UI ohne Apps-Tab |
+| v0.3.15 | AgentType.researcher entfernt → .web | Redundant mit Web-Agent |
+| v0.3.15 | MemoryStore → Einzeldateien | Robustheit, keine Massen-Korruption |
+| v0.3.15 | RAG via Ollama Embeddings eingeführt | 95% Token-Ersparnis bei Memory-Recall |
+| v0.3.15 | Memory editierbar in UI | Nutzer-Wunsch, war nur Add/Delete möglich |
+| Geplant | Teams vollständig überarbeiten | Zu eng verwoben, schwer wartbar |
+| Geplant | Apps-Ansicht neu implementieren | Echte Fenstereinbettung statt Screenshots |

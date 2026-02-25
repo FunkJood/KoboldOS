@@ -25,7 +25,7 @@ public actor PluginRegistry {
     private var plugins: [String: PluginInfo] = [:]
     private var disabledPlugins: Set<String> = []
     private var errorCounts: [String: Int] = [:]
-    private let maxErrors = 5
+    private let maxErrors = 50
 
     private let pluginsDirectory: URL = {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!

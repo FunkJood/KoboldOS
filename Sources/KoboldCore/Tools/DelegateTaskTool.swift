@@ -7,10 +7,10 @@ private actor SubAgentCache {
     private var agents: [String: AgentLoop] = [:]
     private var activeCount: Int = 0
 
-    /// Max concurrent sub-agents, configurable via Settings (default 3)
+    /// Max concurrent sub-agents, configurable via Settings (default 10)
     private var maxConcurrent: Int {
         let v = UserDefaults.standard.integer(forKey: "kobold.subagent.maxConcurrent")
-        return v > 0 ? v : 3
+        return v > 0 ? v : 10
     }
 
     func get(_ profile: String) -> AgentLoop? { agents[profile] }
@@ -34,7 +34,7 @@ enum SubAgentProfile {
     static func agentType(for profile: String) -> AgentType {
         switch profile.lowercased() {
         case "coder", "developer":   return .coder       // Code schreiben, Dateien bearbeiten, Bugs fixen
-        case "researcher", "web":    return .researcher   // Websuche, Analyse, Informationen sammeln
+        case "researcher", "web":    return .web          // Websuche, Analyse, Informationen sammeln
         case "planner":              return .planner      // Pläne erstellen, Aufgaben strukturieren
         case "instructor":           return .instructor   // Andere Agenten koordinieren
         case "reviewer":             return .coder        // Code-Review mit Coder-Tools
@@ -63,8 +63,8 @@ public struct DelegateTaskTool: Tool, Sendable {
             properties: [
                 "profile": ToolSchemaProperty(
                     type: "string",
-                    description: "Agent-Profil: coder (Code/Dateien), researcher (Web/Analyse), planner (Pläne), reviewer (Code-Review), utility (Shell/Rechner), web (Browser/Suche). Standard: general",
-                    enumValues: ["coder", "researcher", "planner", "reviewer", "utility", "web", "general"]
+                    description: "Agent-Profil: coder (Code/Dateien), web (Recherche/APIs/Browser), planner (Pläne), reviewer (Code-Review), utility (Shell/Rechner). Standard: general",
+                    enumValues: ["coder", "web", "planner", "reviewer", "utility", "general"]
                 ),
                 "message": ToolSchemaProperty(
                     type: "string",
@@ -101,9 +101,10 @@ public struct DelegateTaskTool: Tool, Sendable {
             throw ToolError.missingRequired("message")
         }
 
-        // Concurrency limit: max 3 sub-agents at once
+        // Concurrency limit: configurable via Settings
         guard await SubAgentCache.shared.acquireSlot() else {
-            return "⚠️ Max. 3 Sub-Agenten gleichzeitig erlaubt. Warte bis ein anderer fertig ist."
+            let max = await SubAgentCache.shared.currentActive()
+            return "⚠️ Max. \(max) Sub-Agenten gleichzeitig erlaubt. Warte bis ein anderer fertig ist."
         }
         defer { Task { await SubAgentCache.shared.releaseSlot() } }
 
@@ -187,7 +188,7 @@ public struct DelegateParallelTool: Tool, Sendable {
             properties: [
                 "tasks": ToolSchemaProperty(
                     type: "string",
-                    description: "JSON-Array von Aufgaben: [{\"profile\": \"coder\", \"message\": \"Aufgabe 1\"}, {\"profile\": \"researcher\", \"message\": \"Aufgabe 2\"}]",
+                    description: "JSON-Array von Aufgaben: [{\"profile\": \"coder\", \"message\": \"Aufgabe 1\"}, {\"profile\": \"web\", \"message\": \"Aufgabe 2\"}]",
                     required: true
                 )
             ],
@@ -250,10 +251,12 @@ public struct DelegateParallelTool: Tool, Sendable {
             throw ToolError.executionFailed("Leeres Aufgaben-Array.")
         }
 
-        // Hard limit: max 4 parallel sub-agents
-        let cappedTasks = Array(tasks.prefix(4))
-        if tasks.count > 4 {
-            print("[DelegateParallel] Capped \(tasks.count) tasks to 4")
+        // Use configurable limit from settings (no hard cap)
+        let maxParallelRaw = UserDefaults.standard.integer(forKey: "kobold.subagent.maxConcurrent")
+        let maxParallel = maxParallelRaw > 0 ? maxParallelRaw : 10
+        let cappedTasks = Array(tasks.prefix(maxParallel))
+        if tasks.count > maxParallel {
+            print("[DelegateParallel] Capped \(tasks.count) tasks to \(maxParallel)")
         }
 
         let parentConfig = self.providerConfig

@@ -12,7 +12,7 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.2.0"),
         .package(url: "https://github.com/exPHAT/SwiftWhisper.git", branch: "master"),
-        .package(url: "https://github.com/apple/ml-stable-diffusion.git", branch: "main"),
+        // ml-stable-diffusion removed — caused crashes (BPETokenizer fatal assertion)
         .package(url: "https://github.com/apple/swift-crypto.git", "1.0.0"..<"5.0.0"),
     ],
     targets: [
@@ -31,13 +31,21 @@ let package = Package(
             ]
         ),
 
+        // MARK: - PTY C Bridge
+        .target(
+            name: "CPty",
+            path: "Sources/CPty",
+            publicHeadersPath: "include"
+        ),
+
         // MARK: - GUI
         .executableTarget(
             name: "KoboldOSControlPanel",
             dependencies: [
                 "KoboldCore",
+                "CPty",
                 .product(name: "SwiftWhisper", package: "SwiftWhisper"),
-                .product(name: "StableDiffusion", package: "ml-stable-diffusion"),
+                // StableDiffusion removed — caused crashes
             ],
             path: "Sources/KoboldOSControlPanel",
             exclude: ["Info.plist", "AppIcon.icns"],
@@ -45,7 +53,8 @@ let package = Package(
             linkerSettings: [
                 .linkedFramework("AppKit"),
                 .linkedFramework("ServiceManagement"),
-                .linkedFramework("Security")
+                .linkedFramework("Security"),
+                .linkedLibrary("util")
             ]
         ),
 

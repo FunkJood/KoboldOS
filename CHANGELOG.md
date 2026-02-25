@@ -1,5 +1,75 @@
 # KoboldOS Changelog
 
+## Alpha v0.3.15 — 2026-02-25
+
+### Semantisches RAG-System (Echte Vektorsuche für Gedächtnis)
+- **EmbeddingRunner**: Neuer Swift Actor — sendet Text an `ollama api/embeddings` (nomic-embed-text)
+- **EmbeddingStore**: Persistenter Vektor-Store mit vDSP/Accelerate Cosinus-Ähnlichkeit (SIMD-optimiert)
+- **smartMemoryRetrieval** ersetzt durch echte Semantik: Top-5 Treffer statt alle ~100 Einträge
+- **Token-Ersparnis**: ~3000 → ~150 Tokens pro Anfrage (95% weniger Kontext-Overhead)
+- **Fallback**: Bei fehlendem nomic-embed-text automatisch TF-IDF (bisheriges System)
+- **Startup-Logik**: `reembedMissing()` embedded fehlende Einträge beim App-Start (Background Task)
+- **Settings → Gedächtnis**: Neue "Embedding-Modell (RAG)"-Box mit Status-Check + `ollama pull`-Button
+- **Voraussetzung**: `ollama pull nomic-embed-text` (274 MB, einmalig)
+
+### Einzelne Memory-Dateien (statt entries.json)
+- **MemoryStore** speichert jede Erinnerung als eigene `<id>.json` (statt einem großen Array)
+- **Automatische Migration**: Alte `entries.json` wird beim Start in Einzeldateien umgewandelt und gelöscht
+- **Vorteile**: Schnelleres Speichern, kein Datenverlust bei Korruption einer einzelnen Datei
+- **update()** re-embedded geänderte Einträge automatisch
+
+### Memory bearbeitbar
+- **Bearbeiten-Button** (Stift-Icon) auf jeder Erinnerungskarte in der Gedächtnis-Ansicht
+- **Edit-Sheet**: Gleiche UI wie Hinzufügen — Typ-Picker, TextEditor, Tags
+- **PATCH-Endpunkt** in DaemonListener (`/memory/entries` PATCH) für die Aktualisierung
+- **Re-Embedding**: Geänderte Einträge werden automatisch neu eingebettet
+
+### Researcher-Agent entfernt (Web-Agent übernimmt)
+- **AgentType.researcher entfernt** → ersetzt durch `AgentType.web`
+- **Web-Agent** deckt jetzt Recherche, Web-Suche, APIs und Browser-Automatisierung ab
+- **Alle Referenzen** in DaemonListener, DelegateTaskTool, AgentsView, ChatView, GlassUI,
+  SettingsView, TeamsGroupView, TeamView, OnboardingView, SkillLoader, CoreMemory,
+  WorkflowManageTool, KoboldCLI komplett auf "web" umgestellt
+- **AgentsView**: Researcher-Eintrag aus Model-Konfiguration entfernt, Tool-Routing aktualisiert
+- **ToolRuleEngine**: `.research` → `.web` (gleiche Limits: 20 Browser, 30 HTTP, 10 Shell)
+- **SettingsView**: "Researcher"-Schritte-Picker → "Web"-Schritte-Picker (kobold.agent.webSteps)
+
+### Apps-Einstellungen entfernt (CPU-Optimierung)
+- **"Apps"-Sektion** aus Settings-Sidebar komplett entfernt (war Hauptverursacher unnötiger CPU-Last)
+- **appsSettingsSection()** gelöscht (Terminal-Einstellungen, Browser-Einstellungen, Virtuelle Maus)
+- **Tote Navigation-Aufrufe** in AppBrowserTool + AppTerminalTool entfernt
+  (navigierten zu nicht mehr existierendem `applications`-Tab)
+- **Ungenutzter @AppStorage-State** bereinigt
+
+### Statistik
+- ~54.200 Lines of Code (Swift)
+
+---
+
+## Alpha v0.3.1 — 2026-02-25
+
+### Performance Update
+- **num_ctx**: LLMRunner schickt jetzt `num_ctx` an Ollama (war komplett fehlend!)
+- **Context-Picker**: 4K/8K/16K/32K/64K/128K/256K (kein 150K/200K mehr), Default 32K
+- **Ollama**: OLLAMA_NUM_THREADS (alle CPU-Kerne), OLLAMA_FLASH_ATTENTION=1, OLLAMA_NUM_GPU=999
+- **Worker-Pool**: max 1–16 (war 1–8), Default 4
+- **App Nap deaktiviert**: NSProcessInfo.beginActivity(.latencyCritical, .userInitiated...) in AppDelegate
+- **TypewriterText**: 12 chars/40ms statt 3/8ms → 85% weniger MainActor-Updates
+- **ApplicationsView + AppMenuManager**: komplett gelöscht (war Alpha-Tab, Timer-Quelle)
+- **System-Prompt**: ~800 Tokens gespart, macOS BSD-Shell-Hints hinzugefügt
+
+### Multi-Chat vollständig isoliert
+- **SessionAgentState** pro Session: isLoading, streamTask, contextTokens, etc. (alle getrennt)
+- **pendingMessages**: `[UUID: [ChatMessage]]` — jede Session puffert unabhängig
+- **streamingSessions**: `Set<UUID>` statt `Bool` — korrekt bei mehreren parallelen Chats
+- **conversationHistory** per Session: Background-Sessions lesen aus `sessions[].messages`
+- **Session-Switch Race-Condition**: synchrones `upsertCurrentSession()` vor `messages = []`
+
+### Statistik
+- ~53.348 Lines of Code (Swift)
+
+---
+
 ## Alpha v0.2.8 — 2026-02-23
 
 ### Teams: Echtes Diskursmodell

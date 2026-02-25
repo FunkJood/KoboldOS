@@ -131,6 +131,12 @@ struct MemoryView: View {
     @State private var newType: MemoryType = .langzeit
     @State private var newTags = ""
 
+    // Edit entry form
+    @State private var editingEntry: TaggedMemoryEntry? = nil
+    @State private var editText = ""
+    @State private var editType: MemoryType = .langzeit
+    @State private var editTags = ""
+
     // Archival & versioning state
     @State private var archivalEntries: [(label: String, content: String, date: String)] = []
     @State private var archivalCount = 0
@@ -195,6 +201,7 @@ struct MemoryView: View {
             Task { await loadEntries() }
         }
         .sheet(isPresented: $showAddEntry) { addEntrySheet }
+        .sheet(item: $editingEntry) { entry in editEntrySheet(for: entry) }
     }
 
     private func loadAll() async {
@@ -384,6 +391,11 @@ struct MemoryView: View {
                     ForEach(filteredEntries) { entry in
                         TaggedMemoryCard(entry: entry, onDelete: {
                             Task { await deleteEntry(id: entry.id) }
+                        }, onEdit: {
+                            editText = entry.text
+                            editType = entry.memoryType
+                            editTags = entry.tags.joined(separator: ", ")
+                            editingEntry = entry
                         })
                     }
                 }
@@ -581,6 +593,68 @@ struct MemoryView: View {
         .background(ZStack { Color.koboldBackground; LinearGradient(colors: [Color.koboldEmerald.opacity(0.015), .clear, Color.koboldGold.opacity(0.01)], startPoint: .topLeading, endPoint: .bottomTrailing) })
     }
 
+    // MARK: - Edit Entry Sheet
+
+    func editEntrySheet(for entry: TaggedMemoryEntry) -> some View {
+        VStack(spacing: 20) {
+            Text("Erinnerung bearbeiten").font(.title3.bold()).padding(.top, 20)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Typ").font(.caption.bold()).foregroundColor(.secondary)
+                HStack(spacing: 8) {
+                    ForEach(MemoryType.allCases) { type_ in
+                        Button(action: { editType = type_ }) {
+                            HStack(spacing: 5) {
+                                Image(systemName: type_.icon).font(.system(size: 13.5))
+                                Text(type_.rawValue).font(.system(size: 14.5, weight: .medium))
+                            }
+                            .foregroundColor(editType == type_ ? type_.color : .secondary)
+                            .padding(.horizontal, 10).padding(.vertical, 6)
+                            .background(RoundedRectangle(cornerRadius: 8)
+                                .fill(editType == type_ ? type_.color.opacity(0.2) : Color.white.opacity(0.06))
+                                .overlay(RoundedRectangle(cornerRadius: 8)
+                                    .stroke(editType == type_ ? type_.color.opacity(0.5) : Color.white.opacity(0.1), lineWidth: 1)))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                Text(editType.description).font(.caption2).foregroundColor(.secondary)
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Inhalt").font(.caption.bold()).foregroundColor(.secondary)
+                TextEditor(text: $editText)
+                    .font(.system(size: 15.5))
+                    .frame(minHeight: 80, maxHeight: 160)
+                    .padding(8)
+                    .background(Color.black.opacity(0.2)).cornerRadius(8)
+                    .scrollContentBackground(.hidden)
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("Tags").font(.caption.bold()).foregroundColor(.secondary)
+                    Text("(kommagetrennt)").font(.caption2).foregroundColor(.secondary)
+                }
+                GlassTextField(text: $editTags, placeholder: "z.B. coding, python, projekt...")
+            }
+
+            HStack(spacing: 12) {
+                GlassButton(title: "Abbrechen", isPrimary: false) {
+                    editingEntry = nil
+                }
+                GlassButton(title: "Speichern", icon: "checkmark", isPrimary: true,
+                            isDisabled: editText.trimmingCharacters(in: .whitespaces).isEmpty) {
+                    Task { await updateEntry(id: entry.id) }
+                }
+            }
+            Spacer()
+        }
+        .padding(24)
+        .frame(minWidth: 460, minHeight: 380)
+        .background(ZStack { Color.koboldBackground; LinearGradient(colors: [Color.koboldEmerald.opacity(0.015), .clear, Color.koboldGold.opacity(0.01)], startPoint: .topLeading, endPoint: .bottomTrailing) })
+    }
+
     // MARK: - Networking: Tagged Entries
 
     func loadEntries() async {
@@ -634,6 +708,31 @@ struct MemoryView: View {
 
         showAddEntry = false; newText = ""; newTags = ""
         withAnimation { saveStatus = "Gespeichert" }
+        await loadEntries()
+        try? await Task.sleep(nanoseconds: 2_000_000_000)
+        withAnimation { saveStatus = "" }
+    }
+
+    func updateEntry(id: String) async {
+        let text = editText.trimmingCharacters(in: .whitespaces)
+        guard !text.isEmpty else { return }
+        let tags = editTags.components(separatedBy: ",")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+
+        guard let url = URL(string: viewModel.baseURL + "/memory/entries") else { return }
+        var req = viewModel.authorizedRequest(url: url, method: "PATCH")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: [
+            "id": id,
+            "text": text,
+            "type": editType.apiValue,
+            "tags": tags
+        ] as [String: Any])
+        _ = try? await URLSession.shared.data(for: req)
+
+        editingEntry = nil
+        withAnimation { saveStatus = "Aktualisiert" }
         await loadEntries()
         try? await Task.sleep(nanoseconds: 2_000_000_000)
         withAnimation { saveStatus = "" }
@@ -772,6 +871,7 @@ struct MemoryView: View {
 struct TaggedMemoryCard: View {
     let entry: TaggedMemoryEntry
     let onDelete: () -> Void
+    let onEdit: () -> Void
     @State private var showDeleteConfirm = false
 
     var body: some View {
@@ -805,6 +905,14 @@ struct TaggedMemoryCard: View {
                     Text(formatDate(entry.timestamp))
                         .font(.system(size: 11.5))
                         .foregroundColor(.secondary)
+
+                    // Edit
+                    Button(action: { onEdit() }) {
+                        Image(systemName: "pencil")
+                            .font(.system(size: 12.5))
+                            .foregroundColor(.koboldGold.opacity(0.8))
+                    }
+                    .buttonStyle(.plain)
 
                     // Delete
                     Button(action: { showDeleteConfirm = true }) {

@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Build script for KoboldOS
-VERSION="0.2.85"
+VERSION="0.3.15"
 echo "Building KoboldOS v${VERSION}..."
 
 # Clean previous builds
@@ -64,7 +64,7 @@ cat > dist/KoboldOSv${VERSION}.app/Contents/Info.plist << EOF
     <key>CFBundleShortVersionString</key>
     <string>${VERSION}</string>
     <key>CFBundleVersion</key>
-    <string>20260223</string>
+    <string>20260225</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <key>NSHighResolutionCapable</key>
@@ -148,6 +148,9 @@ if command -v hdiutil &> /dev/null; then
     fi
     if [ -f "ARCHITECTURE.md" ]; then
         cp ARCHITECTURE.md "$DMG_STAGING/"
+    fi
+    if [ -f "ROADMAP.md" ]; then
+        cp ROADMAP.md "$DMG_STAGING/"
     fi
     if [ -f "dist/DOKUMENTATION.txt" ]; then
         cp dist/DOKUMENTATION.txt "$DMG_STAGING/"

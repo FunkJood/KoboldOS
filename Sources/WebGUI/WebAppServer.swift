@@ -249,7 +249,7 @@ final class WebAppServer: @unchecked Sendable {
         req.httpMethod = method
         req.setValue("Bearer \(currentToken)", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.timeoutInterval = 300
+        req.timeoutInterval = 1800
 
         if let bodyStart = raw.range(of: "\r\n\r\n") {
             let bodyStr = String(raw[bodyStart.upperBound...])
@@ -923,7 +923,7 @@ final class WebAppServer: @unchecked Sendable {
 
           try{
             const ctrl=new AbortController();
-            const timeout=setTimeout(()=>ctrl.abort(),300000); // 5min max
+            const timeout=setTimeout(()=>ctrl.abort(),1800000); // 30min max
             const data=await api('/agent',{method:'POST',body:JSON.stringify({message:msg}),signal:ctrl.signal});
             clearTimeout(timeout);
             const el=document.getElementById(tid);

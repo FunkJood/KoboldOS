@@ -48,6 +48,34 @@ public struct MCPBridgeTool: Tool, @unchecked Sendable {
     }
 
     public func execute(arguments: [String: String]) async throws -> String {
+        // Ensure MCP server is connected before executing tool
+        // This handles the case where MCP servers weren't connected at startup
+        let isConnected = await client.isConnected(serverName)
+        if !isConnected {
+            print("[MCPBridgeTool] Connecting to server '\(serverName)' for tool '\(mcpToolName)'")
+
+            // Attempt to connect with timeout
+            let connectTask = Task {
+                try await client.connectServerByName(serverName, configManager: MCPConfigManager.shared)
+            }
+
+            // Wait for connection with timeout (5 seconds)
+            let timeoutTask = Task {
+                try await Task.sleep(nanoseconds: 5_000_000_000)
+                throw ToolError.executionFailed("MCP server connection timeout")
+            }
+
+            do {
+                // Wait for either connection or timeout
+                try await connectTask.value
+                timeoutTask.cancel()
+                print("[MCPBridgeTool] Successfully connected to server '\(serverName)'")
+            } catch {
+                timeoutTask.cancel()
+                throw ToolError.executionFailed("Failed to connect to MCP server '\(serverName)': \(error.localizedDescription)")
+            }
+        }
+
         // Convert [String: String] to [String: Any] for MCP
         // KoboldOS tools use string-typed arguments; MCP tools may need other types.
         // We attempt to parse numeric and boolean strings back to their native types.

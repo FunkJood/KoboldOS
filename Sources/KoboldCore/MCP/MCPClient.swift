@@ -99,6 +99,8 @@ public actor MCPClient {
         let stderrHandle: FileHandle
         var tools: [MCPToolInfo]
         var initialized: Bool
+        /// Lock protecting buffer and pendingRequests (accessed from readabilityHandler callback)
+        let lock = NSLock()
         var buffer: Data
 
         /// Pending JSON-RPC requests: id -> continuation (uses Data to stay Sendable)
@@ -159,11 +161,15 @@ public actor MCPClient {
     /// Disconnect a specific server.
     public func disconnectServer(_ name: String) async {
         guard let connection = servers[name] else { return }
-        // Cancel pending requests
-        for (_, continuation) in connection.pendingRequests {
+        // Clear readabilityHandlers FIRST to stop new callbacks (prevents races)
+        connection.stdoutHandle.readabilityHandler = nil
+        connection.stderrHandle.readabilityHandler = nil
+        // After handlers are nil, no more concurrent access — safe to read directly
+        let pending = connection.pendingRequests
+        connection.pendingRequests.removeAll()
+        for (_, continuation) in pending {
             continuation.resume(throwing: MCPError.serverDisconnected(name))
         }
-        connection.pendingRequests.removeAll()
         connection.process.terminate()
         servers.removeValue(forKey: name)
         print("[MCPClient] Disconnected '\(name)'")
@@ -195,6 +201,23 @@ public actor MCPClient {
     public func isConnected(_ name: String) -> Bool {
         guard let conn = servers[name] else { return false }
         return conn.process.isRunning && conn.initialized
+    }
+
+    /// Connect to a server by name using existing configuration.
+    /// This is useful for connecting to servers on-demand rather than at startup.
+    public func connectServerByName(_ name: String, configManager: MCPConfigManager) async throws {
+        // Check if already connected
+        if isConnected(name) {
+            return
+        }
+
+        // Load configuration and connect
+        let configs = await configManager.loadConfigs()
+        guard let config = configs.first(where: { $0.name == name }) else {
+            throw MCPError.serverNotFound(name)
+        }
+
+        try await connectServer(config)
     }
 
     /// Call a tool on a specific server.
@@ -334,9 +357,16 @@ public actor MCPClient {
             let data = handle.availableData
             guard !data.isEmpty, let conn = connection else { return }
 
+            conn.lock.lock()
+            // Prevent unbounded buffer growth (max 10MB)
+            if conn.buffer.count + data.count > 10_000_000 {
+                print("[MCPClient] WARNING: Buffer overflow for server — dropping old data")
+                conn.buffer = Data()
+            }
             conn.buffer.append(data)
 
             // Process complete lines (JSON-RPC messages are newline-delimited)
+            var completedRequests: [(Int, Result<Data, any Error>)] = []
             while let newlineRange = conn.buffer.range(of: Data([0x0A])) {
                 let lineData = conn.buffer.subdata(in: conn.buffer.startIndex..<newlineRange.lowerBound)
                 conn.buffer.removeSubrange(conn.buffer.startIndex...newlineRange.lowerBound)
@@ -351,25 +381,35 @@ public actor MCPClient {
                     if let error = json["error"] as? [String: Any] {
                         let code = error["code"] as? Int ?? -1
                         let message = error["message"] as? String ?? "Unknown error"
-                        conn.pendingRequests[id]?.resume(throwing: MCPError.jsonRPCError(code, message))
-                        conn.pendingRequests.removeValue(forKey: id)
+                        completedRequests.append((id, .failure(MCPError.jsonRPCError(code, message))))
                     } else if json["result"] != nil {
-                        // Re-serialize just the result portion as Data (Sendable-safe)
                         if let resultData = try? JSONSerialization.data(withJSONObject: json["result"]!) {
-                            conn.pendingRequests[id]?.resume(returning: resultData)
+                            completedRequests.append((id, .success(resultData)))
                         } else {
-                            conn.pendingRequests[id]?.resume(returning: Data("{}".utf8))
+                            completedRequests.append((id, .success(Data("{}".utf8))))
                         }
-                        conn.pendingRequests.removeValue(forKey: id)
                     } else {
-                        // Response with no result and no error — return empty dict
-                        conn.pendingRequests[id]?.resume(returning: Data("{}".utf8))
-                        conn.pendingRequests.removeValue(forKey: id)
+                        completedRequests.append((id, .success(Data("{}".utf8))))
                     }
                 }
                 // Notifications (no "id") are logged but not processed
                 else if let method = json["method"] as? String {
                     print("[MCPClient:\(serverName)] Notification: \(method)")
+                }
+            }
+            // Collect continuations under lock, then resume outside
+            var toResume: [(CheckedContinuation<Data, any Error>, Result<Data, any Error>)] = []
+            for (id, result) in completedRequests {
+                if let cont = conn.pendingRequests.removeValue(forKey: id) {
+                    toResume.append((cont, result))
+                }
+            }
+            conn.lock.unlock()
+            // Resume continuations outside the lock to prevent deadlocks
+            for (cont, result) in toResume {
+                switch result {
+                case .success(let data): cont.resume(returning: data)
+                case .failure(let error): cont.resume(throwing: error)
                 }
             }
         }
@@ -403,22 +443,39 @@ public actor MCPClient {
         // Append newline delimiter
         messageData += "\n"
 
-        // Register continuation before writing to avoid race condition
+        // Register continuation before writing — with 30s timeout to prevent indefinite hangs
+        // Uses pendingRequests removal as atomic guard against double-resume
+        let conn = connection
         let resultData: Data = try await withCheckedThrowingContinuation { continuation in
-            connection.pendingRequests[id] = continuation
+            conn.lock.lock()
+            conn.pendingRequests[id] = continuation
+            conn.lock.unlock()
+
+            // Schedule timeout — removeValue acts as atomic guard (only first remover gets the continuation)
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 30) {
+                conn.lock.lock()
+                let pending = conn.pendingRequests.removeValue(forKey: id)
+                conn.lock.unlock()
+                // Only resume if WE removed it (prevents double-resume with response handler)
+                pending?.resume(throwing: MCPError.timeout)
+            }
 
             // Write to stdin
             guard let data = messageData.data(using: .utf8) else {
-                connection.pendingRequests.removeValue(forKey: id)
-                continuation.resume(throwing: MCPError.writeError("Failed to encode message"))
+                conn.lock.lock()
+                let pending = conn.pendingRequests.removeValue(forKey: id)
+                conn.lock.unlock()
+                pending?.resume(throwing: MCPError.writeError("Failed to encode message"))
                 return
             }
 
             do {
-                try connection.stdinHandle.write(contentsOf: data)
+                try conn.stdinHandle.write(contentsOf: data)
             } catch {
-                connection.pendingRequests.removeValue(forKey: id)
-                continuation.resume(throwing: MCPError.writeError(error.localizedDescription))
+                conn.lock.lock()
+                let pending = conn.pendingRequests.removeValue(forKey: id)
+                conn.lock.unlock()
+                pending?.resume(throwing: MCPError.writeError(error.localizedDescription))
                 return
             }
         }

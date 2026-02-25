@@ -53,7 +53,7 @@ class RuntimeManager: ObservableObject {
         let listenPort = port
         let token = authToken  // @AppStorage — same source as RuntimeViewModel
 
-        daemonTask = Task.detached(priority: .background) {
+        daemonTask = Task.detached(priority: .userInitiated) {
             let daemon = DaemonListener(port: listenPort, authToken: token)
             await daemon.start()
         }

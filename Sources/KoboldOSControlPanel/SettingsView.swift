@@ -21,6 +21,7 @@ struct SettingsView: View {
     @State private var selectedSection: String = "Allgemein"
     @State private var ollamaModels: [String] = []
     @State private var isLoadingModels = false
+    @AppStorage("kobold.workerPool.size") private var workerPoolSize: Int = 3
 
     // General
     @AppStorage("kobold.showAdvancedStats") private var showAdvancedStats: Bool = false
@@ -73,9 +74,17 @@ struct SettingsView: View {
     @State private var a2aConnectedClients: [A2AConnectedClient] = []
 
     // Context Management
-    @AppStorage("kobold.context.windowSize") private var contextWindowSize: Int = 150_000
+    @AppStorage("kobold.context.windowSize") private var contextWindowSize: Int = 32768
     @AppStorage("kobold.context.autoCompress") private var contextAutoCompress: Bool = true
     @AppStorage("kobold.context.threshold") private var contextThreshold: Double = 0.8
+
+    // RAG / Embedding
+    @AppStorage("kobold.embedding.model") private var embeddingModel: String = "nomic-embed-text"
+    @State private var ragStatus: String = "Ungeprüft"
+    @State private var ragAvailable: Bool? = nil
+    @State private var isCheckingRAG: Bool = false
+    @State private var isPullingEmbeddingModel: Bool = false
+    @State private var pullOutput: String = ""
 
     // Memory settings (AgentZero-style)
     @AppStorage("kobold.memory.recallEnabled") private var memoryRecallEnabled: Bool = true
@@ -703,84 +712,53 @@ struct SettingsView: View {
                 }
         }
 
-        // Quick Model Downloads
-        FuturisticBox(icon: "arrow.down.circle.fill", title: "Empfohlene Modelle", accent: .koboldEmerald) {
-                Text("Lade die empfohlenen Modelle mit einem Klick herunter.")
+        // Parallel Multi-Chat
+        FuturisticBox(icon: "cpu.fill", title: "Parallele Chats (Worker-Pool)", accent: .koboldCyan) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Mehrere Chats laufen gleichzeitig in isolierten Workers. Jeder Worker hat seinen eigenen LLM-Kontext.")
                     .font(.caption).foregroundColor(.secondary)
 
-                HStack(spacing: 12) {
-                    // Chat model
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack(spacing: 6) {
-                            Image(systemName: ModelDownloadManager.shared.chatModelInstalled ? "checkmark.circle.fill" : "cpu.fill")
-                                .foregroundColor(ModelDownloadManager.shared.chatModelInstalled ? .koboldEmerald : .koboldGold)
-                            Text("Chat: \(ModelDownloadManager.shared.recommendedChatModel)")
-                                .font(.system(size: 14.5, weight: .medium))
-                        }
-                        if ModelDownloadManager.shared.isDownloadingChat {
-                            GlassProgressBar(value: ModelDownloadManager.shared.chatProgress, label: ModelDownloadManager.shared.chatStatus)
-                        } else {
-                            HStack(spacing: 8) {
-                                if ModelDownloadManager.shared.chatModelInstalled {
-                                    Text("Installiert").font(.caption).foregroundColor(.koboldEmerald)
-                                }
-                                Button(ModelDownloadManager.shared.chatModelInstalled ? "Erneut herunterladen" : "Herunterladen") {
-                                    ModelDownloadManager.shared.downloadChatModel()
-                                }
-                                .buttonStyle(.bordered)
-                            }
-                        }
+                HStack(spacing: 16) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Worker-Anzahl").font(.system(size: 13, weight: .medium))
+                        Text("1 = sequenziell, 3 = empfohlen, max 8")
+                            .font(.caption2).foregroundColor(.secondary)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                    Divider().frame(height: 40)
-
-                    // SD model
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack(spacing: 6) {
-                            Image(systemName: ModelDownloadManager.shared.sdModelInstalled ? "checkmark.circle.fill" : "photo.fill")
-                                .foregroundColor(ModelDownloadManager.shared.sdModelInstalled ? .koboldEmerald : .purple)
-                            Text("Bild: Stable Diffusion 2.1")
-                                .font(.system(size: 14.5, weight: .medium))
+                    Spacer()
+                    Stepper("\(workerPoolSize)", value: $workerPoolSize, in: 1...16)
+                        .onChange(of: workerPoolSize) { newVal in
+                            Task { await AgentWorkerPool.shared.resize(to: newVal) }
                         }
-                        if ModelDownloadManager.shared.isDownloadingSD {
-                            GlassProgressBar(value: ModelDownloadManager.shared.sdProgress, label: ModelDownloadManager.shared.sdStatus)
-                        } else {
-                            HStack(spacing: 8) {
-                                if ModelDownloadManager.shared.sdModelInstalled {
-                                    Text("Installiert").font(.caption).foregroundColor(.koboldEmerald)
-                                }
-                                Button(ModelDownloadManager.shared.sdModelInstalled ? "Erneut herunterladen" : "Herunterladen (~1.5 GB)") {
-                                    ModelDownloadManager.shared.downloadSDModel(force: ModelDownloadManager.shared.sdModelInstalled)
-                                }
-                                .buttonStyle(.bordered)
-                            }
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-
-                if let error = ModelDownloadManager.shared.lastError {
-                    Text(error).font(.caption).foregroundColor(.red)
                 }
 
                 Divider()
 
-                HStack(spacing: 12) {
-                    Button(action: { ModelDownloadManager.shared.openModelsFolder() }) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "folder.fill")
-                                .font(.system(size: 14.5))
-                            Text("Modell-Ordner öffnen")
-                                .font(.system(size: 14.5))
-                        }
+                HStack(spacing: 8) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Ollama-Parallelität aktivieren")
+                            .font(.system(size: 13, weight: .medium))
+                        Text("Startet Ollama neu mit OLLAMA_NUM_PARALLEL=\(workerPoolSize)")
+                            .font(.caption2).foregroundColor(.secondary)
+                        Text("Benötigt: Ollama via brew install ollama")
+                            .font(.caption2).foregroundColor(.secondary.opacity(0.7))
                     }
-                    .buttonStyle(.bordered)
-                    .help("Öffnet den Ordner mit heruntergeladenen Modellen — hier kannst du Modelle manuell austauschen")
-
-                    Text("Eigene CoreML-Modelle in den Ordner legen, um sie zu verwenden.")
-                        .font(.system(size: 12.5)).foregroundColor(.secondary)
+                    Spacer()
+                    Button("Ollama neu starten (×\(workerPoolSize))") {
+                        viewModel.restartOllamaWithParallelism(workers: workerPoolSize)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.koboldCyan)
                 }
+
+                if viewModel.ollamaStatus.contains("Restarting") || viewModel.ollamaStatus.contains("×") {
+                    HStack(spacing: 6) {
+                        Image(systemName: viewModel.ollamaStatus.contains("Running") ? "checkmark.circle.fill" : "arrow.clockwise")
+                            .foregroundColor(viewModel.ollamaStatus.contains("Running") ? .koboldEmerald : .koboldGold)
+                        Text(viewModel.ollamaStatus)
+                            .font(.caption).foregroundColor(.secondary)
+                    }
+                }
+            }
         }
 
         // Per-agent model pickers
@@ -860,144 +838,6 @@ struct SettingsView: View {
                     }
                     if config.id != agentsStore.configs.last?.id {
                         Divider()
-                    }
-                }
-        }
-
-        // Bildgenerierung (Stable Diffusion)
-        Text("Bildgenerierung").font(.headline).padding(.top, 8)
-        FuturisticBox(icon: "photo.artframe", title: "Stable Diffusion (CoreML)", accent: .koboldEmerald) {
-                Text("Generiere Bilder lokal auf deinem Mac. Sage z.B. 'Erstelle ein Bild von...' im Chat.")
-                    .font(.caption).foregroundColor(.secondary)
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Master-Prompt (wird jedem Prompt vorangestellt)").font(.caption.bold()).foregroundColor(.secondary)
-                    TextField("z.B. masterpiece, best quality, highly detailed",
-                              text: AppStorageBinding("kobold.sd.masterPrompt", default: "masterpiece, best quality, highly detailed"))
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 14.5))
-                }
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Standard Negative Prompt").font(.caption.bold()).foregroundColor(.secondary)
-                    TextField("z.B. ugly, blurry, distorted",
-                              text: AppStorageBinding("kobold.sd.negativePrompt", default: "ugly, blurry, distorted, low quality, deformed"))
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 14.5))
-                }
-
-                HStack(spacing: 20) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Schritte: \(UserDefaults.standard.integer(forKey: "kobold.sd.steps") == 0 ? 30 : UserDefaults.standard.integer(forKey: "kobold.sd.steps"))")
-                            .font(.caption.bold()).foregroundColor(.secondary)
-                        Slider(value: AppStorageDoubleBinding("kobold.sd.steps", default: 30), in: 10...80, step: 5)
-                            .tint(.koboldEmerald)
-                            .frame(width: 150)
-                    }
-                    VStack(alignment: .leading, spacing: 4) {
-                        let gv = UserDefaults.standard.float(forKey: "kobold.sd.guidanceScale")
-                        Text("Guidance: \(String(format: "%.1f", gv > 0 ? gv : 7.5))")
-                            .font(.caption.bold()).foregroundColor(.secondary)
-                        Slider(value: AppStorageDoubleBinding("kobold.sd.guidanceScale", default: 7.5), in: 1.0...20.0, step: 0.5)
-                            .tint(.koboldEmerald)
-                            .frame(width: 150)
-                    }
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Compute").font(.caption.bold()).foregroundColor(.secondary)
-                        Picker("", selection: AppStorageBinding("kobold.sd.computeUnits", default: "cpuAndGPU")) {
-                            Text("CPU + GPU").tag("cpuAndGPU")
-                            Text("Alle (+ ANE)").tag("all")
-                            Text("Nur CPU").tag("cpuOnly")
-                        }
-                        .pickerStyle(.menu)
-                        .frame(width: 130)
-                    }
-                }
-
-                // Model selection
-                VStack(alignment: .leading, spacing: 6) {
-                    let models = ImageGenManager.shared.availableModels
-                    if models.isEmpty {
-                        HStack(spacing: 6) {
-                            Image(systemName: "info.circle.fill").font(.caption).foregroundColor(.orange)
-                            Text("CoreML SD-Model nach ~/Library/Application Support/KoboldOS/sd-models/ legen")
-                                .font(.system(size: 12.5)).foregroundColor(.secondary)
-                        }
-                    } else {
-                        HStack(spacing: 8) {
-                            Text("Modell").font(.caption.bold()).foregroundColor(.secondary)
-                            Picker("", selection: AppStorageBinding("kobold.sd.selectedModel", default: "")) {
-                                Text("Automatisch (Root)").tag("")
-                                ForEach(models, id: \.self) { model in
-                                    Text(model).tag(model)
-                                }
-                            }
-                            .pickerStyle(.menu)
-                            .frame(maxWidth: 250)
-
-                            if ImageGenManager.shared.isModelLoaded {
-                                HStack(spacing: 4) {
-                                    Circle().fill(Color.koboldEmerald).frame(width: 8, height: 8)
-                                    Text(ImageGenManager.shared.currentModelName)
-                                        .font(.system(size: 12.5, weight: .medium)).foregroundColor(.koboldEmerald)
-                                }
-                            }
-
-                            if ImageGenManager.shared.isLoadingModel {
-                                HStack(spacing: 6) {
-                                    ProgressView().controlSize(.small)
-                                    Text("Lade Modell...").font(.caption).foregroundColor(.secondary)
-                                }
-                            } else {
-                                Button("Laden") {
-                                    Task {
-                                        let selected = UserDefaults.standard.string(forKey: "kobold.sd.selectedModel") ?? ""
-                                        if selected.isEmpty {
-                                            await ImageGenManager.shared.loadModelFromRoot()
-                                        } else {
-                                            await ImageGenManager.shared.loadModel(name: selected)
-                                        }
-                                    }
-                                }
-                                .buttonStyle(.bordered)
-                                .controlSize(.small)
-                            }
-                        }
-                    }
-
-                    if let err = ImageGenManager.shared.loadError {
-                        Text(err)
-                            .font(.caption).foregroundColor(.red)
-                            .padding(.horizontal, 4)
-                    }
-
-                    HStack(spacing: 8) {
-                        Button("Models-Ordner öffnen") {
-                            let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-                                .appendingPathComponent("KoboldOS/sd-models")
-                            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-                            NSWorkspace.shared.open(dir)
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-
-                        if ImageGenManager.shared.isModelLoaded {
-                            Button("Entladen") {
-                                ImageGenManager.shared.unloadModel()
-                            }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                        }
-                    }
-                }
-
-                if ImageGenManager.shared.isGenerating {
-                    HStack(spacing: 8) {
-                        ProgressView(value: ImageGenManager.shared.generationProgress)
-                            .tint(.koboldEmerald)
-                        Text("\(Int(ImageGenManager.shared.generationProgress * 100))%")
-                            .font(.system(size: 13.5, weight: .bold, design: .monospaced))
-                            .foregroundColor(.koboldEmerald)
                     }
                 }
         }
@@ -1452,10 +1292,12 @@ struct SettingsView: View {
     }
 
     private func requestAppleScriptAccess() {
-        // Trigger AppleScript permission by running a harmless script
-        let script = NSAppleScript(source: "tell application \"System Events\" to return name of first process")
-        var error: NSDictionary?
-        script?.executeAndReturnError(&error)
+        // Trigger AppleScript permission on background thread to avoid Main Thread freeze
+        Task.detached(priority: .utility) {
+            let script = NSAppleScript(source: "tell application \"System Events\" to return name of first process")
+            var error: NSDictionary?
+            script?.executeAndReturnError(&error)
+        }
     }
 
     private func requestNotificationAccess() {
@@ -1965,35 +1807,65 @@ struct SettingsView: View {
             cloudflareTunnelSection()
         }
 
-        // Weitere Integrationen
+        // Row 4: GitHub + Microsoft
+        HStack(alignment: .top, spacing: 12) {
+            githubConnectionSection()
+            microsoftConnectionSection()
+        }
+
+        // Row 5: HuggingFace + Slack
+        HStack(alignment: .top, spacing: 12) {
+            huggingFaceConnectionSection()
+            slackConnectionSection()
+        }
+
+        // Row 6: Notion + WhatsApp
+        HStack(alignment: .top, spacing: 12) {
+            notionConnectionSection()
+            whatsappConnectionSection()
+        }
+
+        // Row 7: E-Mail + Twilio
+        HStack(alignment: .top, spacing: 12) {
+            emailConnectionSection()
+            twilioConnectionSection()
+        }
+
+        // Row 8: Webhook + CalDAV
+        HStack(alignment: .top, spacing: 12) {
+            webhookConnectionSection()
+            caldavConnectionSection()
+        }
+
+        // Row 9: MQTT + RSS
+        HStack(alignment: .top, spacing: 12) {
+            mqttConnectionSection()
+            rssConnectionSection()
+        }
+
+        // Row 10: Lieferando + Uber
+        HStack(alignment: .top, spacing: 12) {
+            lieferandoConnectionSection()
+            uberConnectionSection()
+        }
+
+        // Weitere Integrationen (Phase 2+)
         FuturisticBox(icon: "puzzlepiece.extension.fill", title: "Weitere Integrationen", accent: .koboldGold) {
                 Text("Kommende Verbindungen — du kannst bereits jetzt APIs über das Shell- und Web-Tool nutzen.")
                     .font(.caption).foregroundColor(.secondary)
         }
 
-        let connectionItems: [(String, AnyView, Color, String, Bool)] = [
-            ("GitHub",       AnyView(brandLogoGitHub), .purple,    "Repos, Issues, PRs",          true),
-            ("Microsoft",    AnyView(brandLogoMicrosoft), .blue,   "OneDrive, Outlook, Teams",     true),
-            ("Hugging Face", AnyView(brandLogoHuggingFace), .orange, "AI-Inference, Modelle",     true),
-            ("Slack",        AnyView(brandLogoSlack), .green,      "Nachrichten, Kanäle",          true),
-            ("Notion",       AnyView(brandLogoNotion), .primary,   "Seiten lesen/bearbeiten",      true),
-            ("E-Mail",       AnyView(Image(systemName: "envelope.fill").font(.title2).foregroundColor(.blue)), .blue, "SMTP/IMAP E-Mail senden", true),
-            ("SMS (Twilio)", AnyView(Image(systemName: "message.fill").font(.title2).foregroundColor(.red)), .red, "SMS via Twilio API", true),
-            ("WhatsApp",     AnyView(Image(systemName: "phone.bubble.fill").font(.title2).foregroundColor(.green)), .green, "Nachrichten via API", true),
-            ("Webhook",      AnyView(Image(systemName: "antenna.radiowaves.left.and.right").font(.title2).foregroundColor(.orange)), .orange, "HTTP Webhooks empfangen/senden", true),
-            ("CalDAV",       AnyView(Image(systemName: "calendar").font(.title2).foregroundColor(.red)), .red, "Kalender synchronisieren", true),
-            ("MQTT",         AnyView(Image(systemName: "sensor.fill").font(.title2).foregroundColor(.teal)), .teal, "IoT / Smart Home", true),
-            ("RSS",          AnyView(Image(systemName: "dot.radiowaves.left.and.right").font(.title2).foregroundColor(.orange)), .orange, "Feeds abonnieren", true),
-            ("Discord",      AnyView(brandLogoDiscord), .indigo,   "Server, Nachrichten",          false),
-            ("Dropbox",      AnyView(brandLogoDropbox), .cyan,     "Dateien synchronisieren",      false),
-            ("Spotify",      AnyView(brandLogoSpotify), .green,    "Playlists, Wiedergabe",        false),
-            ("Linear",       AnyView(brandLogoLinear), .purple,    "Issues, Projekte",             false),
-            ("Todoist",      AnyView(brandLogoTodoist), .red,      "Tasks, Projekte",              false),
-            ("LinkedIn",     AnyView(brandLogoLinkedIn), .blue,    "Profil, Netzwerk",             false),
+        let futureItems: [(String, AnyView, Color, String)] = [
+            ("Discord",      AnyView(brandLogoDiscord), .indigo,   "Server, Nachrichten"),
+            ("Dropbox",      AnyView(brandLogoDropbox), .cyan,     "Dateien synchronisieren"),
+            ("Spotify",      AnyView(brandLogoSpotify), .green,    "Playlists, Wiedergabe"),
+            ("Linear",       AnyView(brandLogoLinear), .purple,    "Issues, Projekte"),
+            ("Todoist",      AnyView(brandLogoTodoist), .red,      "Tasks, Projekte"),
+            ("LinkedIn",     AnyView(brandLogoLinkedIn), .blue,    "Profil, Netzwerk"),
         ]
 
         LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
-            ForEach(connectionItems, id: \.0) { item in
+            ForEach(futureItems, id: \.0) { item in
                 GroupBox {
                     HStack(spacing: 8) {
                         item.1
@@ -2010,14 +1882,14 @@ struct SettingsView: View {
                     .frame(minHeight: 36)
                 }
                 .overlay(alignment: .topTrailing) {
-                    Text(item.4 ? "Phase 1" : "Geplant")
+                    Text("Geplant")
                         .font(.system(size: 9, weight: .bold))
-                        .foregroundColor(item.4 ? .koboldEmerald : .secondary)
+                        .foregroundColor(.secondary)
                         .padding(.horizontal, 5).padding(.vertical, 2)
-                        .background(Capsule().fill((item.4 ? Color.koboldEmerald : Color.secondary).opacity(0.15)))
+                        .background(Capsule().fill(Color.secondary.opacity(0.15)))
                         .padding(6)
                 }
-                .opacity(item.4 ? 0.75 : 0.45)
+                .opacity(0.45)
             }
         }
 
@@ -2302,7 +2174,7 @@ struct SettingsView: View {
         }
     }
 
-    private var brandLogoGitHub: some View {
+    var brandLogoGitHub: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 8)
                 .fill(Color(red: 0.14, green: 0.15, blue: 0.16))
@@ -2313,7 +2185,7 @@ struct SettingsView: View {
         }
     }
 
-    private var brandLogoMicrosoft: some View {
+    var brandLogoMicrosoft: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 8)
                 .fill(Color.white)
@@ -2331,7 +2203,7 @@ struct SettingsView: View {
         }
     }
 
-    private var brandLogoHuggingFace: some View {
+    var brandLogoHuggingFace: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 8)
                 .fill(Color(red: 1.0, green: 0.827, blue: 0.0))
@@ -2340,7 +2212,7 @@ struct SettingsView: View {
         }
     }
 
-    private var brandLogoSlack: some View {
+    var brandLogoSlack: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 8)
                 .fill(Color(red: 0.286, green: 0.114, blue: 0.333))
@@ -2350,7 +2222,7 @@ struct SettingsView: View {
         }
     }
 
-    private var brandLogoNotion: some View {
+    var brandLogoNotion: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 8)
                 .fill(Color.white)
@@ -2442,13 +2314,13 @@ struct SettingsView: View {
                     .font(.caption).foregroundColor(.secondary)
 
                 Picker("Kontextgröße", selection: $contextWindowSize) {
+                    Text("4K").tag(4096)
                     Text("8K").tag(8192)
                     Text("16K").tag(16384)
                     Text("32K").tag(32768)
                     Text("64K").tag(65536)
                     Text("128K").tag(131072)
-                    Text("150K (Standard)").tag(150_000)
-                    Text("200K").tag(200_000)
+                    Text("256K").tag(262144)
                 }
                 .pickerStyle(.menu)
 
@@ -2478,6 +2350,99 @@ struct SettingsView: View {
             .frame(maxHeight: .infinity, alignment: .top)
         }
 
+        // RAG / Semantic Memory
+        FuturisticBox(icon: "brain.filled.head.profile", title: "Embedding-Modell (Semantisches RAG)", accent: .koboldCyan) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Nur die 5 relevantesten Erinnerungen werden per Vektorsuche geladen (~150 statt ~3000 Tokens). Erfordert 'nomic-embed-text' (274 MB).")
+                    .font(.caption).foregroundColor(.secondary)
+
+                HStack(spacing: 12) {
+                    TextField("Modell-Name", text: $embeddingModel)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: 220)
+
+                    // Status badge
+                    if let available = ragAvailable {
+                        Label(available ? "Verfügbar" : "Nicht geladen",
+                              systemImage: available ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                            .foregroundColor(available ? .koboldEmerald : .koboldGold)
+                            .font(.caption)
+                    } else if isCheckingRAG {
+                        ProgressView().scaleEffect(0.7)
+                    } else {
+                        Text(ragStatus)
+                            .font(.caption).foregroundColor(.secondary)
+                    }
+
+                    Spacer()
+
+                    Button("Status prüfen") {
+                        isCheckingRAG = true
+                        Task {
+                            let ok = await EmbeddingRunner.shared.isAvailable()
+                            await MainActor.run {
+                                ragAvailable = ok
+                                ragStatus = ok ? "Verfügbar" : "Nicht geladen"
+                                isCheckingRAG = false
+                            }
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                }
+
+                Divider()
+
+                HStack(spacing: 8) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Modell installieren").font(.system(size: 13, weight: .medium))
+                        Text("Führt 'ollama pull \(embeddingModel)' aus (274 MB).")
+                            .font(.caption2).foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    Button(isPullingEmbeddingModel ? "Installiere…" : "Modell installieren") {
+                        isPullingEmbeddingModel = true
+                        pullOutput = ""
+                        let modelToPull = embeddingModel
+                        Task.detached {
+                            let process = Process()
+                            process.executableURL = URL(fileURLWithPath: "/usr/local/bin/ollama")
+                            if !FileManager.default.fileExists(atPath: "/usr/local/bin/ollama") {
+                                process.executableURL = URL(fileURLWithPath: "/opt/homebrew/bin/ollama")
+                            }
+                            process.arguments = ["pull", modelToPull]
+                            let pipe = Pipe()
+                            process.standardOutput = pipe
+                            process.standardError = pipe
+                            try? process.run()
+                            process.waitUntilExit()
+                            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                            let out = String(data: data, encoding: .utf8) ?? ""
+                            await MainActor.run {
+                                pullOutput = out
+                                isPullingEmbeddingModel = false
+                            }
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.koboldCyan)
+                    .disabled(isPullingEmbeddingModel)
+                }
+
+                if !pullOutput.isEmpty {
+                    ScrollView {
+                        Text(pullOutput)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundColor(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxHeight: 80)
+                    .padding(6)
+                    .background(Color.black.opacity(0.15))
+                    .cornerRadius(6)
+                }
+            }
+        }
+
         sectionTitle("Agent-Leistung")
 
         HStack(alignment: .top, spacing: 16) {
@@ -2485,9 +2450,9 @@ struct SettingsView: View {
                 Text("Max. Schritte die der Agent pro Anfrage ausführen darf.")
                     .font(.caption).foregroundColor(.secondary)
 
-                Picker("Researcher", selection: Binding(
-                    get: { UserDefaults.standard.integer(forKey: "kobold.agent.researcherSteps").nonZero ?? 50 },
-                    set: { UserDefaults.standard.set($0, forKey: "kobold.agent.researcherSteps") }
+                Picker("Web", selection: Binding(
+                    get: { UserDefaults.standard.integer(forKey: "kobold.agent.webSteps").nonZero ?? 50 },
+                    set: { UserDefaults.standard.set($0, forKey: "kobold.agent.webSteps") }
                 )) {
                     Text("20 Schritte").tag(20)
                     Text("50 (Standard)").tag(50)
@@ -2542,13 +2507,14 @@ struct SettingsView: View {
                 }.pickerStyle(.menu)
 
                 Picker("Max. Sub-Agenten", selection: Binding(
-                    get: { UserDefaults.standard.integer(forKey: "kobold.subagent.maxConcurrent").nonZero ?? 3 },
+                    get: { UserDefaults.standard.integer(forKey: "kobold.subagent.maxConcurrent").nonZero ?? 10 },
                     set: { UserDefaults.standard.set($0, forKey: "kobold.subagent.maxConcurrent") }
                 )) {
-                    Text("2 gleichzeitig").tag(2)
-                    Text("3 (Standard)").tag(3)
+                    Text("3 gleichzeitig").tag(3)
                     Text("5 gleichzeitig").tag(5)
-                    Text("8 gleichzeitig").tag(8)
+                    Text("10 (Standard)").tag(10)
+                    Text("20 gleichzeitig").tag(20)
+                    Text("Unbegrenzt (50)").tag(50)
                 }.pickerStyle(.menu)
             }
             .frame(maxHeight: .infinity, alignment: .top)
@@ -3255,10 +3221,14 @@ struct SettingsView: View {
     }
 
     private func checkIMessageAvailability() {
-        let script = NSAppleScript(source: "tell application \"Messages\" to count of every chat")
-        var errorInfo: NSDictionary?
-        script?.executeAndReturnError(&errorInfo)
-        iMessageAvailable = (errorInfo == nil)
+        // Run on background thread to avoid Main Thread freeze
+        Task.detached(priority: .utility) {
+            let script = NSAppleScript(source: "tell application \"Messages\" to count of every chat")
+            var errorInfo: NSDictionary?
+            script?.executeAndReturnError(&errorInfo)
+            let available = (errorInfo == nil)
+            await MainActor.run { iMessageAvailable = available }
+        }
     }
 
     private func requestIMessageAccess() {
@@ -3368,7 +3338,7 @@ struct SettingsView: View {
     // MARK: - Connection Card Template
 
     @ViewBuilder
-    private func connectionCard(
+    func connectionCard(
         logo: AnyView,
         name: String,
         subtitle: String,
@@ -3514,6 +3484,8 @@ struct SettingsView: View {
                     Task {
                         let config = MCPClient.ServerConfig(name: name, command: cmd, args: args, env: [:])
                         try? await MCPConfigManager.shared.saveConfig(config)
+                        // Connect server immediately (tools register on next agent call)
+                        try? await MCPConfigManager.shared.mcpClient.connectServer(config)
                         await MainActor.run {
                             mcpNewName = ""
                             mcpNewCommand = ""
@@ -3769,7 +3741,14 @@ struct SettingsView: View {
                                 get: { skills[idx].isEnabled },
                                 set: { newVal in
                                     skills[idx].isEnabled = newVal
-                                    Task { await SkillLoader.shared.setEnabled(skill.name, enabled: newVal) }
+                                    // Synchronous UserDefaults save — no fire-and-forget Task
+                                    var names = UserDefaults.standard.stringArray(forKey: "kobold.skills.enabled") ?? []
+                                    if newVal {
+                                        if !names.contains(skill.name) { names.append(skill.name) }
+                                    } else {
+                                        names.removeAll { $0 == skill.name }
+                                    }
+                                    UserDefaults.standard.set(names, forKey: "kobold.skills.enabled")
                                 }
                             ))
                             .toggleStyle(.switch)
@@ -4166,7 +4145,7 @@ struct SettingsView: View {
                     )
                 VStack(alignment: .leading, spacing: 4) {
                     Text("KoboldOS").font(.title.bold())
-                    Text("Alpha v0.2.85").font(.title3).foregroundColor(.koboldGold)
+                    Text("Alpha v0.3.1").font(.title3).foregroundColor(.koboldGold)
                     Text("Dein lokaler KI-Assistent für macOS")
                         .font(.subheadline).foregroundColor(.secondary)
                 }
@@ -4176,7 +4155,7 @@ struct SettingsView: View {
         }
 
         FuturisticBox(icon: "info.circle", title: "Build-Info", accent: .koboldGold) {
-                infoRow("Version", "Alpha v0.2.85")
+                infoRow("Version", "Alpha v0.3.1")
                 infoRow("Build", "2026-02-23")
                 infoRow("Swift", "6.0")
                 infoRow("Plattform", "macOS 14+ (Sonoma)")

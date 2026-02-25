@@ -9,7 +9,7 @@ public actor ToolRegistry {
     private var tools: [String: any Tool] = [:]
     private var errorCounts: [String: Int] = [:]
     private var disabledTools: Set<String> = []
-    private let maxErrors = 5
+    private let maxErrors = 50
     private var isSetup = false
 
     private init() {}

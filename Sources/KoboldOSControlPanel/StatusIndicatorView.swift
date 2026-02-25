@@ -72,7 +72,7 @@ struct StatusIndicatorView: View {
 
             // Alpha version badge
             HStack(spacing: 4) {
-                Text("Alpha v0.2.85")
+                Text("Alpha v0.3.1")
                     .font(.system(size: 9.5, weight: .bold))
                     .foregroundColor(.koboldGold)
                     .padding(.horizontal, 5)
@@ -81,10 +81,6 @@ struct StatusIndicatorView: View {
                     .overlay(Capsule().stroke(Color.koboldGold.opacity(0.3), lineWidth: 0.5))
 
                 Spacer()
-
-                Text("39k LOC")
-                    .font(.system(size: 9.5, weight: .medium))
-                    .foregroundColor(.secondary.opacity(0.4))
             }
         }
         .padding(.horizontal, 12)

@@ -41,7 +41,20 @@ struct MainView: View {
         }
         .frame(minWidth: 960, minHeight: 640)
         .onReceive(NotificationCenter.default.publisher(for: .koboldNavigate)) { note in
-            if let tab = note.object as? SidebarTab { selectedTab = tab }
+            if let tab = note.object as? SidebarTab {
+                selectedTab = tab
+            } else if let tabStr = note.userInfo?["tab"] as? String {
+                // Navigation via userInfo (von Agent-Tools, z.B. app_terminal, app_browser)
+                switch tabStr {
+                case "chat": selectedTab = .chat
+                case "tasks": selectedTab = .tasks
+                case "workflows": selectedTab = .workflows
+                case "settings": selectedTab = .settings
+                case "dashboard": selectedTab = .dashboard
+                case "memory": selectedTab = .memory
+                default: break
+                }
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .koboldNavigateSettings)) { _ in
             selectedTab = .settings
@@ -58,6 +71,9 @@ struct MainView: View {
             Button("Beenden", role: .destructive) { exit(0) }
         } message: {
             Text(runtimeManager.errorMessage ?? "Unbekannter Fehler")
+        }
+        .onChange(of: selectedTab) {
+            viewModel.currentViewTab = String(describing: selectedTab)
         }
     }
 }
@@ -265,7 +281,7 @@ struct SidebarView: View {
             .buttonStyle(.plain)
 
             if showNormalChatsInSubTab {
-                ForEach(viewModel.sessions.prefix(20)) { session in
+                ForEach(viewModel.sessions.prefix(100)) { session in
                     SidebarSessionRow(
                         session: session,
                         isCurrent: session.id == viewModel.currentSessionId,
@@ -699,21 +715,13 @@ struct SidebarView: View {
                     .foregroundColor(selectedTab == tab ? .koboldEmerald : .white)
                 Spacer()
                 // Beta / Coming Soon badges
-                if tab == .workflows || tab == .teams {
+                if tab == .workflows {
                     Text("Beta")
                         .font(.system(size: 11.5, weight: .bold))
                         .foregroundColor(.koboldGold)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 2)
                         .background(Capsule().fill(Color.koboldGold.opacity(0.2)))
-                }
-                if tab == .marketplace {
-                    Text("Coming Soon")
-                        .font(.system(size: 10.5, weight: .semibold))
-                        .foregroundColor(.secondary)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 2)
-                        .background(Capsule().fill(Color.secondary.opacity(0.15)))
                 }
             }
             .padding(.horizontal, 16)
@@ -741,27 +749,23 @@ struct SidebarView: View {
 
     func labelForTab(_ tab: SidebarTab) -> String {
         switch tab {
-        case .chat:        return l10n.language.chat
-        case .dashboard:   return l10n.language.dashboard
-        case .memory:      return "Gedächtnis"
-        case .tasks:       return l10n.language.tasks
-        case .workflows:   return l10n.language.team
-        case .teams:       return "Teams"
-        case .marketplace: return "Marktplatz"
-        case .settings:    return l10n.language.settings
+        case .chat:         return l10n.language.chat
+        case .dashboard:    return l10n.language.dashboard
+        case .memory:       return "Gedächtnis"
+        case .tasks:        return l10n.language.tasks
+        case .workflows:    return l10n.language.team
+        case .settings:     return l10n.language.settings
         }
     }
 
     func iconForTab(_ tab: SidebarTab) -> String {
         switch tab {
-        case .chat:        return "message.fill"
-        case .dashboard:   return "chart.bar.fill"
-        case .memory:      return "brain.filled.head.profile"
-        case .tasks:       return "checklist"
-        case .workflows:   return "point.3.connected.trianglepath.dotted"
-        case .teams:       return "person.3.fill"
-        case .marketplace: return "storefront.fill"
-        case .settings:    return "gearshape.fill"
+        case .chat:         return "message.fill"
+        case .dashboard:    return "chart.bar.fill"
+        case .memory:       return "brain.filled.head.profile"
+        case .tasks:        return "checklist"
+        case .workflows:    return "point.3.connected.trianglepath.dotted"
+        case .settings:     return "gearshape.fill"
         }
     }
 }
@@ -1388,13 +1392,53 @@ struct ContentAreaView: View {
                     } else {
                         TeamView(viewModel: viewModel)
                     }
-                case .teams:       TeamsGroupView(viewModel: viewModel)
-                case .marketplace: MarketplaceView(viewModel: viewModel)
-                case .settings:    SettingsView(viewModel: viewModel)
+                case .settings:     SettingsView(viewModel: viewModel)
                 }
             }
             } // VStack
+
+            // PersistentThinkingBar wird nur in ChatView angezeigt (nicht global)
         } // ZStack mit CloverPattern
+    }
+}
+
+// MARK: - Persistent Thinking Bar (sichtbar auf ALLEN Tabs während Agent arbeitet)
+
+struct PersistentThinkingBar: View {
+    @ObservedObject var viewModel: RuntimeViewModel
+    @State private var lastThought: String = ""
+    @State private var pulse = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ProgressView().controlSize(.small).scaleEffect(0.8)
+            Text("Kobold denkt nach...")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(.koboldEmerald)
+            if !lastThought.isEmpty {
+                Text("— \(lastThought)")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary.opacity(0.7))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            Spacer()
+            Circle()
+                .fill(Color.koboldEmerald)
+                .frame(width: 6, height: 6)
+                .opacity(pulse ? 1 : 0.3)
+                .animation(.easeInOut(duration: 1.0).repeatForever(autoreverses: true), value: pulse)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 6)
+        .background(Color.koboldEmerald.opacity(0.06))
+        .transition(.move(edge: .bottom).combined(with: .opacity))
+        .onAppear { pulse = true }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("koboldAgentThought"))) { notif in
+            if let text = notif.userInfo?["text"] as? String {
+                lastThought = String(text.prefix(80))
+            }
+        }
     }
 }
 
@@ -1549,8 +1593,6 @@ enum SidebarTab: String, CaseIterable {
     case chat
     case tasks
     case workflows
-    case teams
-    case marketplace
     case memory
     case settings
 }
@@ -1604,31 +1646,29 @@ struct KoboldOSSidebarLogo: View {
             }
             .cornerRadius(10)
 
-            // Glow pulse
+            // Glow pulse — single animation, no layout changes (opacity only)
             Ellipse()
                 .fill(Color.koboldEmerald.opacity(glowPulse ? 0.12 : 0.06))
                 .frame(width: 120, height: 20)
                 .blur(radius: 8)
                 .offset(y: 12)
-                .animation(.easeInOut(duration: 2).repeatForever(autoreverses: true), value: glowPulse)
+                .animation(.easeInOut(duration: 3).repeatForever(autoreverses: true), value: glowPulse)
 
             // Main content
             HStack(spacing: 8) {
                 // App Icon with glow
                 ZStack {
-                    // Glow behind icon
+                    // Glow behind icon — uses same glowPulse, no separate animation
                     Circle()
-                        .fill(Color.koboldEmerald.opacity(glowPulse ? 0.3 : 0.15))
+                        .fill(Color.koboldEmerald.opacity(glowPulse ? 0.25 : 0.15))
                         .frame(width: 52, height: 52)
                         .blur(radius: 10)
-                        .animation(.easeInOut(duration: 2).repeatForever(autoreverses: true), value: glowPulse)
                     Image(nsImage: NSApp.applicationIconImage)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                         .frame(width: 48, height: 48)
                         .clipShape(RoundedRectangle(cornerRadius: 10))
-                        .shadow(color: Color.koboldEmerald.opacity(0.6), radius: glowPulse ? 5 : 2)
-                        .animation(.easeInOut(duration: 2).repeatForever(autoreverses: true), value: glowPulse)
+                        .shadow(color: Color.koboldEmerald.opacity(0.6), radius: 3)
                 }
 
                 VStack(alignment: .leading, spacing: 2) {
@@ -1641,8 +1681,7 @@ struct KoboldOSSidebarLogo: View {
                                 startPoint: .leading, endPoint: .trailing
                             )
                         )
-                        .shadow(color: Color.koboldEmerald.opacity(0.8), radius: glowPulse ? 6 : 3)
-                        .animation(.easeInOut(duration: 2).repeatForever(autoreverses: true), value: glowPulse)
+                        .shadow(color: Color.koboldEmerald.opacity(0.8), radius: 4)
 
                     if !userName.isEmpty {
                         Text(userName)

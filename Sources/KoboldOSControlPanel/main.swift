@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import KoboldCore
 
 // MARK: - Shared Navigation State (used by Commands to change tabs)
 
@@ -18,8 +19,6 @@ struct KoboldOSApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var runtimeManager = RuntimeManager.shared
     @StateObject private var l10n = LocalizationManager.shared
-    @StateObject private var menuBarController = MenuBarController.shared
-
     var body: some Scene {
         WindowGroup {
             MainView()
@@ -27,10 +26,6 @@ struct KoboldOSApp: App {
                 .environmentObject(l10n)
                 .onAppear {
                     runtimeManager.startDaemon()
-                    // Initialize menu bar if enabled
-                    if menuBarController.isMenuBarEnabled {
-                        menuBarController.updateActivationPolicy()
-                    }
                     // Auto-check for updates on launch
                     if UserDefaults.standard.bool(forKey: "kobold.autoCheckUpdates") {
                         Task {
@@ -100,14 +95,31 @@ struct KoboldOSApp: App {
 
 // MARK: - App Delegate
 
-class AppDelegate: NSObject, NSApplicationDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         // NEVER quit when window closes — always minimize to menu bar / dock
         return false
     }
 
+    // Held for process lifetime — prevents App Nap and requests high scheduler priority.
+    private var activityToken: NSObjectProtocol?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Request maximum CPU access: disable App Nap, set latency-critical scheduling.
+        // This allows macOS to schedule KoboldOS on multiple CPU cores at high priority
+        // instead of throttling it when the window is not in the foreground.
+        activityToken = ProcessInfo.processInfo.beginActivity(
+            options: [
+                .userInitiatedAllowingIdleSystemSleep, // high QoS, allows idle sleep
+                .latencyCritical,                      // lowest scheduler latency
+                .automaticTerminationDisabled,          // don't auto-terminate
+                .suddenTerminationDisabled,             // don't sudden-terminate
+            ],
+            reason: "KoboldOS Agent Inference — requires full CPU access"
+        )
+        print("[AppDelegate] High-performance activity token acquired")
+
         // CRITICAL: Start daemon IMMEDIATELY on launch — don't wait for onAppear
         RuntimeManager.shared.startDaemon()
         print("[AppDelegate] Daemon start triggered")
@@ -122,44 +134,39 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Initialize TTS Manager (listens for speak notifications from agent)
         _ = TTSManager.shared
-        // Initialize ImageGen Manager (listens for generate notifications from agent)
-        _ = ImageGenManager.shared
 
-        // Retarget the red close button on the main window: HIDE instead of CLOSE.
-        // SwiftUI's WindowGroup closes + terminates on the default close action,
-        // so we intercept at the button level to prevent that entirely.
-        retargetCloseButtons()
-        // Also watch for new windows (sheets, etc.) so we only retarget the main one
-        NotificationCenter.default.addObserver(
-            forName: NSWindow.didBecomeMainNotification,
-            object: nil, queue: .main
-        ) { [weak self] _ in
-            self?.retargetCloseButtons()
+        // Re-embed any memories that don't have a vector yet (incremental, background)
+        Task.detached(priority: .background) {
+            // Brief delay so the UI is fully up before we start embedding
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            let store = MemoryStore()
+            // Allow actor-isolated loadFromDisk() Task to finish
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            let entries = await store.allEntries()
+            await EmbeddingStore.shared.reembedMissing(entries: entries)
         }
-    }
 
-    /// Finds the main window's red close button and rewires it to hide instead of close.
-    private func retargetCloseButtons() {
-        for window in NSApp.windows {
-            guard window.className != "NSStatusBarWindow",
-                  !window.className.contains("Popover"),
-                  !window.className.contains("_NSAlertPanel") else { continue }
-            if let closeButton = window.standardWindowButton(.closeButton) {
-                closeButton.target = self
-                closeButton.action = #selector(hideWindowInsteadOfClose(_:))
+        // Set window delegate on main window once it appears (handles close → hide)
+        DispatchQueue.main.async { [weak self] in
+            if let window = NSApp.windows.first(where: {
+                $0.className != "NSStatusBarWindow" && !$0.className.contains("Popover")
+            }) {
+                window.delegate = self
             }
         }
     }
 
-    /// Called when the user clicks the red X: hides the window, switches to accessory mode.
-    @objc func hideWindowInsteadOfClose(_ sender: Any?) {
-        guard let window = NSApp.keyWindow ?? NSApp.mainWindow else { return }
+    // MARK: - NSWindowDelegate — intercept close to hide instead
+
+    @MainActor
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
         // Save data before hiding
         NotificationCenter.default.post(name: .koboldShutdownSave, object: nil)
         // Hide the window (keeps it alive, just invisible)
-        window.orderOut(nil)
+        sender.orderOut(nil)
         // Switch to accessory mode (hides Dock icon, menu bar stays)
         NSApp.setActivationPolicy(.accessory)
+        return false  // Prevent actual window close
     }
 
     func applicationWillTerminate(_ notification: Notification) {

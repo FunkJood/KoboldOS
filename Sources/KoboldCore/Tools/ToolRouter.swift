@@ -7,8 +7,8 @@ public actor ToolRouter {
     private var tools: [String: any Tool] = [:]
     private var errorCounts: [String: Int] = [:]
     private var disabledTools: Set<String> = []
-    private let maxErrorsBeforeDisable = 5
-    private let defaultTimeoutSeconds: TimeInterval = 60
+    private let maxErrorsBeforeDisable = 50
+    private let defaultTimeoutSeconds: TimeInterval = 120
 
     /// Tools that run without timeout (sub-agent delegation, etc.)
     private let noTimeoutTools: Set<String> = ["call_subordinate", "delegate_parallel"]

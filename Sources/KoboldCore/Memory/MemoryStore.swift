@@ -64,8 +64,12 @@ public actor MemoryStore {
         storageDirectory.appendingPathComponent("snapshots")
     }
 
-    private var localEntriesURL: URL {
+    private var legacyEntriesURL: URL {
         storageDirectory.appendingPathComponent("entries.json")
+    }
+
+    private func entryURL(_ id: String) -> URL {
+        storageDirectory.appendingPathComponent("\(id).json")
     }
 
     public init(agentID: String? = nil, sessionID: String? = nil) {
@@ -73,9 +77,32 @@ public actor MemoryStore {
     }
 
     private func loadFromDisk() {
-        guard let data = try? Data(contentsOf: localEntriesURL),
-              let entries = try? JSONDecoder().decode([MemoryEntry].self, from: data) else { return }
-        localEntries = entries
+        let fm = FileManager.default
+        try? fm.createDirectory(at: storageDirectory, withIntermediateDirectories: true)
+
+        // Migrate legacy entries.json → individual files
+        if fm.fileExists(atPath: legacyEntriesURL.path),
+           let data = try? Data(contentsOf: legacyEntriesURL),
+           let legacy = try? JSONDecoder().decode([MemoryEntry].self, from: data) {
+            for entry in legacy {
+                if let singleData = try? JSONEncoder().encode(entry) {
+                    try? singleData.write(to: entryURL(entry.id))
+                }
+            }
+            try? fm.removeItem(at: legacyEntriesURL)
+            print("[MemoryStore] migrated \(legacy.count) entries to individual files")
+        }
+
+        // Load all individual entry files
+        guard let files = try? fm.contentsOfDirectory(at: storageDirectory, includingPropertiesForKeys: nil) else { return }
+        let decoder = JSONDecoder()
+        localEntries = files
+            .filter { $0.pathExtension == "json" }
+            .compactMap { url -> MemoryEntry? in
+                guard let data = try? Data(contentsOf: url) else { return nil }
+                return try? decoder.decode(MemoryEntry.self, from: data)
+            }
+            .sorted { $0.timestamp < $1.timestamp }
     }
 
     // MARK: - Add
@@ -83,7 +110,17 @@ public actor MemoryStore {
     public func add(text: String, memoryType: String = "kurzzeit", tags: [String] = []) async throws -> MemoryEntry {
         let entry = MemoryEntry(text: text, memoryType: memoryType, tags: tags)
         localEntries.append(entry)
-        try saveLocalEntries()
+        try saveEntry(entry)
+        // Async embedding — does not block the caller
+        let capturedEntry = entry
+        Task.detached(priority: .utility) {
+            if let emb = await EmbeddingRunner.shared.embed(capturedEntry.text) {
+                await EmbeddingStore.shared.upsert(
+                    id: capturedEntry.id, text: capturedEntry.text,
+                    embedding: emb, memoryType: capturedEntry.memoryType, tags: capturedEntry.tags
+                )
+            }
+        }
         return entry
     }
 
@@ -94,7 +131,17 @@ public actor MemoryStore {
         if let text = text { localEntries[index].text = text }
         if let memoryType = memoryType { localEntries[index].memoryType = memoryType }
         if let tags = tags { localEntries[index].tags = tags }
-        try saveLocalEntries()
+        try saveEntry(localEntries[index])
+        // Re-embed updated entry
+        let capturedEntry = localEntries[index]
+        Task.detached(priority: .utility) {
+            if let emb = await EmbeddingRunner.shared.embed(capturedEntry.text) {
+                await EmbeddingStore.shared.upsert(
+                    id: capturedEntry.id, text: capturedEntry.text,
+                    embedding: emb, memoryType: capturedEntry.memoryType, tags: capturedEntry.tags
+                )
+            }
+        }
         return localEntries[index]
     }
 
@@ -104,7 +151,11 @@ public actor MemoryStore {
         let countBefore = localEntries.count
         localEntries.removeAll { $0.id == id }
         if localEntries.count < countBefore {
-            try saveLocalEntries()
+            deleteEntryFile(id: id)
+            let capturedID = id
+            Task.detached(priority: .utility) {
+                await EmbeddingStore.shared.delete(id: capturedID)
+            }
             return true
         }
         return false
@@ -244,12 +295,27 @@ public actor MemoryStore {
         try FileManager.default.removeItem(at: url)
     }
 
-    // MARK: - Persistence
+    // MARK: - Persistence (individual files per entry)
 
+    /// Save a single entry to its own JSON file.
+    private func saveEntry(_ entry: MemoryEntry) throws {
+        try FileManager.default.createDirectory(at: storageDirectory, withIntermediateDirectories: true)
+        let data = try JSONEncoder().encode(entry)
+        try data.write(to: entryURL(entry.id))
+    }
+
+    /// Remove a single entry file.
+    private func deleteEntryFile(id: String) {
+        try? FileManager.default.removeItem(at: entryURL(id))
+    }
+
+    // Legacy helper — kept for Snapshot restore which writes all entries at once
     private func saveLocalEntries() throws {
         try FileManager.default.createDirectory(at: storageDirectory, withIntermediateDirectories: true)
-        let data = try JSONEncoder().encode(localEntries)
-        try data.write(to: localEntriesURL)
+        for entry in localEntries {
+            let data = try JSONEncoder().encode(entry)
+            try data.write(to: entryURL(entry.id))
+        }
     }
 
     public func getLocalEntryCount() -> Int { localEntries.count }

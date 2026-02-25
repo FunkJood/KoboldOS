@@ -109,8 +109,8 @@ public extension ToolRuleEngine {
         ])
     }
 
-    /// Research agent: more tool calls allowed
-    static var research: ToolRuleEngine {
+    /// Web agent: more tool calls allowed
+    static var web: ToolRuleEngine {
         ToolRuleEngine(rules: [
             .maxCount(toolName: "browser", limit: 20),
             .maxCount(toolName: "http", limit: 30),

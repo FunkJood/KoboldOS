@@ -18,7 +18,7 @@ public actor DaemonListener {
 
     // Latency tracking
     private var latencySamples: [(Date, Double)] = []  // (timestamp, milliseconds)
-    private let maxLatencySamples = 100
+    private let maxLatencySamples = 500
 
     private var averageLatencyMs: Double {
         guard !latencySamples.isEmpty else { return 0 }
@@ -28,40 +28,43 @@ public actor DaemonListener {
 
     private func recordLatency(_ ms: Double) {
         latencySamples.append((Date(), ms))
-        if latencySamples.count > maxLatencySamples * 2 {
-            // Efficient: only trim when double the limit, remove half at once
-            latencySamples = Array(latencySamples.suffix(maxLatencySamples))
+        if latencySamples.count > maxLatencySamples {
+            latencySamples = Array(latencySamples.suffix(maxLatencySamples / 2))
         }
     }
 
     // Connection limits
     private var activeConnections = 0
-    private let maxConcurrentConnections = 20
+    private let maxConcurrentConnections = 1000
 
     // Request log
     private var requestLog: [(Date, String, String)] = [] // (time, path, status)
 
     // Activity trace timeline
     private var traceTimeline: [[String: Any]] = []
-    private let maxTraceEntries = 50
+    private let maxTraceEntries = 500
+    private nonisolated(unsafe) static let isoFormatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        return f
+    }()
 
     private func addTrace(event: String, detail: String) {
-        let ts = ISO8601DateFormatter().string(from: Date())
+        let ts = DaemonListener.isoFormatter.string(from: Date())
         let entry: [String: Any] = [
             "event": event,
             "detail": detail,
             "timestamp": ts
         ]
         traceTimeline.append(entry)
-        if traceTimeline.count > maxTraceEntries * 2 {
-            traceTimeline = Array(traceTimeline.suffix(maxTraceEntries))
+        if traceTimeline.count > maxTraceEntries {
+            traceTimeline = Array(traceTimeline.suffix(maxTraceEntries / 2))
         }
     }
 
     // Rate limiting: [path: [timestamps]]
     private var rateLimitMap: [String: [Date]] = [:]
-    private let rateLimitMax = 60        // requests per minute per path
-    private let bodyLimitBytes = 1_048_576 // 1 MB
+    private let rateLimitMax = 6000       // effectively unlimited — no artificial throttling
+    private let bodyLimitBytes = 10_485_760 // 10 MB
 
     public init(port: Int, authToken: String) {
         self.port = port
@@ -85,17 +88,19 @@ public actor DaemonListener {
         print("✅ Listening on port \(listenPort) (PID \(ProcessInfo.processInfo.processIdentifier))")
 
         // Bridge blocking Darwin.accept() to async via AsyncStream
+        // accept() is already blocking — no busy-wait needed
         let clientStream = AsyncStream<ClientSocket> { continuation in
             let t = Thread {
                 while true {
                     guard let client = sock.accept() else {
-                        Thread.sleep(forTimeInterval: 0.01)
+                        // accept() failed (e.g. fd closed) — wait longer before retrying
+                        Thread.sleep(forTimeInterval: 0.5)
                         continue
                     }
                     continuation.yield(client)
                 }
             }
-            t.qualityOfService = .background
+            t.qualityOfService = .userInteractive
             t.start()
         }
 
@@ -166,10 +171,13 @@ public actor DaemonListener {
 
     private func isRateLimited(path: String) -> Bool {
         let now = Date()
+        // Prevent unbounded map growth: evict all entries if too many paths
+        if rateLimitMap.count > 200 {
+            rateLimitMap = rateLimitMap.filter { !$0.value.allSatisfy { now.timeIntervalSince($0) >= 60 } }
+        }
         var timestamps = rateLimitMap[path] ?? []
         timestamps = timestamps.filter { now.timeIntervalSince($0) < 60 }
         if timestamps.isEmpty {
-            // Clean up empty entries to prevent unbounded map growth
             rateLimitMap.removeValue(forKey: path)
         }
         if timestamps.count >= rateLimitMax {
@@ -183,13 +191,13 @@ public actor DaemonListener {
 
     private func routeRequest(method: String, path: String, body: Data?) async -> String {
         requestLog.append((Date(), path, "200"))
-        if requestLog.count > 1000 { requestLog = Array(requestLog.suffix(500)) }
+        if requestLog.count > 500 { requestLog = Array(requestLog.suffix(250)) }
 
         switch path {
         case "/health":
             return jsonOK([
                 "status": "ok",
-                "version": "0.2.85",
+                "version": "0.3.1",
                 "pid": Int(ProcessInfo.processInfo.processIdentifier),
                 "uptime": Int(Date().timeIntervalSince(startTime))
             ])
@@ -350,10 +358,10 @@ public actor DaemonListener {
         let type: AgentType
         switch agentTypeStr {
         case "coder":      type = .coder
-        case "researcher": type = .researcher
-        case "planner":    type = .planner
-        case "instructor": type = .instructor
-        default:           type = .instructor
+        case "researcher", "web": type = .web
+        case "planner":           type = .planner
+        case "instructor":        type = .instructor
+        default:                  type = .instructor
         }
         let images = json["images"] as? [String] ?? []
 
@@ -368,8 +376,15 @@ public actor DaemonListener {
             return await handleVision(message: message, images: images)
         }
 
-        if agentLoop == nil { agentLoop = AgentLoop() }
-        guard let agent = agentLoop else { return agentError("Kein Agent verfügbar") }
+        // Acquire a worker from the shared pool (same pool as SSE requests)
+        let pool = AgentWorkerPool.shared
+        let agent = await pool.acquire()
+        defer { Task.detached { await pool.release(agent) } }
+
+        // Inject conversation history if available
+        if let history = json["conversation_history"] as? [[String: String]], !history.isEmpty {
+            await agent.injectConversationHistory(history)
+        }
 
         addTrace(event: "Chat", detail: String(message.prefix(80)))
 
@@ -426,11 +441,11 @@ public actor DaemonListener {
         let agentTypeStr = json["agent_type"] as? String ?? "general"
         let type: AgentType
         switch agentTypeStr {
-        case "coder":      type = .coder
-        case "researcher": type = .researcher
-        case "planner":    type = .planner
-        case "instructor": type = .instructor
-        default:           type = .instructor
+        case "coder":             type = .coder
+        case "researcher", "web": type = .web
+        case "planner":           type = .planner
+        case "instructor":        type = .instructor
+        default:                  type = .instructor
         }
 
         // Extract provider config
@@ -439,12 +454,42 @@ public actor DaemonListener {
         let apiKey = json["api_key"] as? String ?? ""
         let temperature = json["temperature"] as? Double ?? 0.7
 
-        chatRequests += 1
-        if agentLoop == nil { agentLoop = AgentLoop() }
-        guard let agent = agentLoop else {
-            client.write(httpResponse(status: "500 Internal Server Error", body: "{\"error\":\"No agent\"}"))
-            return
+        // Extract conversation history from payload (sent by RuntimeViewModel)
+        let conversationHistory: [[String: String]]
+        if let history = json["conversation_history"] as? [[String: String]] {
+            conversationHistory = history
+        } else {
+            conversationHistory = []
         }
+
+        chatRequests += 1
+
+        // Acquire a worker from the pool — suspends if all workers are busy.
+        // Each worker has its own LLMRunner to enable true Ollama parallelism
+        // (requires OLLAMA_NUM_PARALLEL ≥ pool size on the Ollama side).
+        let pool = AgentWorkerPool.shared
+        let poolStatus = await pool.statusDescription
+        print("[Daemon] SSE: acquiring worker (pool: \(poolStatus))")
+        let agent = await pool.acquire()
+        // Release worker back to pool when SSE is done (whether success, error, or disconnect)
+        // Using a detached task avoids holding the DaemonListener actor during the async release
+        defer {
+            Task.detached { await pool.release(agent) }
+        }
+
+        // Send a "waiting" event if the pool was saturated (user sees feedback in UI)
+        let waitCount = await pool.waitingRequestCount
+        if waitCount > 0 {
+            let waitEvent = "event: step\ndata: {\"type\":\"waiting\",\"content\":\"⏳ Warte auf freien Worker (\(waitCount + 1) in Warteschlange)...\",\"tool\":\"pool\"}\n\n"
+            _ = client.tryWrite(waitEvent)
+        }
+
+        // CRITICAL: Inject conversation history so the agent knows what was discussed
+        if !conversationHistory.isEmpty {
+            await agent.injectConversationHistory(conversationHistory)
+        }
+
+        print("[Daemon] SSE START: \"\(String(message.prefix(60)))\" type=\(agentTypeStr) provider=\(provider) model=\(model.isEmpty ? "default" : model) history=\(conversationHistory.count) msgs pool=\(await pool.statusDescription)")
 
         addTrace(event: "Chat (SSE)", detail: String(message.prefix(80)))
 
@@ -464,20 +509,31 @@ public actor DaemonListener {
 
         // Stream steps with provider config
         let providerConfig = LLMProviderConfig(provider: provider, model: model, apiKey: apiKey, temperature: temperature)
+        print("[Daemon] SSE → runStreaming starting...")
         let stream = await agent.runStreaming(userMessage: message, agentType: type, providerConfig: providerConfig)
+        print("[Daemon] SSE → stream created, iterating steps...")
         var stepCount = 0
         for await step in stream {
             if step.type == .toolCall {
                 toolCalls += 1
                 addTrace(event: "Tool: \(step.toolCallName ?? "unknown")", detail: String(step.content.prefix(60)))
             }
-            // Skip checkpoint steps for SSE (internal bookkeeping)
-            if step.type == .checkpoint { continue }
+            // Include checkpoint steps in SSE for UI visibility
             let eventData = "event: step\ndata: \(step.toJSON())\n\n"
-            client.write(eventData)
+            // Detect client disconnect — stop streaming if write fails
+            if !client.tryWrite(eventData) {
+                print("[Daemon] SSE CLIENT DISCONNECTED after \(stepCount) steps — aborting stream")
+                addTrace(event: "SSE aborted", detail: "Client disconnected after \(stepCount) steps")
+                return
+            }
             stepCount += 1
+            // CRITICAL: Yield after each step to prevent actor starvation.
+            // Without this, rapid SSE steps monopolize the DaemonListener actor
+            // and starve /metrics, /health, and other concurrent requests.
+            await Task.yield()
         }
 
+        print("[Daemon] SSE DONE: \(stepCount) steps streamed")
         addTrace(event: "Antwort (SSE)", detail: "\(stepCount) Schritte")
 
         // End event
@@ -711,7 +767,7 @@ public actor DaemonListener {
     private func buildAgentCard() -> [String: Any] {
         [
             "name": "KoboldOS",
-            "version": "0.2.85",
+            "version": "0.3.1",
             "description": "Native macOS AI Agent Runtime — local-first, privacy-focused",
             "capabilities": [
                 "streaming": true,
@@ -720,7 +776,7 @@ public actor DaemonListener {
                           "archival_memory_search", "archival_memory_insert",
                           "calendar", "contacts",
                           "call_subordinate", "delegate_parallel"],
-                "agent_types": ["general", "coder", "researcher", "planner", "instructor"],
+                "agent_types": ["general", "coder", "web", "planner", "instructor"],
                 "memory": true,
                 "sub_agents": true,
                 "vision": true,
@@ -787,8 +843,7 @@ public actor DaemonListener {
         guard let cp = await CheckpointStore.shared.load(id) else {
             return jsonError("Checkpoint not found")
         }
-        if agentLoop == nil { agentLoop = AgentLoop() }
-        guard let agent = agentLoop else { return jsonError("No agent") }
+        let agent = AgentLoop()
 
         // Resume synchronously and collect results
         var steps: [[String: Any]] = []
@@ -869,6 +924,21 @@ public actor DaemonListener {
             } catch {
                 return jsonError("Failed to save: \(error.localizedDescription)")
             }
+        }
+
+        if method == "PATCH", let body {
+            // Update existing entry
+            guard let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+                  let id = json["id"] as? String else {
+                return jsonError("Missing 'id'")
+            }
+            let text     = json["text"] as? String
+            let type     = json["type"] as? String
+            let tagsRaw  = json["tags"] as? [String]
+            if let updated = try? await taggedMemoryStore.update(id: id, text: text, memoryType: type, tags: tagsRaw) {
+                return jsonOK(["ok": true, "id": updated.id])
+            }
+            return jsonError("Entry not found: \(id)")
         }
 
         if method == "DELETE", let body {
@@ -1090,7 +1160,23 @@ private class ClientSocket: @unchecked Sendable {
     func write(_ response: String) {
         guard let data = response.data(using: .utf8) else { return }
         data.withUnsafeBytes { ptr in
-            _ = Darwin.send(fd, ptr.baseAddress!, data.count, 0)
+            guard let base = ptr.baseAddress else { return }
+            var totalSent = 0
+            while totalSent < data.count {
+                let sent = Darwin.send(fd, base.advanced(by: totalSent), data.count - totalSent, 0)
+                if sent <= 0 { break } // Client disconnected or error — stop writing
+                totalSent += sent
+            }
+        }
+    }
+
+    /// Non-blocking write attempt — returns false if client is gone (used for SSE keepalive)
+    func tryWrite(_ response: String) -> Bool {
+        guard let data = response.data(using: .utf8) else { return false }
+        return data.withUnsafeBytes { ptr -> Bool in
+            guard let base = ptr.baseAddress else { return false }
+            let sent = Darwin.send(fd, base, data.count, 0)
+            return sent > 0
         }
     }
 

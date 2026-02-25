@@ -89,4 +89,25 @@ public actor CheckpointStore {
         let url = storeDir.appendingPathComponent("cp_\(id).json")
         try? FileManager.default.removeItem(at: url)
     }
+
+    /// Auto-prune old checkpoints, keeping only the most recent `keep` entries
+    public func pruneOldCheckpoints(keep: Int = 50) {
+        let fm = FileManager.default
+        guard let files = try? fm.contentsOfDirectory(at: storeDir, includingPropertiesForKeys: [.creationDateKey]) else { return }
+        let cpFiles = files.filter { $0.lastPathComponent.hasPrefix("cp_") && $0.pathExtension == "json" }
+        guard cpFiles.count > keep else { return }
+
+        let sorted = cpFiles.sorted { a, b in
+            let dateA = (try? a.resourceValues(forKeys: [.creationDateKey]))?.creationDate ?? .distantPast
+            let dateB = (try? b.resourceValues(forKeys: [.creationDateKey]))?.creationDate ?? .distantPast
+            return dateA < dateB
+        }
+        let toDelete = sorted.prefix(sorted.count - keep)
+        for file in toDelete {
+            try? fm.removeItem(at: file)
+        }
+        if !toDelete.isEmpty {
+            print("[CheckpointStore] Pruned \(toDelete.count) old checkpoints, kept \(keep)")
+        }
+    }
 }

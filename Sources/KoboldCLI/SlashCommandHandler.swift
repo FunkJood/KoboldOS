@@ -94,7 +94,7 @@ struct SlashCommandHandler {
             if let type = args.first {
                 print(TerminalFormatter.success("Agent-Typ: \(type)"))
             } else {
-                print(TerminalFormatter.info("Verfügbare Typen: general, coder, researcher, planner, instructor"))
+                print(TerminalFormatter.info("Verfügbare Typen: general, coder, web, planner, instructor"))
             }
             return true
 
@@ -127,6 +127,98 @@ struct SlashCommandHandler {
                 }
             } else {
                 print(TerminalFormatter.error("Keine aktive Session"))
+            }
+            return true
+
+        case "/apps":
+            do {
+                let result = try await client.get("/apps/status")
+                let terminals = result["terminal_sessions"] as? Int ?? 0
+                let browserTabs = result["browser_tabs"] as? Int ?? 0
+                let installedApps = result["installed_apps"] as? Int ?? 0
+                print(TerminalFormatter.info("Apps-Status:"))
+                print(TerminalFormatter.info("  Terminal-Sessions: \(terminals)"))
+                print(TerminalFormatter.info("  Browser-Tabs: \(browserTabs)"))
+                print(TerminalFormatter.info("  Installierte Apps: \(installedApps)"))
+            } catch {
+                print(TerminalFormatter.info("Apps-Tab: Nur in der GUI verfügbar"))
+            }
+            return true
+
+        case "/terminal":
+            let cmd = args.joined(separator: " ")
+            if cmd.isEmpty {
+                print(TerminalFormatter.error("Nutzung: /terminal <befehl>"))
+            } else {
+                do {
+                    let result = try await client.post("/apps/terminal", body: ["command": cmd])
+                    let output = result["output"] as? String ?? "Gesendet"
+                    print(TerminalFormatter.info(output))
+                } catch {
+                    print(TerminalFormatter.info("Terminal-Befehl '\(cmd)' an GUI gesendet"))
+                }
+            }
+            return true
+
+        case "/browse":
+            let url = args.joined(separator: " ")
+            if url.isEmpty {
+                print(TerminalFormatter.error("Nutzung: /browse <url>"))
+            } else {
+                do {
+                    let _ = try await client.post("/apps/browser", body: ["url": url])
+                    print(TerminalFormatter.success("Browser navigiert zu: \(url)"))
+                } catch {
+                    print(TerminalFormatter.info("Browser-Navigation an GUI gesendet"))
+                }
+            }
+            return true
+
+        case "/tasks":
+            do {
+                let result = try await client.get("/tasks")
+                if let tasks = result["tasks"] as? [[String: Any]] {
+                    if tasks.isEmpty {
+                        print(TerminalFormatter.info("Keine aktiven Tasks"))
+                    } else {
+                        let headers = ["ID", "Titel", "Status", "Agent"]
+                        let rows = tasks.map { t -> [String] in
+                            [
+                                t["id"] as? String ?? "?",
+                                String((t["title"] as? String ?? "").prefix(30)),
+                                t["status"] as? String ?? "?",
+                                t["agent"] as? String ?? "-"
+                            ]
+                        }
+                        print(TerminalFormatter.table(headers: headers, rows: rows))
+                    }
+                }
+            } catch {
+                print(TerminalFormatter.error("Fehler: \(error.localizedDescription)"))
+            }
+            return true
+
+        case "/workflows":
+            do {
+                let result = try await client.get("/workflows")
+                if let workflows = result["workflows"] as? [[String: Any]] {
+                    if workflows.isEmpty {
+                        print(TerminalFormatter.info("Keine Workflows definiert"))
+                    } else {
+                        let headers = ["ID", "Name", "Knoten", "Status"]
+                        let rows = workflows.map { w -> [String] in
+                            [
+                                w["id"] as? String ?? "?",
+                                String((w["name"] as? String ?? "").prefix(30)),
+                                "\(w["nodeCount"] as? Int ?? 0)",
+                                w["status"] as? String ?? "-"
+                            ]
+                        }
+                        print(TerminalFormatter.table(headers: headers, rows: rows))
+                    }
+                }
+            } catch {
+                print(TerminalFormatter.error("Fehler: \(error.localizedDescription)"))
             }
             return true
 
@@ -185,6 +277,11 @@ struct SlashCommandHandler {
           /memory            Memory-Blöcke anzeigen
           /export [pfad]     Session als Markdown exportieren
           /resume [id]       Checkpoint fortsetzen
+          /apps              Apps-Tab Status anzeigen
+          /terminal <cmd>    Befehl an App-Terminal senden
+          /browse <url>      URL im App-Browser öffnen
+          /tasks             Tasks auflisten
+          /workflows         Workflows auflisten
 
         """
         print(TerminalFormatter.info(commands))

@@ -80,7 +80,17 @@ struct DaemonClient: Sendable {
                     req.timeoutInterval = 300
 
                     let (bytes, resp) = try await URLSession.shared.bytes(for: req)
-                    guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else {
+                    guard let http = resp as? HTTPURLResponse else {
+                        continuation.yield(["type": "error", "content": "Keine Antwort vom Daemon"])
+                        continuation.finish()
+                        return
+                    }
+                    guard http.statusCode == 200 else {
+                        // Versuche Body zu lesen für bessere Fehlermeldung
+                        var bodyChunks: [UInt8] = []
+                        for try await byte in bytes { bodyChunks.append(byte); if bodyChunks.count > 500 { break } }
+                        let errBody = String(bytes: bodyChunks, encoding: .utf8) ?? ""
+                        continuation.yield(["type": "error", "content": "HTTP \(http.statusCode): \(errBody)"])
                         continuation.finish()
                         return
                     }
@@ -89,6 +99,10 @@ struct DaemonClient: Sendable {
                         if line.hasPrefix("event: done") {
                             continuation.finish()
                             return
+                        }
+                        if line.hasPrefix("event: error") {
+                            // Nächste data:-Zeile enthält den Fehler
+                            continue
                         }
                         if line.hasPrefix("data: ") {
                             let jsonStr = String(line.dropFirst(6))
@@ -108,6 +122,7 @@ struct DaemonClient: Sendable {
                     }
                     continuation.finish()
                 } catch {
+                    continuation.yield(["type": "error", "content": "Verbindungsfehler: \(error.localizedDescription)"])
                     continuation.finish()
                 }
             }

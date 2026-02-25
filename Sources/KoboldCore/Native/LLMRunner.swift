@@ -181,51 +181,114 @@ public actor LLMRunner {
             }
         }
 
+        // Read context window size from settings (set by GUI → kobold.context.windowSize)
+        // num_ctx tells Ollama how large the KV-cache should be; without this it uses the
+        // model's compiled default (often 2k–32k) regardless of what the user configured.
+        let storedCtx = UserDefaults.standard.integer(forKey: "kobold.context.windowSize")
+        var ollamaOptions: [String: Any] = ["num_predict": 8192]
+        if storedCtx > 0 { ollamaOptions["num_ctx"] = storedCtx }
+
         let body: [String: Any] = [
             "model": ollamaModel,
             "messages": messages,
             "stream": false,
-            "options": ["num_predict": 4096]
+            "options": ollamaOptions
         ]
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         guard let httpBody = try? JSONSerialization.data(withJSONObject: body) else {
             throw LLMError.generationFailed("Could not serialize request body")
         }
-        req.httpBody = httpBody
-        req.timeoutInterval = 120
 
-        let (data, resp) = try await URLSession.shared.data(for: req)
+        // Retry-Logik: Bei HTTP 500 bis zu 2 Retries mit 2s Pause
+        var lastError: Error?
+        for attempt in 0..<3 {
+            if attempt > 0 {
+                print("[LLMRunner] Ollama Retry \(attempt)/2 nach 2s Pause...")
+                try await Task.sleep(nanoseconds: 2_000_000_000)
+            }
 
-        // Check HTTP status first
-        if let httpResp = resp as? HTTPURLResponse, httpResp.statusCode != 200 {
-            let bodyStr = String(data: data, encoding: .utf8) ?? "no body"
-            print("[LLMRunner] Ollama HTTP \(httpResp.statusCode): \(bodyStr)")
-            throw LLMError.generationFailed("Ollama HTTP \(httpResp.statusCode): \(String(bodyStr.prefix(200)))")
+            var req = URLRequest(url: url)
+            req.httpMethod = "POST"
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            req.httpBody = httpBody
+            req.timeoutInterval = 120
+
+            do {
+                let startTime = Date()
+                print("[LLMRunner] Ollama POST attempt=\(attempt) model=\(ollamaModel) msgCount=\(messages.count) bodySize=\(httpBody.count)bytes")
+                let (data, resp) = try await URLSession.shared.data(for: req)
+                let elapsed = Date().timeIntervalSince(startTime)
+                print("[LLMRunner] Ollama response in \(String(format: "%.1f", elapsed))s dataSize=\(data.count)bytes")
+
+                // Check HTTP status first
+                if let httpResp = resp as? HTTPURLResponse, httpResp.statusCode != 200 {
+                    let bodyStr = String(data: data, encoding: .utf8) ?? "no body"
+                    print("[LLMRunner] Ollama HTTP \(httpResp.statusCode): \(bodyStr)")
+
+                    // Bei 500er-Fehler: Retry
+                    if httpResp.statusCode >= 500 && attempt < 2 {
+                        lastError = LLMError.generationFailed("Ollama HTTP \(httpResp.statusCode)")
+                        continue
+                    }
+
+                    // Benutzerfreundliche Fehlermeldung
+                    if httpResp.statusCode >= 500 {
+                        throw LLMError.generationFailed(
+                            "Ollama-Fehler: Modell antwortet nicht (HTTP \(httpResp.statusCode)). " +
+                            "Ist Ollama gestartet? Versuche: ollama serve && ollama pull \(ollamaModel)"
+                        )
+                    }
+                    throw LLMError.generationFailed("Ollama HTTP \(httpResp.statusCode): \(String(bodyStr.prefix(200)))")
+                }
+
+                guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                    let raw = String(data: data, encoding: .utf8) ?? "binary"
+                    print("[LLMRunner] Ollama non-JSON response: \(raw.prefix(300))")
+                    throw LLMError.generationFailed("Ollama returned non-JSON response")
+                }
+
+                // Check for Ollama error field
+                if let errorMsg = json["error"] as? String {
+                    print("[LLMRunner] Ollama error: \(errorMsg)")
+                    // Bei "model not found" kein Retry
+                    if errorMsg.contains("not found") {
+                        throw LLMError.generationFailed("Ollama: Modell '\(ollamaModel)' nicht gefunden. Installiere mit: ollama pull \(ollamaModel)")
+                    }
+                    // Bei anderen Fehlern Retry
+                    if attempt < 2 {
+                        lastError = LLMError.generationFailed("Ollama: \(errorMsg)")
+                        continue
+                    }
+                    throw LLMError.generationFailed("Ollama: \(errorMsg)")
+                }
+
+                guard let msg = json["message"] as? [String: Any],
+                      let content = msg["content"] as? String else {
+                    print("[LLMRunner] Unexpected Ollama response structure: \(json.keys)")
+                    throw LLMError.generationFailed("Invalid Ollama response (missing message.content)")
+                }
+                // Extract Ollama token usage: prompt_eval_count, eval_count
+                let promptTokens = json["prompt_eval_count"] as? Int
+                let completionTokens = json["eval_count"] as? Int
+                return LLMResponse(content: content, promptTokens: promptTokens, completionTokens: completionTokens)
+            } catch let error as LLMError {
+                throw error
+            } catch {
+                // Netzwerk-Fehler: Bei Connection Refused hilfreiche Meldung
+                if attempt < 2 {
+                    lastError = error
+                    continue
+                }
+                let desc = error.localizedDescription
+                if desc.contains("Connection refused") || desc.contains("Could not connect") {
+                    throw LLMError.generationFailed(
+                        "Ollama nicht erreichbar. Starte Ollama mit: ollama serve"
+                    )
+                }
+                throw LLMError.generationFailed("Ollama-Verbindungsfehler: \(desc)")
+            }
         }
 
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            let raw = String(data: data, encoding: .utf8) ?? "binary"
-            print("[LLMRunner] Ollama non-JSON response: \(raw.prefix(300))")
-            throw LLMError.generationFailed("Ollama returned non-JSON response")
-        }
-
-        // Check for Ollama error field
-        if let errorMsg = json["error"] as? String {
-            print("[LLMRunner] Ollama error: \(errorMsg)")
-            throw LLMError.generationFailed("Ollama: \(errorMsg)")
-        }
-
-        guard let msg = json["message"] as? [String: Any],
-              let content = msg["content"] as? String else {
-            print("[LLMRunner] Unexpected Ollama response structure: \(json.keys)")
-            throw LLMError.generationFailed("Invalid Ollama response (missing message.content)")
-        }
-        // Extract Ollama token usage: prompt_eval_count, eval_count
-        let promptTokens = json["prompt_eval_count"] as? Int
-        let completionTokens = json["eval_count"] as? Int
-        return LLMResponse(content: content, promptTokens: promptTokens, completionTokens: completionTokens)
+        throw lastError ?? LLMError.generationFailed("Ollama: Unbekannter Fehler nach 3 Versuchen")
     }
 
     // MARK: - llama-server /v1/chat/completions (OpenAI-compatible)
@@ -238,7 +301,7 @@ public actor LLMRunner {
         let body: [String: Any] = [
             "messages": messages,
             "temperature": 0.7,
-            "max_tokens": 2048,
+            "max_tokens": 8192,
             "stream": false
         ]
         var req = URLRequest(url: url)
@@ -285,6 +348,7 @@ public actor LLMRunner {
 
     /// Generate with tokens from explicit provider
     public func generateWithTokens(messages: [[String: String]], provider: String, model: String, apiKey: String) async throws -> LLMResponse {
+        print("[LLMRunner] Cloud provider=\(provider) model=\(model) msgCount=\(messages.count) keyLen=\(apiKey.count)")
         switch provider.lowercased() {
         case "openai":
             return try await generateWithOpenAI(messages: messages, model: model, apiKey: apiKey)
@@ -353,7 +417,7 @@ public actor LLMRunner {
         }
         var body: [String: Any] = [
             "model": model.isEmpty ? "claude-sonnet-4-20250514" : model,
-            "max_tokens": 4096,
+            "max_tokens": 8192,
             "messages": apiMessages
         ]
         if !systemPrompt.isEmpty { body["system"] = systemPrompt }

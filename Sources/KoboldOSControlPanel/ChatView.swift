@@ -14,12 +14,14 @@ struct ChatView: View {
     @AppStorage("kobold.chat.fontSize") private var chatFontSize: Double = 16.5
     // Notifications moved to GlobalHeaderBar
     @State private var scrollDebounceTask: Task<Void, Never>?
+    /// Number of messages visible from the end — grows when user taps "load more"
+    @State private var visibleMessageCount: Int = 80
 
     /// Human-readable agent display name for the chat header badge
     var agentDisplayName: String {
         switch agentType {
         case "coder":      return "Coder"
-        case "researcher": return "Researcher"
+        case "web": return "Web"
         case "planner":    return "Planner"
         case "instructor": return "Instructor"
         default:           return "Allgemein"
@@ -36,7 +38,31 @@ struct ChatView: View {
                     LazyVStack(alignment: .leading, spacing: 10) {
                         if viewModel.messages.isEmpty { emptyState }
 
-                        ForEach(viewModel.messages) { msg in
+                        // Only render last N messages for performance
+                        let allMessages = viewModel.messages
+                        let startIndex = max(0, allMessages.count - visibleMessageCount)
+                        let visibleMessages = Array(allMessages.suffix(visibleMessageCount))
+
+                        if startIndex > 0 {
+                            Button {
+                                withAnimation(.easeOut(duration: 0.2)) {
+                                    visibleMessageCount = min(visibleMessageCount + 80, allMessages.count)
+                                }
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "arrow.up.circle.fill")
+                                    Text("\(startIndex) ältere Nachrichten laden")
+                                }
+                                .font(.system(size: 12.5, weight: .medium))
+                                .foregroundColor(.secondary)
+                                .padding(.vertical, 8)
+                                .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.plain)
+                            .id("load-more")
+                        }
+
+                        ForEach(visibleMessages) { msg in
                             messageBubble(for: msg)
                                 .id(msg.id)
                         }
@@ -59,6 +85,7 @@ struct ChatView: View {
                 }
                 .onChange(of: viewModel.messages.count) { debouncedScroll(proxy: proxy) }
                 .onChange(of: viewModel.agentLoading) { debouncedScroll(proxy: proxy) }
+                .onChange(of: viewModel.currentSessionId) { visibleMessageCount = 80 }
                 .onChange(of: viewModel.activeThinkingSteps.count) {
                     // Auto-scroll during live thinking to follow generation
                     if viewModel.isAgentLoadingInCurrentChat {
@@ -132,6 +159,7 @@ struct ChatView: View {
             }
 
             GlassDivider()
+
             inputBar
         }
         .background(
@@ -196,6 +224,8 @@ struct ChatView: View {
                     viewModel.answerInteractive(messageId: msg.id, optionId: option.id, optionLabel: option.label)
                 }
             )
+        case .image(let path, let caption):
+            ImageBubble(path: path, caption: caption)
         }
     }
 

@@ -18,7 +18,7 @@ final class TelegramBot: @unchecked Sendable {
     private var _messagesSent = 0
     /// Per-chat conversation history for context (chatId -> messages)
     private var _chatHistory: [Int64: [(role: String, text: String)]] = [:]
-    private let maxHistoryPerChat = 20
+    private let maxHistoryPerChat = 100
 
     // Thread-safe synchronous accessors
     var isRunning: Bool { lock.withLock { _isRunning } }
@@ -34,11 +34,12 @@ final class TelegramBot: @unchecked Sendable {
 
     private func appendHistory(chatId: Int64, role: String, text: String) {
         lock.withLock {
-            if _chatHistory[chatId] == nil { _chatHistory[chatId] = [] }
-            _chatHistory[chatId]!.append((role: role, text: text))
-            if _chatHistory[chatId]!.count > maxHistoryPerChat {
-                _chatHistory[chatId]!.removeFirst(_chatHistory[chatId]!.count - maxHistoryPerChat)
+            var history = _chatHistory[chatId] ?? []
+            history.append((role: role, text: text))
+            if history.count > maxHistoryPerChat {
+                history.removeFirst(history.count - maxHistoryPerChat)
             }
+            _chatHistory[chatId] = history
         }
     }
 

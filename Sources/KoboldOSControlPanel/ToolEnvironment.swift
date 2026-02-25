@@ -81,11 +81,21 @@ final class ToolEnvironment: ObservableObject {
             ("playwright", "Playwright", "npx", "playwright --version"),
         ]
 
-        var results: [ToolInfo] = []
-
-        for check in checks {
-            let (path, version) = await probeToolNonisolated(binary: check.binary, versionFlag: check.versionFlag)
-            results.append(ToolInfo(id: check.id, name: check.name, path: path, version: version))
+        // Probe all tools in PARALLEL instead of sequentially
+        let results = await withTaskGroup(of: ToolInfo.self, returning: [ToolInfo].self) { group in
+            for check in checks {
+                group.addTask {
+                    let (path, version) = await self.probeToolNonisolated(binary: check.binary, versionFlag: check.versionFlag)
+                    return ToolInfo(id: check.id, name: check.name, path: path, version: version)
+                }
+            }
+            var collected: [ToolInfo] = []
+            for await result in group {
+                collected.append(result)
+            }
+            // Sort by original order (by id matching checks array)
+            let order = checks.map(\.id)
+            return collected.sorted { order.firstIndex(of: $0.id) ?? 0 < order.firstIndex(of: $1.id) ?? 0 }
         }
 
         tools = results

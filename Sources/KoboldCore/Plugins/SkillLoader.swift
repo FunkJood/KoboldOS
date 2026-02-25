@@ -221,12 +221,12 @@ public actor SkillLoader {
 
             ## Parallele Delegation
             ```json
-            {"tool_name": "delegate_parallel", "tool_args": {"tasks": "[{\\"profile\\": \\"coder\\", \\"message\\": \\"Schreibe Tests\\"}, {\\"profile\\": \\"researcher\\", \\"message\\": \\"Recherchiere Best Practices\\"}]"}}
+            {"tool_name": "delegate_parallel", "tool_args": {"tasks": "[{\\"profile\\": \\"coder\\", \\"message\\": \\"Schreibe Tests\\"}, {\\"profile\\": \\"web\\", \\"message\\": \\"Recherchiere Best Practices\\"}]"}}
             ```
 
             ## Profile
             - **coder**: Code schreiben, Debugging, Architektur
-            - **researcher**: Recherche, Reports, Analyse
+            - **web**: Recherche, Web-Suche, APIs, Reports
             - **planner**: Aufgabenzerlegung, Projektplanung
             - **reviewer**: Code-Review, Qualitätsprüfung
             - **utility**: System-Aufgaben, Dateien, Shell

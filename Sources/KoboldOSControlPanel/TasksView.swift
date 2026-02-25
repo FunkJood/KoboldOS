@@ -67,7 +67,6 @@ struct ScheduledTask: Identifiable {
     var schedule: String
     var lastRun: String?
     var enabled: Bool
-    var teamId: String?
 
     var schedulePreset: TaskSchedulePreset { TaskSchedulePreset.from(cron: schedule) }
 
@@ -730,22 +729,6 @@ struct TasksView: View {
                     schedulePickerContent
                 }
 
-                formField(
-                    title: "Team (optional)",
-                    hint: "Ein Team berät gemeinsam statt einem einzelnen Agenten."
-                ) {
-                    Picker("", selection: $newTeamId) {
-                        Text("Kein Team (einzelner Agent)").tag(nil as String?)
-                        ForEach(viewModel.teams) { team in
-                            HStack(spacing: 4) {
-                                Image(systemName: team.icon)
-                                Text("\(team.name) (\(team.agents.count) Agenten)")
-                            }.tag(team.id.uuidString as String?)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                }
-
                 HStack(spacing: 12) {
                     Spacer()
                     GlassButton(title: "Abbrechen", isPrimary: false) {
@@ -1066,8 +1049,7 @@ struct TasksView: View {
                     prompt: item["prompt"] as? String ?? "",
                     schedule: item["schedule"] as? String ?? "",
                     lastRun: item["last_run"] as? String,
-                    enabled: item["enabled"] as? Bool ?? true,
-                    teamId: item["team_id"] as? String
+                    enabled: item["enabled"] as? Bool ?? true
                 )
             }
         } catch {
@@ -1161,31 +1143,7 @@ struct TasksView: View {
 
     func runTask(_ task: ScheduledTask) async {
         statusMsg = "Starte '\(task.name)'..."
-        if let teamId = task.teamId,
-           let team = viewModel.teams.first(where: { $0.id.uuidString == teamId }) {
-            // Delegate to team — results appear in team chat
-            if viewModel.teamMessages[team.id] == nil { viewModel.teamMessages[team.id] = [] }
-            viewModel.teamMessages[team.id]?.append(GroupMessage(content: "[Task: \(task.name)] \(task.prompt)", isUser: true, agentName: "Task-Scheduler"))
-            // Parallel agent execution for each team member
-            let activeAgents = team.agents.filter { $0.isActive }
-            await withTaskGroup(of: (String, String).self) { group in
-                for agent in activeAgents {
-                    group.addTask {
-                        let prompt = "Du bist \(agent.name) (\(agent.role)). \(agent.instructions)\n\nAufgabe: \(task.prompt)"
-                        let result = await viewModel.sendTeamAgentMessage(prompt: prompt, profile: agent.profile)
-                        return (agent.name, result)
-                    }
-                }
-                for await (name, result) in group {
-                    await MainActor.run {
-                        viewModel.teamMessages[team.id]?.append(GroupMessage(content: result, isUser: false, agentName: name, round: 1))
-                    }
-                }
-            }
-            viewModel.saveTeamMessages(for: team.id)
-        } else {
-            viewModel.sendMessage(task.prompt)
-        }
+        viewModel.sendMessage(task.prompt)
         try? await Task.sleep(nanoseconds: 2_000_000_000)
         statusMsg = ""
     }

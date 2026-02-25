@@ -13,7 +13,7 @@ struct InteractiveChatCommand: AsyncParsableCommand {
 
     @Option(name: .long, help: "Daemon port") var port: Int = 8080
     @Option(name: .long, help: "Auth token") var token: String = "kobold-secret"
-    @Option(name: .long, help: "Agent type (general, coder, researcher, planner, instructor)") var agent: String = "general"
+    @Option(name: .long, help: "Agent type (general, coder, web, planner, instructor)") var agent: String = "general"
     @Option(name: .long, help: "Load existing session by ID") var session: String?
     @Flag(name: .long, help: "Auto-start daemon if not running") var autoDaemon: Bool = true
 
@@ -123,17 +123,32 @@ struct InteractiveChatCommand: AsyncParsableCommand {
             print("") // spacing
             var finalAnswer = ""
             var lastConfidence: Double?
+            var receivedAnyStep = false
 
             let stream = client.stream("/agent/stream", body: body)
             for await step in stream {
+                receivedAnyStep = true
                 SSEStreamParser.displayStep(step)
 
                 if step["type"] == "finalAnswer" {
                     finalAnswer = step["content"] ?? ""
                 }
+                if step["type"] == "error" {
+                    let errContent = step["content"] ?? "Unbekannter Fehler"
+                    print(TerminalFormatter.error("Agent-Fehler: \(errContent)"))
+                }
                 if let cStr = step["confidence"], let c = Double(cStr) {
                     lastConfidence = c
                 }
+            }
+
+            if !receivedAnyStep {
+                print(TerminalFormatter.error("Keine Antwort vom Agent. Mögliche Ursachen:"))
+                print(TerminalFormatter.error("  - Ollama nicht gestartet (ollama serve)"))
+                print(TerminalFormatter.error("  - Kein Modell geladen (/model <name>)"))
+                print(TerminalFormatter.error("  - Daemon-Verbindung unterbrochen"))
+            } else if finalAnswer.isEmpty && !receivedAnyStep {
+                print(TerminalFormatter.warning("Agent hat keine finale Antwort generiert."))
             }
 
             if !finalAnswer.isEmpty {

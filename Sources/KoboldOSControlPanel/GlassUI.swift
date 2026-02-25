@@ -191,8 +191,10 @@ struct GlassChatBubble: View {
     let isUser: Bool
     let timestamp: Date
     var isLoading: Bool = false
+    var isStreaming: Bool = false
     @State private var showCopy = false
     @State private var copied = false
+    @State private var streamPulse = false
     @AppStorage("kobold.chat.fontSize") private var chatFontSize: Double = 16.5
 
     var body: some View {
@@ -234,8 +236,16 @@ struct GlassChatBubble: View {
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 18)
-                        .stroke(Color.white.opacity(0.1), lineWidth: 0.5)
+                        .stroke(
+                            isStreaming ? Color.koboldEmerald.opacity(streamPulse ? 0.6 : 0.15) : Color.white.opacity(0.1),
+                            lineWidth: isStreaming ? 1.5 : 0.5
+                        )
+                        .animation(isStreaming ? .easeInOut(duration: 1.5).repeatForever(autoreverses: true) : .default, value: streamPulse)
                 )
+                .onAppear { if isStreaming { streamPulse = true } }
+                .onChange(of: isStreaming) {
+                    if isStreaming { streamPulse = true } else { streamPulse = false }
+                }
 
                 // Copy + Timestamp row
                 HStack(spacing: 6) {
@@ -283,7 +293,7 @@ struct CopyButton: View {
 
 struct LoadingDots: View {
     @State private var dotCount = 0
-    let timer = Timer.publish(every: 0.4, on: .main, in: .common).autoconnect()
+    @State private var animationTask: Task<Void, Never>?
 
     var body: some View {
         HStack(spacing: 4) {
@@ -293,8 +303,18 @@ struct LoadingDots: View {
                     .frame(width: 6, height: 6)
             }
         }
-        .onReceive(timer) { _ in
-            dotCount = (dotCount + 1) % 4
+        .onAppear {
+            animationTask = Task { @MainActor in
+                while !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: 400_000_000)
+                    guard !Task.isCancelled else { break }
+                    dotCount = (dotCount + 1) % 4
+                }
+            }
+        }
+        .onDisappear {
+            animationTask?.cancel()
+            animationTask = nil
         }
     }
 }
@@ -894,7 +914,7 @@ struct SubAgentSpawnBubble: View {
     var profileEmoji: String {
         switch profile.lowercased() {
         case "coder", "developer": return "💻"
-        case "researcher":         return "📚"
+        case "web":                return "🌐"
         case "planner":            return "📋"
         case "instructor":         return "🎯"
         default:                   return "🤖"
@@ -964,6 +984,115 @@ struct SubAgentResultBubble: View {
             .onHover { h in withAnimation(.easeInOut(duration: 0.15)) { showCopy = h } }
             Spacer(minLength: 80)
         }
+    }
+}
+
+// MARK: - ImageBubble (Eingebettetes Bild im Chat)
+
+struct ImageBubble: View {
+    let path: String
+    let caption: String
+    @State private var loadedImage: NSImage?
+    @State private var loadError: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let img = loadedImage {
+                Image(nsImage: img)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(maxWidth: 400, maxHeight: 300)
+                    .cornerRadius(10)
+                    .shadow(color: .black.opacity(0.3), radius: 4, x: 0, y: 2)
+                    .onTapGesture { openImage() }
+                    .contextMenu {
+                        Button("Im Finder zeigen") { openImage() }
+                        Button("Kopieren") { copyImage(img) }
+                    }
+            } else if let error = loadError {
+                HStack(spacing: 8) {
+                    Image(systemName: "photo.badge.exclamationmark")
+                        .foregroundColor(.orange)
+                    Text(error)
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                }
+                .padding(8)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color.orange.opacity(0.1)))
+            } else {
+                ProgressView()
+                    .frame(width: 100, height: 60)
+            }
+            if !caption.isEmpty {
+                Text(caption)
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+            }
+        }
+        .padding(.horizontal, 6)
+        .onAppear { loadImage() }
+    }
+
+    private func loadImage() {
+        // Expand ~ in path
+        let expandedPath = (path as NSString).expandingTildeInPath
+
+        // Try 1: Direct file path
+        if FileManager.default.fileExists(atPath: expandedPath) {
+            // Use Data-based loading (supports more formats than NSImage(contentsOfFile:))
+            if let data = try? Data(contentsOf: URL(fileURLWithPath: expandedPath)),
+               let img = NSImage(data: data), img.isValid {
+                loadedImage = img
+                return
+            }
+            // Try CGImageSource for exotic formats
+            let url = URL(fileURLWithPath: expandedPath) as CFURL
+            if let source = CGImageSourceCreateWithURL(url, nil),
+               let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil) {
+                loadedImage = NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
+                return
+            }
+        }
+
+        // Try 2: Base64-encoded data
+        if path.hasPrefix("data:image/") {
+            if let commaIdx = path.firstIndex(of: ",") {
+                let base64 = String(path[path.index(after: commaIdx)...])
+                if let data = Data(base64Encoded: base64), let img = NSImage(data: data) {
+                    loadedImage = img
+                    return
+                }
+            }
+        }
+
+        // Try 3: URL
+        if path.hasPrefix("http://") || path.hasPrefix("https://") {
+            Task {
+                if let url = URL(string: path),
+                   let (data, _) = try? await URLSession.shared.data(from: url),
+                   let img = NSImage(data: data) {
+                    await MainActor.run { loadedImage = img }
+                } else {
+                    await MainActor.run { loadError = "URL konnte nicht geladen werden: \(path)" }
+                }
+            }
+            return
+        }
+
+        loadError = "Bild nicht gefunden: \(path)"
+    }
+
+    private func openImage() {
+        let expandedPath = (path as NSString).expandingTildeInPath
+        if FileManager.default.fileExists(atPath: expandedPath) {
+            NSWorkspace.shared.open(URL(fileURLWithPath: expandedPath))
+        }
+    }
+
+    private func copyImage(_ img: NSImage) {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.writeObjects([img])
     }
 }
 
@@ -1046,7 +1175,7 @@ struct ThinkingPanelBubble: View {
                 if expanded && !entries.isEmpty {
                     ScrollViewReader { scrollProxy in
                         ScrollView {
-                            VStack(alignment: .leading, spacing: 4) {
+                            LazyVStack(alignment: .leading, spacing: 4) {
                                 ForEach(entries) { entry in
                                     thinkingRow(entry)
                                         .id(entry.id)
@@ -1080,8 +1209,8 @@ struct ThinkingPanelBubble: View {
                         Image(systemName: "brain")
                             .font(.system(size: 14.5))
                             .foregroundColor(.koboldGold)
-                            .scaleEffect(pulse ? 1.15 : 0.9)
-                            .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: pulse)
+                            .scaleEffect(pulse ? 1.1 : 0.95)
+                            .animation(.easeInOut(duration: 1.0).repeatForever(autoreverses: true), value: pulse)
                         Text(thinkingVerb)
                             .font(.system(size: 14, weight: .semibold))
                             .foregroundColor(.koboldGold)
@@ -1096,7 +1225,11 @@ struct ThinkingPanelBubble: View {
             .background(
                 RoundedRectangle(cornerRadius: 12)
                     .fill(Color.koboldGold.opacity(isLive ? 0.08 : 0.06))
-                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.koboldGold.opacity(isLive ? 0.3 : 0.2), lineWidth: isLive ? 1 : 0.5))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(Color.koboldGold.opacity(isLive ? (pulse ? 0.7 : 0.2) : 0.2), lineWidth: isLive ? 1.5 : 0.5)
+                    )
+                    .animation(isLive ? .easeInOut(duration: 2.0).repeatForever(autoreverses: true) : .default, value: pulse)
             )
             Spacer(minLength: 80)
         }
@@ -1172,7 +1305,7 @@ struct ThinkingPanelBubble: View {
 
 struct TypewriterText: View {
     let fullText: String
-    let speed: Double // seconds per character
+    let speed: Double // seconds per character (used to derive chunk timing)
 
     @State private var visibleCount: Int = 0
     @State private var timerTask: Task<Void, Never>?
@@ -1181,10 +1314,7 @@ struct TypewriterText: View {
         Text(String(fullText.prefix(visibleCount)))
             .onAppear { startTyping() }
             .onChange(of: fullText) {
-                // If text changed (new content appended), continue from current position
-                if visibleCount < fullText.count {
-                    startTyping()
-                }
+                if visibleCount < fullText.count { startTyping() }
             }
     }
 
@@ -1193,10 +1323,12 @@ struct TypewriterText: View {
         if visibleCount >= fullText.count { return }
         timerTask = Task { @MainActor in
             while visibleCount < fullText.count && !Task.isCancelled {
-                // Type in chunks of 3 chars for smoother feel
-                let step = min(3, fullText.count - visibleCount)
+                // Large chunks + slower tick = far fewer MainActor wakeups.
+                // Old: 3 chars / 8ms → ~42 updates/sec per entry.
+                // New: 12 chars / 40ms → ~8 updates/sec per entry (85% less CPU).
+                let step = min(12, fullText.count - visibleCount)
                 visibleCount += step
-                try? await Task.sleep(nanoseconds: UInt64(speed * Double(step) * 1_000_000_000))
+                try? await Task.sleep(nanoseconds: 40_000_000) // 40ms flat
             }
         }
     }
@@ -1378,8 +1510,8 @@ struct ThinkingPlaceholderBubble: View {
                 Image(systemName: "brain")
                     .font(.system(size: 15.5))
                     .foregroundColor(.koboldGold)
-                    .scaleEffect(pulse ? 1.15 : 0.9)
-                    .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: pulse)
+                    .scaleEffect(pulse ? 1.1 : 0.95)
+                    .animation(.easeInOut(duration: 1.0).repeatForever(autoreverses: true), value: pulse)
                 Text(verb)
                     .font(.system(size: 14.5, weight: .semibold))
                     .foregroundColor(.koboldGold)

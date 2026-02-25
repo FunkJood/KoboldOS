@@ -3,7 +3,7 @@ import SwiftUI
 // MARK: - Agent Model Config (persisted to UserDefaults)
 
 struct AgentModelConfig: Codable, Identifiable {
-    var id: String          // "instructor", "coder", "researcher", "web", "utility"
+    var id: String          // "instructor", "coder", "web", "utility"
     var displayName: String
     var emoji: String
     var description: String
@@ -38,25 +38,14 @@ struct AgentModelConfig: Codable, Identifiable {
             supportsVision: false
         ),
         AgentModelConfig(
-            id: "researcher",
-            displayName: "Researcher",
-            emoji: "📚",
-            description: "Recherche-Agent — sucht und analysiert Informationen",
-            modelName: "",
-            systemPrompt: "You are a research specialist. Find accurate information and summarize it clearly.",
-            temperature: 0.5,
-            contextLength: 8192,
-            supportsVision: false
-        ),
-        AgentModelConfig(
             id: "web",
             displayName: "Web",
             emoji: "🌐",
-            description: "Web-Agent — navigiert Webseiten und extrahiert Daten",
+            description: "Web-Agent — Recherche, Web-Suche, APIs und Browser-Automatisierung",
             modelName: "",
-            systemPrompt: "You are a web specialist. Extract and summarize information from web pages.",
+            systemPrompt: "You are a web and research specialist. Search the web, extract information from pages, call APIs, and compile accurate research reports.",
             temperature: 0.4,
-            contextLength: 4096,
+            contextLength: 8192,
             supportsVision: true
         ),
         AgentModelConfig(
@@ -205,24 +194,23 @@ struct AgentsView: View {
     private static let toolRoutingDefaults: [(tool: String, role: String, icon: String, defaultAgents: [String], reason: String)] = [
         ("shell",           "Shell",            "terminal.fill",                    ["instructor", "coder", "utility"],    "Bash/Zsh-Befehle im Terminal ausführen, Pakete installieren, Prozesse starten"),
         ("file",            "Dateisystem",      "doc.fill",                         ["instructor", "coder", "utility"],    "Dateien und Ordner lesen, erstellen, bearbeiten und durchsuchen"),
-        ("browser",         "Browser",          "globe",                            ["instructor", "researcher", "web"],   "Webseiten laden, DOM parsen und Inhalte extrahieren"),
-        ("http",            "Netzwerk",         "network",                          ["instructor", "researcher", "web"],   "REST-APIs aufrufen, Webhooks senden, Daten herunterladen"),
+        ("browser",         "Browser",          "globe",                            ["instructor", "web"],                 "Webseiten laden, DOM parsen und Inhalte extrahieren"),
+        ("http",            "Netzwerk",         "network",                          ["instructor", "web"],                 "REST-APIs aufrufen, Webhooks senden, Daten herunterladen"),
         ("calendar",        "Kalender",         "calendar",                         ["instructor", "utility"],             "Termine erstellen, Erinnerungen setzen, Kalender abfragen"),
         ("contacts",        "Kontakte",         "person.crop.circle",               ["instructor", "utility"],             "Kontakte nach Name, Nummer oder E-Mail durchsuchen"),
         ("applescript",     "AppleScript",      "applescript",                      ["instructor", "utility"],             "macOS-Apps steuern: Mail, Finder, Safari, Messages etc."),
-        ("memory_save",     "Speichern",        "brain.head.profile",               ["instructor", "coder", "researcher"], "Wichtige Fakten, Entscheidungen und Kontext langfristig merken"),
-        ("memory_recall",   "Abruf",            "magnifyingglass",                  ["instructor", "coder", "researcher"], "Gespeicherte Erinnerungen und Wissen semantisch abrufen"),
+        ("memory_save",     "Speichern",        "brain.head.profile",               ["instructor", "coder", "web"],        "Wichtige Fakten, Entscheidungen und Kontext langfristig merken"),
+        ("memory_recall",   "Abruf",            "magnifyingglass",                  ["instructor", "coder", "web"],        "Gespeicherte Erinnerungen und Wissen semantisch abrufen"),
         ("task_manage",     "Aufgaben",         "checklist",                        ["instructor"],                        "Tasks erstellen, planen, zuweisen und als erledigt markieren"),
         ("workflow_manage", "Workflows",        "arrow.triangle.branch",            ["instructor"],                        "Automatisierungs-Pipelines erstellen und ausführen"),
         ("call_subordinate","Delegation",       "person.2.fill",                    ["instructor"],                        "Teilaufgabe an spezialisierten Sub-Agent delegieren"),
         ("delegate_parallel","Parallel",        "person.3.fill",                    ["instructor"],                        "Mehrere Sub-Agents gleichzeitig für parallele Arbeit starten"),
         ("skill_write",     "Skills",           "square.and.pencil",                ["instructor", "coder"],               "Wiederverwendbare Fähigkeiten als Code-Snippets speichern"),
-        ("notify",          "Benachrichtigung", "bell.fill",                        ["instructor", "coder", "researcher"], "System-Benachrichtigungen und Push-Alerts an den User senden"),
+        ("notify",          "Benachrichtigung", "bell.fill",                        ["instructor", "coder", "web"],        "System-Benachrichtigungen und Push-Alerts an den User senden"),
         ("calculator",      "Rechner",          "plusminus",                        ["instructor", "coder", "utility"],    "Mathematische Berechnungen, Einheiten-Umrechnung, Formeln"),
         ("telegram_send",   "Telegram",         "paperplane.fill",                  ["instructor"],                        "Nachrichten über Telegram-Bot an Kontakte/Gruppen senden"),
         ("google_api",      "Google API",       "globe",                            ["instructor", "web"],                 "Google Suche, Maps, Drive und weitere Google-Dienste nutzen"),
         ("speak",           "Sprache",          "speaker.wave.2.fill",              ["instructor"],                        "Text als gesprochene Sprache ausgeben (Text-to-Speech)"),
-        ("generate_image",  "Bildgenerator",    "photo.artframe",                   ["instructor"],                        "Bilder per Stable Diffusion aus Text-Prompts generieren"),
     ]
 
     /// Persisted tool routing overrides
@@ -252,7 +240,6 @@ struct AgentsView: View {
         switch id {
         case "instructor": return "Instruk"
         case "coder":      return "Dev"
-        case "researcher": return "Res"
         case "web":        return "Web"
         case "utility":    return "Utility"
         default:           return String(id.prefix(6))

@@ -78,7 +78,7 @@ class SuggestionService: ObservableObject {
             "model": model,
             "prompt": systemPrompt,
             "stream": false,
-            "options": ["temperature": 0.9, "num_predict": 512]
+            "options": ["temperature": 0.9, "num_predict": 2048]
         ]
 
         var req = URLRequest(url: url)

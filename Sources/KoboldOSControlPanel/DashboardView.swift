@@ -17,8 +17,21 @@ class SystemMetricsMonitor: ObservableObject {
     func update() {
         updateRAM()
         updateCPU()
-        updateDisk()
         updateThermal()
+        // Disk I/O on background thread to avoid Main Thread freeze
+        Task.detached(priority: .utility) {
+            let home = FileManager.default.homeDirectoryForCurrentUser
+            if let attrs = try? FileManager.default.attributesOfFileSystem(forPath: home.path),
+               let freeBytes = attrs[FileAttributeKey.systemFreeSize] as? Int64,
+               let totalBytes = attrs[FileAttributeKey.systemSize] as? Int64 {
+                let free = Double(freeBytes) / 1_073_741_824
+                let total = Double(totalBytes) / 1_073_741_824
+                await MainActor.run {
+                    self.diskFreeGB = free
+                    self.diskTotalGB = total
+                }
+            }
+        }
     }
 
     private func updateRAM() {
@@ -95,9 +108,12 @@ struct DashboardView: View {
     @State private var showProcessManager: Bool = false
     @State private var showWidgetPicker: Bool = false
     @AppStorage("kobold.dashboard.widgets") private var enabledWidgetsJSON: String = ""
+    @State private var cachedWidgets: [DashboardWidgetId]? = nil
+    @State private var lastWidgetsJSON: String = ""
 
     // Widget System
     enum DashboardWidgetId: String, CaseIterable, Identifiable {
+        case koboldPet = "kobold_pet"
         case systemStatus = "system_status"
         case shortcuts = "shortcuts"
         case metrics = "metrics"
@@ -106,6 +122,7 @@ struct DashboardView: View {
         var id: String { rawValue }
         var displayName: String {
             switch self {
+            case .koboldPet: return "Kobold-Haustier"
             case .systemStatus: return "System & Status"
             case .shortcuts: return "Schnellzugriff"
             case .metrics: return "Metriken"
@@ -115,6 +132,7 @@ struct DashboardView: View {
         }
         var icon: String {
             switch self {
+            case .koboldPet: return "hare.fill"
             case .systemStatus: return "memorychip"
             case .shortcuts: return "square.grid.2x2.fill"
             case .metrics: return "chart.bar.fill"
@@ -125,12 +143,17 @@ struct DashboardView: View {
     }
 
     private var enabledWidgets: [DashboardWidgetId] {
+        // Cache decoded widgets to avoid JSON decode on every SwiftUI render pass
+        if enabledWidgetsJSON == lastWidgetsJSON, let cached = cachedWidgets { return cached }
+        let defaults: [DashboardWidgetId] = [.koboldPet, .systemStatus, .shortcuts, .metrics, .recentActivity]
         guard !enabledWidgetsJSON.isEmpty,
               let data = enabledWidgetsJSON.data(using: .utf8),
               let ids = try? JSONDecoder().decode([String].self, from: data) else {
-            return [.systemStatus, .shortcuts, .metrics, .recentActivity]
+            return defaults
         }
-        return ids.compactMap { DashboardWidgetId(rawValue: $0) }
+        let result = ids.compactMap { DashboardWidgetId(rawValue: $0) }
+        DispatchQueue.main.async { cachedWidgets = result; lastWidgetsJSON = enabledWidgetsJSON }
+        return result
     }
 
     private func saveEnabledWidgets(_ widgets: [DashboardWidgetId]) {
@@ -486,7 +509,7 @@ struct DashboardView: View {
                     shortcutTile(title: "Aufgaben", icon: "checklist", color: .koboldGold, tab: .tasks)
                     shortcutTile(title: "Gedächtnis", icon: "brain.filled.head.profile", color: .koboldEmerald, tab: .memory)
                     shortcutTile(title: "Workflows", icon: "point.3.connected.trianglepath.dotted", color: .koboldGold, tab: .workflows)
-                    shortcutTile(title: "Teams", icon: "person.3.sequence.fill", color: .koboldEmerald, tab: .teams)
+                    shortcutTile(title: "Einstellungen", icon: "gearshape.fill", color: .koboldEmerald, tab: .settings)
                 }
             }
         }
@@ -627,6 +650,7 @@ struct DashboardView: View {
     @ViewBuilder
     func widgetView(for id: DashboardWidgetId) -> some View {
         switch id {
+        case .koboldPet:     KoboldPetWidget(viewModel: viewModel)
         case .systemStatus:  combinedSystemSection
         case .shortcuts:     shortcutTilesSection
         case .metrics:       metricsGrid
@@ -914,5 +938,371 @@ struct ErrorListPopover: View {
         }
         .frame(width: 380)
         .background(Color.koboldPanel)
+    }
+}
+
+// MARK: - Kobold Pet Widget (ASCII Tamagotchi)
+
+struct KoboldPetWidget: View {
+    @ObservedObject var viewModel: RuntimeViewModel
+    @State private var animFrame = 0
+    @State private var mood: KoboldMood = .idle
+    @State private var speechBubble: String = ""
+    @State private var showSpeech = false
+    @State private var interactionCount = 0
+    @State private var lastFedTime: Date = .distantPast
+    @State private var lastPlayTime: Date = .distantPast
+    @AppStorage("kobold.pet.happiness") private var happiness: Int = 70
+    @AppStorage("kobold.pet.energy") private var energy: Int = 80
+    @AppStorage("kobold.pet.xp") private var xp: Int = 0
+    @AppStorage("kobold.koboldName") private var koboldName: String = "KoboldOS"
+
+    enum KoboldMood: String {
+        case idle, happy, working, sleeping, hungry, excited, thinking
+    }
+
+    // ASCII Art Frames für verschiedene Stimmungen
+    private var asciiFrames: [String] {
+        switch mood {
+        case .idle:
+            return animFrame % 2 == 0 ? [idleFrame1] : [idleFrame2]
+        case .happy:
+            return [happyFrame]
+        case .working:
+            return animFrame % 2 == 0 ? [workFrame1] : [workFrame2]
+        case .sleeping:
+            return [sleepFrame]
+        case .hungry:
+            return [hungryFrame]
+        case .excited:
+            return [excitedFrame]
+        case .thinking:
+            return animFrame % 2 == 0 ? [thinkFrame1] : [thinkFrame2]
+        }
+    }
+
+    private var idleFrame1: String { """
+       ╭─────╮
+       │ ◉ ◉ │
+       │  ▽  │
+       ╰──┬──╯
+        ╭─┴─╮
+        │   │
+       ╱│   │╲
+      ╱ ╰───╯ ╲
+        │   │
+       ═╧═ ═╧═
+    """ }
+    private var idleFrame2: String { """
+       ╭─────╮
+       │ ◉ ◉ │
+       │  ▽  │
+       ╰──┬──╯
+        ╭─┴─╮
+        │   │
+       ╱│   │╲
+      ╱ ╰───╯ ╲
+        │   │
+      ═╧═   ═╧═
+    """ }
+    private var happyFrame: String { """
+       ╭─────╮
+       │ ◠ ◠ │
+       │  ◡  │
+       ╰──┬──╯
+      ╱╭──┴──╮╲
+     ╱ │  ♥  │ ╲
+       │     │
+       ╰─────╯
+        │   │
+       ═╧═ ═╧═
+    """ }
+    private var workFrame1: String { """
+       ╭─────╮
+       │ ◉ ◉ │
+       │  ─  │
+       ╰──┬──╯
+        ╭─┴─╮ ⚡
+        │ ⌨ │╱
+       ╱│   │
+      ╱ ╰───╯
+        │   │
+       ═╧═ ═╧═
+    """ }
+    private var workFrame2: String { """
+       ╭─────╮
+       │ ◉ ◉ │
+       │  ─  │
+       ╰──┬──╯
+     ⚡╭──┴──╮
+       ╲│ ⌨ │
+        │   │╲
+        ╰───╯ ╲
+        │   │
+       ═╧═ ═╧═
+    """ }
+    private var sleepFrame: String { """
+       ╭─────╮  z
+       │ ─ ─ │ z
+       │  ω  │z
+       ╰──┬──╯
+        ╭─┴─╮
+        │   │
+        │   │
+        ╰───╯
+        │   │
+       ═╧═ ═╧═
+    """ }
+    private var hungryFrame: String { """
+       ╭─────╮
+       │ ◉ ◉ │
+       │  △  │
+       ╰──┬──╯
+        ╭─┴─╮
+        │   │
+        │ … │
+        ╰───╯
+        │   │
+       ═╧═ ═╧═
+    """ }
+    private var excitedFrame: String { """
+     ✨╭─────╮✨
+       │ ★ ★ │
+       │  ◡  │
+       ╰──┬──╯
+      ╱╭──┴──╮╲
+     ╱ │  !  │ ╲
+       │     │
+       ╰─────╯
+       ╱│   │╲
+      ═╧═   ═╧═
+    """ }
+    private var thinkFrame1: String { """
+       ╭─────╮ 💭
+       │ ◉ ◉ │
+       │  ─  │
+       ╰──┬──╯
+        ╭─┴─╮
+        │ ? │
+        │   │
+        ╰───╯
+        │   │
+       ═╧═ ═╧═
+    """ }
+    private var thinkFrame2: String { """
+       ╭─────╮💭
+       │ ◉ ◉ │ .
+       │  ─  │
+       ╰──┬──╯
+        ╭─┴─╮
+        │ ! │
+        │   │
+        ╰───╯
+        │   │
+       ═╧═ ═╧═
+    """ }
+
+    private var level: Int { min(99, xp / 100 + 1) }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header
+            HStack {
+                Image(systemName: "hare.fill").foregroundColor(.koboldEmerald).font(.system(size: 14))
+                Text(koboldName).font(.system(size: 14, weight: .semibold))
+                Text("Lv.\(level)").font(.system(size: 11, weight: .bold, design: .monospaced)).foregroundColor(.koboldGold)
+                Spacer()
+                Text("\(xp) XP").font(.system(size: 11, design: .monospaced)).foregroundColor(.secondary)
+            }
+            .padding(.horizontal, 16).padding(.vertical, 10)
+
+            Divider().opacity(0.2)
+
+            HStack(alignment: .top, spacing: 16) {
+                // ASCII Kobold
+                VStack(spacing: 6) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(Color.black)
+                            .frame(width: 160, height: 150)
+
+                        Text(asciiFrames.first ?? idleFrame1)
+                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .foregroundColor(.koboldEmerald)
+                            .lineSpacing(-2)
+                    }
+
+                    // Speech Bubble
+                    if showSpeech {
+                        Text(speechBubble)
+                            .font(.system(size: 11))
+                            .foregroundColor(.primary)
+                            .padding(.horizontal, 10).padding(.vertical, 5)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8).fill(Color.koboldSurface)
+                                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.koboldEmerald.opacity(0.3)))
+                            )
+                            .transition(.scale.combined(with: .opacity))
+                    }
+                }
+
+                // Stats + Buttons
+                VStack(alignment: .leading, spacing: 10) {
+                    // Stimmung
+                    HStack(spacing: 6) {
+                        Text(moodEmoji).font(.system(size: 16))
+                        Text(moodLabel).font(.system(size: 12, weight: .medium)).foregroundColor(.secondary)
+                    }
+
+                    // Happiness Bar
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack { Text("Glück").font(.system(size: 10)).foregroundColor(.secondary); Spacer(); Text("\(happiness)%").font(.system(size: 10, design: .monospaced)) }
+                        GeometryReader { geo in
+                            ZStack(alignment: .leading) {
+                                RoundedRectangle(cornerRadius: 3).fill(Color.secondary.opacity(0.15)).frame(height: 6)
+                                RoundedRectangle(cornerRadius: 3).fill(happiness > 50 ? Color.koboldEmerald : Color.orange).frame(width: geo.size.width * CGFloat(happiness) / 100, height: 6)
+                            }
+                        }.frame(height: 6)
+                    }
+
+                    // Energy Bar
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack { Text("Energie").font(.system(size: 10)).foregroundColor(.secondary); Spacer(); Text("\(energy)%").font(.system(size: 10, design: .monospaced)) }
+                        GeometryReader { geo in
+                            ZStack(alignment: .leading) {
+                                RoundedRectangle(cornerRadius: 3).fill(Color.secondary.opacity(0.15)).frame(height: 6)
+                                RoundedRectangle(cornerRadius: 3).fill(energy > 30 ? Color.blue : Color.red).frame(width: geo.size.width * CGFloat(energy) / 100, height: 6)
+                            }
+                        }.frame(height: 6)
+                    }
+
+                    // Action Buttons
+                    HStack(spacing: 8) {
+                        petButton(icon: "hand.wave.fill", label: "Streicheln") { petKobold() }
+                        petButton(icon: "cup.and.saucer.fill", label: "Füttern") { feedKobold() }
+                        petButton(icon: "gamecontroller.fill", label: "Spielen") { playWithKobold() }
+                    }
+                }
+            }
+            .padding(16)
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 14).fill(Color.koboldSurface)
+                .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.koboldEmerald.opacity(0.15), lineWidth: 0.5))
+                .shadow(color: .black.opacity(0.15), radius: 6, x: 0, y: 3)
+        )
+        .onAppear { updateMood() }
+        .onReceive(Timer.publish(every: 2, on: .main, in: .common).autoconnect()) { _ in
+            withAnimation(.easeInOut(duration: 0.3)) { animFrame += 1 }
+            // Langsamer Decay
+            if animFrame % 30 == 0 { // Alle 60 Sekunden
+                happiness = max(0, happiness - 1)
+                energy = max(0, energy - 1)
+                updateMood()
+            }
+        }
+        // Reagiert auf Agent-Aktivität
+        .onChange(of: viewModel.agentLoading) {
+            if viewModel.agentLoading {
+                mood = .working
+                energy = max(0, energy - 2)
+                xp += 5
+            } else {
+                updateMood()
+                xp += 10
+            }
+        }
+    }
+
+    private func petButton(icon: String, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 3) {
+                Image(systemName: icon).font(.system(size: 14))
+                Text(label).font(.system(size: 9))
+            }
+            .foregroundColor(.koboldEmerald)
+            .frame(width: 54, height: 40)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Color.koboldEmerald.opacity(0.1)))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func petKobold() {
+        interactionCount += 1
+        happiness = min(100, happiness + 5)
+        xp += 2
+        withAnimation { mood = .happy }
+        speak(["Hehe, das kitzelt!", "Danke! ♥", "Mehr davon!", "*schnurr*", "Das mag ich!"].randomElement()!)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { updateMood() }
+    }
+
+    private func feedKobold() {
+        guard Date().timeIntervalSince(lastFedTime) > 30 else {
+            speak("Ich bin noch satt...")
+            return
+        }
+        lastFedTime = Date()
+        energy = min(100, energy + 20)
+        happiness = min(100, happiness + 3)
+        xp += 3
+        withAnimation { mood = .excited }
+        speak(["Lecker! 🍕", "Nom nom nom!", "Danke für den Snack!", "Endlich Essen!", "*mampf*"].randomElement()!)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { updateMood() }
+    }
+
+    private func playWithKobold() {
+        guard Date().timeIntervalSince(lastPlayTime) > 15 else {
+            speak("Lass mich kurz verschnaufen...")
+            return
+        }
+        lastPlayTime = Date()
+        happiness = min(100, happiness + 10)
+        energy = max(0, energy - 10)
+        xp += 5
+        withAnimation { mood = .excited }
+        speak(["Juhu! 🎮", "Lass uns was Cooles machen!", "Ich liebe Spiele!", "Yeah! Noch eine Runde!", "Das macht Spaß!"].randomElement()!)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { updateMood() }
+    }
+
+    private func speak(_ text: String) {
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+            speechBubble = text
+            showSpeech = true
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+            withAnimation { showSpeech = false }
+        }
+    }
+
+    private func updateMood() {
+        if energy < 15 { mood = .sleeping }
+        else if happiness < 20 { mood = .hungry }
+        else if viewModel.agentLoading { mood = .working }
+        else if happiness > 80 { mood = .happy }
+        else { mood = .idle }
+    }
+
+    private var moodEmoji: String {
+        switch mood {
+        case .idle: return "😐"
+        case .happy: return "😊"
+        case .working: return "⚡"
+        case .sleeping: return "😴"
+        case .hungry: return "😿"
+        case .excited: return "🎉"
+        case .thinking: return "🤔"
+        }
+    }
+
+    private var moodLabel: String {
+        switch mood {
+        case .idle: return "Entspannt"
+        case .happy: return "Glücklich"
+        case .working: return "Arbeitet..."
+        case .sleeping: return "Schläft"
+        case .hungry: return "Hungrig"
+        case .excited: return "Aufgeregt!"
+        case .thinking: return "Denkt nach..."
+        }
     }
 }

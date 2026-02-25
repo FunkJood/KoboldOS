@@ -144,7 +144,7 @@ public protocol MessageObserver: Sendable {
 /// Logger for message bus events
 public actor MessageLogger {
     private var logs: [MessageLogEntry] = []
-    private let maxLogs: Int = 1000
+    private let maxLogs: Int = 5000
 
     public init() {}
 

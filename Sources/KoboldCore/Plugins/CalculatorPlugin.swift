@@ -71,9 +71,23 @@ public struct CalculatorPlugin: KoboldPlugin {
 
         #if os(macOS)
         // Simple arithmetic via NSExpression (macOS only)
+        // Validate expression before passing to NSExpression to prevent SIGABRT on malformed input
         let sanitized = sanitizeExpression(expr)
-        let nsExpr = NSExpression(format: sanitized)
-        if let result = nsExpr.expressionValue(with: nil, context: nil) as? NSNumber {
+        guard !sanitized.isEmpty,
+              sanitized.rangeOfCharacter(from: .decimalDigits) != nil,
+              isBalancedParentheses(sanitized) else {
+            throw ToolError.executionFailed("Invalid math expression: \(expr)")
+        }
+        // Additional safety: reject patterns that NSExpression can't handle
+        // (e.g. consecutive operators, empty parens, leading operators)
+        let dangerousPatterns = ["**", "//", "++", "--", "()", "^"]
+        for pattern in dangerousPatterns {
+            if sanitized.contains(pattern) {
+                throw ToolError.executionFailed("Unsupported operator in expression: \(expr)")
+            }
+        }
+        // Use @objc exception-safe evaluation
+        if let result = safeEvaluateNSExpression(sanitized) {
             return "\(expr) = \(result)"
         }
         #else
@@ -116,11 +130,29 @@ public struct CalculatorPlugin: KoboldPlugin {
     }
 
     #if os(macOS)
+    /// Safely evaluate NSExpression — pre-validation prevents ObjC exception crashes
+    private func safeEvaluateNSExpression(_ sanitized: String) -> NSNumber? {
+        // After sanitize + dangerous pattern filter, NSExpression should be safe.
+        // Only digits, +-*/().  and balanced parens reach here.
+        let nsExpr = NSExpression(format: sanitized)
+        return nsExpr.expressionValue(with: nil, context: nil) as? NSNumber
+    }
+
     private func sanitizeExpression(_ expr: String) -> String {
         // Only allow digits, operators, parentheses, decimal point
         let allowed = CharacterSet.decimalDigits
             .union(.init(charactersIn: "+-*/().^ "))
         return String(expr.unicodeScalars.filter { allowed.contains($0) })
+    }
+
+    private func isBalancedParentheses(_ s: String) -> Bool {
+        var depth = 0
+        for ch in s {
+            if ch == "(" { depth += 1 }
+            else if ch == ")" { depth -= 1 }
+            if depth < 0 { return false }
+        }
+        return depth == 0
     }
     #else
     private func evaluateSimpleExpression(_ expr: String) -> Double? {

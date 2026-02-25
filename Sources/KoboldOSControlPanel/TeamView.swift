@@ -998,7 +998,7 @@ struct WorkflowNode: Identifiable, Codable {
     var conditionExpression: String = ""  // For condition nodes: e.g. "output.contains('error')"
     var delaySeconds: Int = 0             // For delay nodes
     var modelOverride: String?            // Per-node model (e.g. "llama3.2", "gpt-4o")
-    var agentType: String?                // Per-node agent type (e.g. "coder", "researcher")
+    var agentType: String?                // Per-node agent type (e.g. "coder", "web")
     var teamId: String?                   // For team nodes: which team to consult
 
     // Execution state (not persisted)
@@ -1390,7 +1390,6 @@ struct NodeInspector: View {
                         ("calendar",   "calendar",                      "Kalender-Event"),
                         ("contacts",   "person.2.fill",                 "Kontakte"),
                         ("webhook",    "antenna.radiowaves.left.and.right", "Webhook aufrufen"),
-                        ("image_gen",  "photo.artframe",                "Bild generieren"),
                         ("tts",        "speaker.wave.3.fill",           "Text vorlesen"),
                         ("memory",     "brain.head.profile",            "Gedächtnis"),
                         ("custom",     "wrench.fill",                   "Benutzerdefiniert"),
@@ -1467,10 +1466,9 @@ struct NodeInspector: View {
                     )) {
                         Text("Instructor").tag("instructor")
                         Text("Coder").tag("coder")
-                        Text("Researcher").tag("researcher")
+                        Text("Web").tag("web")
                         Text("Planner").tag("planner")
                         Text("Utility").tag("utility")
-                        Text("Web").tag("web")
                     }
                     .pickerStyle(.menu)
                 }
