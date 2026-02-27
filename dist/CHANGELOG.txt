@@ -2,6 +2,36 @@
 KOBOLDOS — CHANGELOG
 ══════════════════════════════════════════════
 
+VERSION 0.3.3 ALPHA (2026-02-27)
+─────────────────────────────────
+Task-Chat-System:
+• Eigene Chats pro Task — jede geplante/idle Task bekommt isolierten Chat
+• Sidebar-Sektion "Task-Chats" mit blauem Checklist-Icon
+• Background-Execution fuer Idle-Tasks ohne UI-Disruption
+• executeTask() als zentraler Entry-Point fuer alle Task-Ausfuehrungen
+
+Cron-Task Routing:
+• DaemonListener postet NotificationCenter-Notification statt handleAgent()
+• MainView.onReceive empfaengt Task-Notification auf MainActor
+• ProactiveEngine nutzt executeTask() statt sendMessage()
+
+Notification-System:
+• UNUserNotificationCenter ersetzt deprecated NSUserNotification
+• Click-to-Navigate: In-App-Notification navigiert zum Task-Chat
+• System-Notifications bei Task-Abschluss mit Ergebnis-Preview
+
+Google OAuth Fix:
+• Credential-Eingabefelder (Client-ID + Secret) in Verbindungen
+• Schritt-fuer-Schritt Anleitung zur Google Cloud Console
+• API-Tool liest Tokens aus UserDefaults (war: SecretStore mit falschen Keys)
+
+Weitere Fixes:
+• SoundCloud OAuth Token-Mismatch behoben
+• Sidebar-Filter: Task-Sessions nicht mehr in normaler Chat-Liste
+• iMessage-Integration komplett entfernt (Telegram ist stabil)
+• Alle Versionsnummern auf 0.3.3 synchronisiert
+• ~49.972 Lines of Code
+
 VERSION 0.3.2 UPDATE (2026-02-27)
 ─────────────────────────────────
 Performance (Freeze-Fixes):
