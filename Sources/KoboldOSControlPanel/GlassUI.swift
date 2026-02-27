@@ -192,9 +192,7 @@ struct GlassChatBubble: View {
     let timestamp: Date
     var isLoading: Bool = false
     var isStreaming: Bool = false
-    @State private var showCopy = false
     @State private var copied = false
-    @State private var streamPulse = false
     // isSpeaking removed — TTSManager.shared.isSpeaking is the single source of truth
     @AppStorage("kobold.chat.fontSize") private var chatFontSize: Double = 16.5
 
@@ -214,8 +212,12 @@ struct GlassChatBubble: View {
                             .foregroundColor(.white)
                             .textSelection(.enabled)
                     } else {
-                        // Assistant messages: rich text with markdown, code blocks, images, links
-                        RichTextView(text: message, isUser: false, fontSize: CGFloat(chatFontSize))
+                        // B1: Collapse long assistant messages (>800 chars)
+                        if message.count > 800 {
+                            CollapsibleMessageView(text: message, fontSize: chatFontSize)
+                        } else {
+                            RichTextView(text: message, isUser: false, fontSize: CGFloat(chatFontSize))
+                        }
                     }
                 }
                 .padding(.horizontal, 14)
@@ -238,16 +240,10 @@ struct GlassChatBubble: View {
                 .overlay(
                     RoundedRectangle(cornerRadius: 18)
                         .stroke(
-                            isStreaming ? Color.koboldEmerald.opacity(streamPulse ? 0.6 : 0.15) : Color.white.opacity(0.1),
+                            isStreaming ? Color.koboldEmerald.opacity(0.4) : Color.white.opacity(0.1),
                             lineWidth: isStreaming ? 1.5 : 0.5
                         )
-                        .animation(isStreaming ? .easeInOut(duration: 1.5).repeatForever(autoreverses: true) : .default, value: streamPulse)
                 )
-                .onAppear { if isStreaming { streamPulse = true } }
-                .onDisappear { streamPulse = false }
-                .onChange(of: isStreaming) {
-                    if isStreaming { streamPulse = true } else { streamPulse = false }
-                }
 
                 // Copy + TTS + Timestamp row
                 HStack(spacing: 6) {
@@ -255,7 +251,8 @@ struct GlassChatBubble: View {
                         .font(.caption2)
                         .foregroundColor(.secondary)
 
-                    if showCopy && !isLoading && !message.isEmpty {
+                    // B2: Buttons always visible (onHover doesn't work on trackpad-less devices)
+                    if !isLoading && !message.isEmpty {
                         CopyButton(text: message, copied: $copied)
 
                         // TTS Speaker-Button (nur bei Assistant-Nachrichten)
@@ -277,11 +274,39 @@ struct GlassChatBubble: View {
                     }
                 }
             }
-            .onHover { hovering in
-                withAnimation(.easeInOut(duration: 0.15)) { showCopy = hovering }
-            }
 
             if !isUser { Spacer(minLength: 40) }
+        }
+    }
+}
+
+// MARK: - CollapsibleMessageView (B1)
+
+/// Shows first ~400 chars of long messages with a "Mehr anzeigen" toggle
+struct CollapsibleMessageView: View {
+    let text: String
+    let fontSize: Double
+    @State private var isExpanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if isExpanded {
+                RichTextView(text: text, isUser: false, fontSize: CGFloat(fontSize))
+            } else {
+                RichTextView(text: String(text.prefix(400)) + "...", isUser: false, fontSize: CGFloat(fontSize))
+            }
+            Button(action: {
+                withAnimation(.easeInOut(duration: 0.25)) { isExpanded.toggle() }
+            }) {
+                HStack(spacing: 4) {
+                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text(isExpanded ? "Weniger anzeigen" : "Mehr anzeigen")
+                        .font(.system(size: 12.5, weight: .medium))
+                }
+                .foregroundColor(.koboldEmerald)
+            }
+            .buttonStyle(.plain)
         }
     }
 }
@@ -528,13 +553,17 @@ struct GlassSectionHeader: View {
 struct PressEvents: ViewModifier {
     var onPress: () -> Void
     var onRelease: () -> Void
+    @State private var isPressed = false
 
     func body(content: Content) -> some View {
         content
             .simultaneousGesture(
                 DragGesture(minimumDistance: 0)
-                    .onChanged { _ in onPress() }
-                    .onEnded { _ in onRelease() }
+                    .onChanged { _ in
+                        // Guard: only fire once (DragGesture.onChanged fires every frame)
+                        if !isPressed { isPressed = true; onPress() }
+                    }
+                    .onEnded { _ in isPressed = false; onRelease() }
             )
     }
 }
@@ -794,7 +823,7 @@ struct DiffResultBubble: View {
 
                 if expanded && !cachedLines.isEmpty {
                     ScrollView([.horizontal, .vertical], showsIndicators: true) {
-                        VStack(alignment: .leading, spacing: 0) {
+                        LazyVStack(alignment: .leading, spacing: 0) {
                             ForEach(cachedLines) { line in
                                 HStack(spacing: 0) {
                                     // +/- gutter
@@ -1365,9 +1394,9 @@ struct ThinkingPanelBubble: View {
                 if expanded && !entries.isEmpty {
                     ScrollViewReader { scrollProxy in
                         ScrollView {
-                            LazyVStack(alignment: .leading, spacing: 4) {
-                                ForEach(entries) { entry in
-                                    thinkingRow(entry)
+                            LazyVStack(alignment: .leading, spacing: 2) {
+                                ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
+                                    thinkingRow(entry, isLatest: isLive && index == entries.count - 1)
                                         .id(entry.id)
                                 }
                             }
@@ -1381,10 +1410,10 @@ struct ThinkingPanelBubble: View {
                             if hasSubAgentActivity && !expanded {
                                 withAnimation(.easeInOut(duration: 0.2)) { expanded = true }
                             }
-                            // Debounced scroll — avoid 10-20 scroll ops/sec during tool-heavy tasks
+                            // Debounced scroll — longer than flush to avoid layout thrash
                             scrollDebounceTask?.cancel()
                             scrollDebounceTask = Task { @MainActor in
-                                try? await Task.sleep(nanoseconds: 400_000_000)
+                                try? await Task.sleep(nanoseconds: 3_000_000_000)
                                 guard !Task.isCancelled, isLive, let lastEntry = entries.last else { return }
                                 scrollProxy.scrollTo(lastEntry.id, anchor: .bottom)
                             }
@@ -1440,33 +1469,10 @@ struct ThinkingPanelBubble: View {
     }
 
     @ViewBuilder
-    func thinkingRow(_ entry: ThinkingEntry) -> some View {
-        HStack(alignment: .top, spacing: 6) {
-            Image(systemName: entry.icon)
-                .font(.system(size: 12.5))
-                .foregroundColor(colorFor(entry))
-                .frame(width: 14)
-            VStack(alignment: .leading, spacing: 2) {
-                if !entry.toolName.isEmpty {
-                    Text(entry.toolName)
-                        .font(.system(size: 12.5, weight: .bold, design: .monospaced))
-                        .foregroundColor(colorFor(entry))
-                }
-                if isLive {
-                    TypewriterText(fullText: entry.content, speed: 0.008)
-                        .font(.system(size: 13.5, design: .monospaced))
-                        .foregroundColor(.secondary)
-                        .textSelection(.enabled)
-                } else {
-                    Text(entry.content.count > 200 ? String(entry.content.prefix(200)) + "..." : entry.content)
-                        .font(.system(size: 13.5, design: .monospaced))
-                        .foregroundColor(.secondary)
-                        .textSelection(.enabled)
-                }
-            }
-        }
-        .padding(.vertical, 2)
-        .padding(.horizontal, 4)
+    func thinkingRow(_ entry: ThinkingEntry, isLatest: Bool = false) -> some View {
+        // Collapsed by default — only the LATEST step is expanded during live streaming
+        // This saves massive rendering cost: collapsed rows are just icon + toolName (no content text)
+        CollapsibleThinkingRow(entry: entry, isLive: isLive, startExpanded: isLatest, colorFor: colorFor)
     }
 
     func colorFor(_ entry: ThinkingEntry) -> Color {
@@ -1495,6 +1501,62 @@ struct ThinkingPanelBubble: View {
         }.joined(separator: "\n")
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
+    }
+}
+
+// MARK: - CollapsibleThinkingRow (collapsed by default, only latest expanded)
+
+struct CollapsibleThinkingRow: View {
+    let entry: ThinkingEntry
+    let isLive: Bool
+    let startExpanded: Bool
+    let colorFor: (ThinkingEntry) -> Color
+
+    @State private var isExpanded: Bool
+
+    init(entry: ThinkingEntry, isLive: Bool, startExpanded: Bool, colorFor: @escaping (ThinkingEntry) -> Color) {
+        self.entry = entry
+        self.isLive = isLive
+        self.startExpanded = startExpanded
+        self.colorFor = colorFor
+        self._isExpanded = State(initialValue: startExpanded)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Header row — always visible (icon + tool name + chevron)
+            Button(action: { withAnimation(.easeInOut(duration: 0.15)) { isExpanded.toggle() } }) {
+                HStack(spacing: 6) {
+                    Image(systemName: entry.icon)
+                        .font(.system(size: 12))
+                        .foregroundColor(colorFor(entry))
+                        .frame(width: 14)
+                    Text(entry.toolName.isEmpty ? entry.type.rawValue : entry.toolName)
+                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                        .foregroundColor(colorFor(entry))
+                        .lineLimit(1)
+                    Spacer()
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundColor(.secondary.opacity(0.5))
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            // Content — only rendered when expanded (saves Text measurement + layout cost)
+            if isExpanded {
+                let maxChars = isLive ? 300 : 200
+                Text(entry.content.count > maxChars ? String(entry.content.prefix(maxChars)) + "..." : entry.content)
+                    .font(.system(size: 12.5, design: .monospaced))
+                    .foregroundColor(.secondary)
+                    .textSelection(.enabled)
+                    .padding(.leading, 20)
+                    .padding(.top, 2)
+            }
+        }
+        .padding(.vertical, 2)
+        .padding(.horizontal, 4)
     }
 }
 
@@ -1931,8 +1993,19 @@ private func parseRichBlocks(_ text: String) -> [RichBlock] {
     return blocks
 }
 
+/// A7: NSCache for parsed markdown — avoids re-parsing on every SwiftUI re-render
+/// NSCache is internally thread-safe; nonisolated(unsafe) silences the Sendable check
+private nonisolated(unsafe) let markdownCache = NSCache<NSString, CachedAttributedString>()
+
+/// Wrapper because NSCache needs NSObject values
+private final class CachedAttributedString: NSObject {
+    let value: AttributedString
+    init(_ value: AttributedString) { self.value = value }
+}
+
 /// Render a markdown text block as AttributedString (supports bold, italic, code, links)
 /// PERF: Skips expensive markdown parsing for strings >4KB to prevent Main Thread freeze.
+/// PERF: Caches results via NSCache to prevent re-parsing on every re-render (A7).
 private func markdownAttributedString(_ text: String, isUser: Bool, fontSize: CGFloat = 16.5) -> AttributedString {
     // Skip markdown parsing for large strings — it's O(n²) and blocks Main Thread
     if text.count > 4000 {
@@ -1941,17 +2014,28 @@ private func markdownAttributedString(_ text: String, isUser: Bool, fontSize: CG
         attr.foregroundColor = isUser ? .white : .primary
         return attr
     }
+
+    // A7: Check cache first
+    let cacheKey = NSString(string: "\(text.hashValue)_\(isUser)_\(fontSize)")
+    if let cached = markdownCache.object(forKey: cacheKey) {
+        return cached.value
+    }
+
+    let result: AttributedString
     do {
         var attr = try AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))
         attr.font = .system(size: fontSize)
         attr.foregroundColor = isUser ? .white : .primary
-        return attr
+        result = attr
     } catch {
         var attr = AttributedString(text)
         attr.font = .system(size: fontSize)
         attr.foregroundColor = isUser ? .white : .primary
-        return attr
+        result = attr
     }
+
+    markdownCache.setObject(CachedAttributedString(result), forKey: cacheKey)
+    return result
 }
 
 /// Rich text view that renders markdown blocks including code, images, and formatted text

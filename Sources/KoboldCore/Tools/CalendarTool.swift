@@ -50,28 +50,38 @@ public struct CalendarTool: Tool, @unchecked Sendable {
         }
     }
 
-    // MARK: - Access
+    // MARK: - Access (check status first, only request if .notDetermined)
 
-    private func requestCalendarAccess() async throws -> Bool {
-        if #available(macOS 14.0, *) {
-            return try await store.requestFullAccessToEvents()
-        } else {
-            return try await store.requestAccess(to: .event)
+    private func ensureCalendarAccess() async throws -> Bool {
+        let status = EKEventStore.authorizationStatus(for: .event)
+        if status == .denied || status == .restricted { return false }
+        if status == .notDetermined {
+            if #available(macOS 14.0, *) {
+                return try await store.requestFullAccessToEvents()
+            } else {
+                return try await store.requestAccess(to: .event)
+            }
         }
+        return true // .authorized, .fullAccess, or any future value
     }
 
-    private func requestReminderAccess() async throws -> Bool {
-        if #available(macOS 14.0, *) {
-            return try await store.requestFullAccessToReminders()
-        } else {
-            return try await store.requestAccess(to: .reminder)
+    private func ensureReminderAccess() async throws -> Bool {
+        let status = EKEventStore.authorizationStatus(for: .reminder)
+        if status == .denied || status == .restricted { return false }
+        if status == .notDetermined {
+            if #available(macOS 14.0, *) {
+                return try await store.requestFullAccessToReminders()
+            } else {
+                return try await store.requestAccess(to: .reminder)
+            }
         }
+        return true // .authorized, .fullAccess, or any future value
     }
 
     // MARK: - Events
 
     private func listEvents(_ args: [String: String]) async throws -> String {
-        guard try await requestCalendarAccess() else {
+        guard try await ensureCalendarAccess() else {
             return "Kein Zugriff auf Kalender. Bitte in Systemeinstellungen → Datenschutz → Kalender erlauben."
         }
 
@@ -97,7 +107,7 @@ public struct CalendarTool: Tool, @unchecked Sendable {
     }
 
     private func createEvent(_ args: [String: String]) async throws -> String {
-        guard try await requestCalendarAccess() else { return "Kein Zugriff auf Kalender." }
+        guard try await ensureCalendarAccess() else { return "Kein Zugriff auf Kalender." }
         guard let title = args["title"], !title.isEmpty else { return "Titel fehlt." }
 
         let event = EKEvent(eventStore: store)
@@ -123,7 +133,7 @@ public struct CalendarTool: Tool, @unchecked Sendable {
     }
 
     private func searchEvents(_ args: [String: String]) async throws -> String {
-        guard try await requestCalendarAccess() else { return "Kein Zugriff auf Kalender." }
+        guard try await ensureCalendarAccess() else { return "Kein Zugriff auf Kalender." }
         guard let query = args["query"], !query.isEmpty else { return "Suchbegriff fehlt." }
 
         let start = Calendar.current.date(byAdding: .month, value: -3, to: Date())!
@@ -149,7 +159,7 @@ public struct CalendarTool: Tool, @unchecked Sendable {
     // MARK: - Reminders
 
     private func listReminders() async throws -> String {
-        guard try await requestReminderAccess() else { return "Kein Zugriff auf Erinnerungen." }
+        guard try await ensureReminderAccess() else { return "Kein Zugriff auf Erinnerungen." }
 
         let predicate = store.predicateForReminders(in: nil)
         let reminders: [EKReminder] = try await withCheckedThrowingContinuation { cont in
@@ -175,7 +185,7 @@ public struct CalendarTool: Tool, @unchecked Sendable {
     }
 
     private func createReminder(_ args: [String: String]) async throws -> String {
-        guard try await requestReminderAccess() else { return "Kein Zugriff auf Erinnerungen." }
+        guard try await ensureReminderAccess() else { return "Kein Zugriff auf Erinnerungen." }
         guard let title = args["title"], !title.isEmpty else { return "Titel fehlt." }
 
         let reminder = EKReminder(eventStore: store)

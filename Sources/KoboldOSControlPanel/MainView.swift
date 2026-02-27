@@ -1446,18 +1446,22 @@ struct GlobalHeaderBar: View {
     @Binding var showNotifications: Bool
     @ObservedObject private var weatherManager = WeatherManager.shared
 
-    private var formattedDate: String {
+    // Cached DateFormatters — DateFormatter() is expensive, create only once
+    private static let dateFormatter: DateFormatter = {
         let f = DateFormatter()
         f.locale = Locale(identifier: "de_DE")
         f.dateFormat = "EEEE, d. MMMM yyyy"
-        return f.string(from: Date())
-    }
-
-    private var formattedTime: String {
+        return f
+    }()
+    private static let timeFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "HH:mm"
-        return f.string(from: Date())
-    }
+        return f
+    }()
+
+    // Timer-driven tick for 1-minute updates instead of relying on random re-renders
+    @State private var tick = Date()
+    private let updateTimer = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
 
     var body: some View {
         HStack {
@@ -1466,7 +1470,7 @@ struct GlobalHeaderBar: View {
                 Image(systemName: "calendar")
                     .font(.system(size: 15.5))
                     .foregroundColor(.koboldEmerald)
-                Text(formattedDate)
+                Text(Self.dateFormatter.string(from: tick))
                     .font(.system(size: 15.5, weight: .medium))
                     .foregroundColor(.primary)
             }
@@ -1474,7 +1478,7 @@ struct GlobalHeaderBar: View {
             Spacer()
 
             // Uhrzeit mittig
-            Text(formattedTime)
+            Text(Self.timeFormatter.string(from: tick))
                 .font(.system(size: 15.5, weight: .semibold, design: .monospaced))
                 .foregroundColor(.koboldEmerald)
 
@@ -1531,6 +1535,10 @@ struct GlobalHeaderBar: View {
         }
         .padding(.horizontal, 4)
         .onAppear {
+            weatherManager.fetchWeatherIfNeeded()
+        }
+        .onReceive(updateTimer) { now in
+            tick = now
             weatherManager.fetchWeatherIfNeeded()
         }
         .padding(.vertical, 10).padding(.horizontal, 14)
@@ -1629,21 +1637,20 @@ struct KoboldOSSidebarLogo: View {
             }
             .cornerRadius(10)
 
-            // Glow pulse — single animation, no layout changes (opacity only)
+            // Static subtle glow (removed .repeatForever — was a permanent 60fps timer)
             Ellipse()
-                .fill(Color.koboldEmerald.opacity(glowPulse ? 0.12 : 0.06))
+                .fill(Color.koboldEmerald.opacity(0.09))
                 .frame(width: 120, height: 20)
                 .blur(radius: 8)
                 .offset(y: 12)
-                .animation(.easeInOut(duration: 3).repeatForever(autoreverses: true), value: glowPulse)
 
             // Main content
             HStack(spacing: 8) {
                 // App Icon with glow
                 ZStack {
-                    // Glow behind icon — uses same glowPulse, no separate animation
+                    // Static glow behind icon
                     Circle()
-                        .fill(Color.koboldEmerald.opacity(glowPulse ? 0.25 : 0.15))
+                        .fill(Color.koboldEmerald.opacity(0.20))
                         .frame(width: 52, height: 52)
                         .blur(radius: 10)
                     Image(nsImage: NSApp.applicationIconImage)

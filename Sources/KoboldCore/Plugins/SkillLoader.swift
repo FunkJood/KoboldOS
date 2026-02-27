@@ -26,14 +26,30 @@ public actor SkillLoader {
 
     private let enabledKey = "kobold.skills.enabled"
 
+    // A2: In-memory cache to avoid repeated disk reads (22+ file reads per message)
+    private var cachedSkills: [Skill]?
+    private var cacheTimestamp: Date?
+    private let cacheTTL: TimeInterval = 60 // 1 minute
+
     private var skillsDir: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
             .appendingPathComponent("KoboldOS/Skills")
     }
 
+    /// Invalidate cache when settings change (e.g. skill toggled)
+    public func invalidateCache() {
+        cachedSkills = nil
+        cacheTimestamp = nil
+    }
+
     // MARK: - Load
 
     public func loadSkills() async -> [Skill] {
+        // Return cached if still fresh
+        if let cached = cachedSkills, let ts = cacheTimestamp, Date().timeIntervalSince(ts) < cacheTTL {
+            return cached
+        }
+
         let fm = FileManager.default
         try? fm.createDirectory(at: skillsDir, withIntermediateDirectories: true)
         createDefaultSkillsIfNeeded()
@@ -46,7 +62,7 @@ public actor SkillLoader {
 
         let enabledNames = UserDefaults.standard.stringArray(forKey: enabledKey) ?? []
 
-        return files
+        let result = files
             .filter { $0.pathExtension == "md" }
             .compactMap { url -> Skill? in
                 guard let content = try? String(contentsOf: url, encoding: .utf8) else { return nil }
@@ -59,6 +75,10 @@ public actor SkillLoader {
                 )
             }
             .sorted { $0.name < $1.name }
+
+        cachedSkills = result
+        cacheTimestamp = Date()
+        return result
     }
 
     // MARK: - Toggle
@@ -71,6 +91,7 @@ public actor SkillLoader {
             names.removeAll { $0 == skillName }
         }
         UserDefaults.standard.set(names, forKey: enabledKey)
+        invalidateCache()
     }
 
     // MARK: - Build Prompt Injection

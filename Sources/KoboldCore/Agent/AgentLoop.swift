@@ -467,12 +467,12 @@ public actor AgentLoop {
         // Build initial system prompt with current memory
         let compiledMemory = await coreMemory.compile()
 
-        // Smart memory retrieval: search tagged memories relevant to this query
-        let relevantMemories = await smartMemoryRetrieval(query: userMessage)
+        // A3: Run memory retrieval + skill search in parallel (both are independent I/O)
+        async let relevantMemoriesAsync = smartMemoryRetrieval(query: userMessage)
+        async let relevantSkillsAsync = SkillLoader.shared.relevantSkills(query: userMessage)
+        let relevantMemories = await relevantMemoriesAsync
+        let relevantSkillsPrompt = await relevantSkillsAsync
         let memoryRetrievalPrompt = relevantMemories.isEmpty ? "" : "\n\n## Relevante Erinnerungen (automatisch geladen)\n\(relevantMemories)"
-
-        // Skill-basierte Suche: relevante Skills zum Query laden
-        let relevantSkillsPrompt = await SkillLoader.shared.relevantSkills(query: userMessage)
 
         // Context status for LLM awareness
         let ctxTokens = lastKnownPromptTokens > 0 ? lastKnownPromptTokens : TokenEstimator.estimateTokens(messages: conversationMessages)
@@ -853,12 +853,12 @@ public actor AgentLoop {
                 let confidencePrompt = "\n\n# Confidence Self-Assessment\nInclude a \"confidence\" field (0.0-1.0) in every JSON response. 1.0 = certain, 0.0 = unsure. If confidence < 0.5, use the response tool to ask the user for clarification instead of guessing."
                 let archivalPrompt = "\n\n# Archival Memory\nWenn Core Memory Blöcke voll sind (>80% Limit), nutze archival_memory_insert um ältere Informationen zu archivieren. Nutze archival_memory_search um archivierte Informationen wieder zu finden."
 
-                // Smart memory retrieval for streaming
-                let relevantMemories = await self.smartMemoryRetrieval(query: userMessage)
+                // A3: Run memory retrieval + skill search in parallel (both are independent I/O)
+                async let relevantMemoriesAsync = self.smartMemoryRetrieval(query: userMessage)
+                async let relevantSkillsAsync = SkillLoader.shared.relevantSkills(query: userMessage)
+                let relevantMemories = await relevantMemoriesAsync
+                let relevantSkillsPrompt = await relevantSkillsAsync
                 let memoryRetrievalPrompt = relevantMemories.isEmpty ? "" : "\n\n## Relevante Erinnerungen (automatisch geladen)\n\(relevantMemories)"
-
-                // Skill-based retrieval (same as runInner)
-                let relevantSkillsPrompt = await SkillLoader.shared.relevantSkills(query: userMessage)
 
                 // Context status for LLM awareness
                 let ctxTokens = lastKnownPromptTokens > 0 ? lastKnownPromptTokens : TokenEstimator.estimateTokens(messages: conversationMessages)
@@ -895,12 +895,10 @@ public actor AgentLoop {
                         self.manageContext(&messages)
                     }
 
-                    // Emit "thinking" step BEFORE LLM call so UI shows activity immediately
-                    continuation.yield(AgentStep(
-                        stepNumber: stepCount, type: .think,
-                        content: stepCount == 1 ? "Analysiere..." : "Denke nach...",
-                        toolCallName: nil, toolResultSuccess: nil, timestamp: Date()
-                    ))
+                    // UI breathing room before LLM call (lets MainActor process pending renders)
+                    if stepCount > 1 {
+                        try? await Task.sleep(nanoseconds: 200_000_000) // 200ms pause between steps
+                    }
 
                     let llmResponse: String
                     do {
@@ -1179,16 +1177,17 @@ public actor AgentLoop {
                         continuation.yield(toolResultStep)
                     }
 
-                    // Save checkpoint fire-and-forget (non-blocking — I/O must not stall streaming)
-                    // Yield checkpoint step BEFORE fire-and-forget to avoid yielding after finish()
-                    let cpStep = stepCount
-                    let cpId = UUID().uuidString
-                    continuation.yield(AgentStep(stepNumber: cpStep, type: .checkpoint, content: "Checkpoint", checkpointId: cpId))
-                    let cpMessages = messages
-                    let cpUser = userMessage
-                    Task { [weak self] in
-                        guard let self = self else { return }
-                        await self.saveCheckpoint(messages: cpMessages, stepCount: cpStep, userMessage: cpUser)
+                    // Save checkpoint every 5 steps (not every tool call — reduces disk I/O by 80%)
+                    if stepCount % 5 == 0 || stepCount == 1 {
+                        let cpStep = stepCount
+                        let cpId = UUID().uuidString
+                        continuation.yield(AgentStep(stepNumber: cpStep, type: .checkpoint, content: "Checkpoint", checkpointId: cpId))
+                        let cpMessages = messages
+                        let cpUser = userMessage
+                        Task { [weak self] in
+                            guard let self = self else { return }
+                            await self.saveCheckpoint(messages: cpMessages, stepCount: cpStep, userMessage: cpUser)
+                        }
                     }
 
                     if ruleEngine.shouldTerminate(afterCalling: call.name) {
@@ -1240,6 +1239,10 @@ public actor AgentLoop {
                     ])
                     conversationHistory.append("Assistant (Schritt \(stepCount)): Tool '\(call.name)' ausgeführt")
                     self.trimConversationHistory()
+
+                    // Micro-pause between tool steps — gives the UI thread breathing room
+                    // Without this, back-to-back tool calls (shell, file, etc.) starve the MainActor
+                    try? await Task.sleep(nanoseconds: 150_000_000) // 150ms
                 }
 
                 // Step limit reached
@@ -1748,6 +1751,10 @@ public actor AgentLoop {
 
         # Fehlerbehandlung
         Bei Fehler: Erkläre auf Deutsch über response Tool, nenne Grund, schlage Alternativen vor.
+
+        # Quellen
+        Wenn du Informationen aus Web-Recherchen verwendest, bette die Quellen-URLs als Markdown-Links in deine Antwort ein.
+        Format: [Beschreibung](URL). Platziere Links natuerlich im Text oder als "Quellen:"-Abschnitt am Ende.
 
         \(memorySection)
 

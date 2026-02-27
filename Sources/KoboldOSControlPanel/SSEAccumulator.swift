@@ -76,9 +76,13 @@ actor SSEAccumulator {
         let subAgent = json["subAgent"] as? String
         let confidence = json["confidence"] as? Double
 
+        // Cap individual entry content to 500 chars — long tool results waste RAM in ThinkingPanel
+        // The full result is still in the agent's conversation history, this only affects UI display
+        let cappedContent = content.count > 500 ? String(content.prefix(497)) + "..." : content
+
         // Tag content with sub-agent name if present (for live streaming from sub-agents)
         let isSubStep = subAgent != nil && type != "subAgentSpawn" && type != "subAgentResult"
-        let displayContent = isSubStep ? "[\(subAgent!)] \(content)" : content
+        let displayContent = isSubStep ? "[\(subAgent!)] \(cappedContent)" : cappedContent
         let displayTool = isSubStep ? "[\(subAgent!)] \(tool)" : tool
 
         switch type {

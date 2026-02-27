@@ -2,6 +2,26 @@
 KOBOLDOS — CHANGELOG
 ══════════════════════════════════════════════
 
+VERSION 0.3.2 UPDATE (2026-02-27)
+─────────────────────────────────
+Performance (Freeze-Fixes):
+• isNewest O(n)-Scan eliminiert — einmalig vor ForEach berechnet
+• SkillLoader In-Memory-Cache (60s TTL) — spart 22+ Disk-Reads/Message
+• async let: smartMemoryRetrieval + relevantSkills parallel statt sequentiell
+• repeatForever Animation auf Streaming-Bubble entfernt (60fps CADisplayLink)
+• Date() in Loading-Bubble durch statischen Placeholder ersetzt
+• Markdown NSCache — AttributedString wird nur einmal geparsed
+• GlobalHeaderBar: DateFormatter gecacht, 60s Timer statt Random-Rerenders
+
+UI-Verbesserungen:
+• Lange Antworten (>800 Zeichen) eingeklappt mit "Mehr/Weniger anzeigen"
+• Copy/TTS Buttons immer sichtbar (nicht hover-only)
+• Clear-Button setzt Session-Titel/Zeit in Sidebar zurueck
+• Agent bettet Quellen-URLs als Markdown-Links ein
+
+Bekannt: Heavy-Load Lags bei zweiter Nachricht + View-Wechsel (CPU 100%)
+• ~49.553 Lines of Code
+
 VERSION 0.3.2 ALPHA (2026-02-27)
 ─────────────────────────────────
 • Settings Overhaul: Tabs reorganisiert, Beschreibungen, Provider entfernt

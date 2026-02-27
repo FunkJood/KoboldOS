@@ -15,7 +15,7 @@ struct ChatView: View {
     // Notifications moved to GlobalHeaderBar
     @State private var scrollDebounceTask: Task<Void, Never>?
     /// Number of messages visible from the end — grows when user taps "load more"
-    @State private var visibleMessageCount: Int = 80
+    @State private var visibleMessageCount: Int = 20
     /// Window update interval in nanoseconds (default: 1.5 seconds)
     @AppStorage("kobold.window.updateInterval") private var updateIntervalNanos: Int = 1_500_000_000
 
@@ -46,7 +46,7 @@ struct ChatView: View {
                         if startIndex > 0 {
                             Button {
                                 withAnimation(.easeOut(duration: 0.2)) {
-                                    visibleMessageCount = min(visibleMessageCount + 80, allMessages.count)
+                                    visibleMessageCount = min(visibleMessageCount + 20, allMessages.count)
                                 }
                             } label: {
                                 HStack(spacing: 6) {
@@ -62,8 +62,13 @@ struct ChatView: View {
                             .id("load-more")
                         }
 
+                        // A1: Pre-compute newest thinking ID once instead of O(n) per bubble
+                        let newestThinkingId = viewModel.messages.last(where: {
+                            if case .thinking = $0.kind { return true }; return false
+                        })?.id
+
                         ForEach(visibleMessages) { msg in
-                            messageBubble(for: msg)
+                            messageBubble(for: msg, newestThinkingId: newestThinkingId)
                                 .id(msg.id)
                         }
 
@@ -77,8 +82,8 @@ struct ChatView: View {
                                     .id("subagent-banner")
                             }
 
-                            // Typing animation dots
-                            GlassChatBubble(message: "", isUser: false, timestamp: Date(), isLoading: true)
+                            // A6: Static placeholder date — Date() creates new object every render, preventing SwiftUI skip
+                            GlassChatBubble(message: "", isUser: false, timestamp: Self.placeholderDate, isLoading: true)
                                 .id("loading")
                         }
                     }
@@ -87,7 +92,7 @@ struct ChatView: View {
                 }
                 .onChange(of: viewModel.messages.count) { debouncedScroll(proxy: proxy) }
                 .onChange(of: viewModel.agentLoading) { debouncedScroll(proxy: proxy) }
-                .onChange(of: viewModel.currentSessionId) { visibleMessageCount = 80 }
+                .onChange(of: viewModel.currentSessionId) { visibleMessageCount = 20 }
             }
 
             // Sticky Checklist
@@ -180,10 +185,13 @@ struct ChatView: View {
         )
     }
 
+    // A6: Static date for loading bubble — avoids Date() on every render
+    private static let placeholderDate = Date(timeIntervalSince1970: 0)
+
     // MARK: - Bubble Router
 
     @ViewBuilder
-    func messageBubble(for msg: ChatMessage) -> some View {
+    func messageBubble(for msg: ChatMessage, newestThinkingId: UUID? = nil) -> some View {
         switch msg.kind {
         case .user(let text):
             VStack(alignment: .trailing, spacing: 6) {
@@ -234,8 +242,8 @@ struct ChatView: View {
             }
         case .thinking(let entries):
             if showAgentSteps {
-                let isNewest = (msg.id == viewModel.messages.last(where: { if case .thinking = $0.kind { return true }; return false })?.id)
-                ThinkingPanelBubble(entries: entries, isLive: false, isNewest: isNewest)
+                // A1: Use pre-computed newestThinkingId instead of O(n) scan per bubble
+                ThinkingPanelBubble(entries: entries, isLive: false, isNewest: msg.id == newestThinkingId)
             }
         case .interactive(let text, let options):
             InteractiveBubble(

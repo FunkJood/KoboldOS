@@ -82,7 +82,9 @@ class RuntimeManager: ObservableObject {
     // MARK: - Health Monitor
 
     private func startHealthMonitor() {
-        healthTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
+        // Reduced: 15s instead of 5s — RuntimeViewModel.checkConnectivity() already pings every 5s
+        // Having two 5s timers doubled the network overhead for no benefit
+        healthTimer = Timer.scheduledTimer(withTimeInterval: 15.0, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 await self?.pingHealth()
             }

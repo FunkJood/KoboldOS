@@ -28,19 +28,31 @@ public struct ContactsTool: Tool, @unchecked Sendable {
         }
         let action = arguments["action"] ?? ""
 
-        let granted: Bool
-        if #available(macOS 14.0, *) {
-            granted = try await store.requestAccess(for: .contacts)
-        } else {
-            granted = try await withCheckedThrowingContinuation { cont in
-                store.requestAccess(for: .contacts) { ok, err in
-                    if let err { cont.resume(throwing: err) }
-                    else { cont.resume(returning: ok) }
+        // Check authorization status FIRST — only request if never asked before
+        let status = CNContactStore.authorizationStatus(for: .contacts)
+        switch status {
+        case .denied, .restricted:
+            return "Kein Zugriff auf Kontakte. Bitte in Systemeinstellungen → Datenschutz → Kontakte erlauben."
+        case .notDetermined:
+            // First time: request access (triggers system dialog once)
+            let granted: Bool
+            if #available(macOS 14.0, *) {
+                granted = try await store.requestAccess(for: .contacts)
+            } else {
+                granted = try await withCheckedThrowingContinuation { cont in
+                    store.requestAccess(for: .contacts) { ok, err in
+                        if let err { cont.resume(throwing: err) }
+                        else { cont.resume(returning: ok) }
+                    }
                 }
             }
-        }
-        guard granted else {
-            return "Kein Zugriff auf Kontakte. Bitte in Systemeinstellungen → Datenschutz → Kontakte erlauben."
+            guard granted else {
+                return "Kein Zugriff auf Kontakte. Bitte in Systemeinstellungen → Datenschutz → Kontakte erlauben."
+            }
+        case .authorized:
+            break // Already granted — no dialog needed
+        @unknown default:
+            break
         }
 
         switch action {

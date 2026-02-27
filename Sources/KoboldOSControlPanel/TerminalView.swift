@@ -959,10 +959,7 @@ final class TerminalSession: ObservableObject, Identifiable, @unchecked Sendable
     }
 
     private func setupCleanupTimer() {
-        cleanupTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            guard let self = self, !self.isStopping else { return }
-            // Hier können wir zukünftig periodische Bereinigungen durchführen
-        }
+        // Removed: was firing 1/s on Main RunLoop doing nothing (pure CPU waste)
     }
 
     func sendInput(_ text: String) {

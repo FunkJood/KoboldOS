@@ -1,5 +1,30 @@
 # KoboldOS Changelog
 
+## Alpha v0.3.2 Update — 2026-02-27
+
+### Performance: Freeze-Fixes (Second-Message Lag)
+- **isNewest O(n) eliminiert**: `messages.last(where:)` in ThinkingPanel wird einmalig vor ForEach berechnet statt pro Bubble (ChatView.swift)
+- **SkillLoader Cache**: In-Memory-Cache mit 60s TTL — verhindert 22+ Disk-Reads pro Nachricht (SkillLoader.swift)
+- **async let Parallelisierung**: `smartMemoryRetrieval` + `relevantSkills` laufen jetzt parallel statt sequentiell in AgentLoop (2 Stellen)
+- **repeatForever Animation entfernt**: Streaming-Bubble Puls-Animation verursachte permanenten 60fps CADisplayLink (GlassUI.swift)
+- **Date() Placeholder**: Loading-Bubble verwendet statisches Datum — SwiftUI kann View jetzt skippen (ChatView.swift)
+- **Markdown NSCache**: AttributedString(markdown:) Ergebnis wird gecacht, verhindert Re-Parsing bei jedem Render (GlassUI.swift)
+- **GlobalHeaderBar optimiert**: DateFormatter als static let gecacht, 60-Sekunden Timer statt unberechenbares Re-Rendering (MainView.swift)
+
+### UI-Verbesserungen
+- **Lange Antworten eingeklappt**: Nachrichten >800 Zeichen werden mit "Mehr anzeigen"/"Weniger anzeigen" Button angezeigt (CollapsibleMessageView)
+- **Copy/TTS Buttons immer sichtbar**: Nicht mehr hover-only — funktioniert jetzt auch auf Trackpad-losen Geräten
+- **Clear-Button Reset**: Chat leeren setzt jetzt auch Session-Titel und Timestamp in der Sidebar zurück ("Neuer Chat")
+- **Quellen-Links**: Agent bettet Web-Recherche-URLs als Markdown-Links in Antworten ein (System-Prompt)
+
+### Bekannte Probleme
+- **Heavy Load Lags**: Bei der zweiten Nachricht und bei View-Wechseln unter Last können weiterhin Lags und CPU-Spitzen bis 100% auftreten. Ursachenanalyse läuft.
+
+### Statistik
+- ~49.553 Lines of Code
+
+---
+
 ## Alpha v0.3.2 — 2026-02-27
 
 ### UI & Settings Overhaul

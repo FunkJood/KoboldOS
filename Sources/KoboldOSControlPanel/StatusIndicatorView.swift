@@ -90,9 +90,8 @@ struct StatusIndicatorView: View {
         .onHover { isHovered = $0 }
         .animation(.easeOut(duration: 0.15), value: isHovered)
         .onAppear {
-            withAnimation(.easeInOut(duration: 2.0).repeatForever(autoreverses: true)) {
-                pulseGlow = true
-            }
+            // Static glow instead of .repeatForever (was a permanent 60fps timer on Main Thread)
+            pulseGlow = true
         }
     }
 

@@ -82,6 +82,14 @@ public class RuntimeViewModel: ObservableObject {
     /// Streaming Sessions Set (statt Bool für korrekte Multi-Chat Isolation)
     private var streamingSessions: Set<UUID> = []
 
+    // MARK: - Memory Management
+    /// Tracks last access time per session for offloading inactive ones
+    private var sessionLastAccess: [UUID: Date] = [:]
+    /// Periodic timer that offloads inactive background sessions from RAM
+    private var offloadTimer: Task<Void, Never>?
+    /// macOS memory pressure handler — offloads all background sessions on warning/critical
+    private var memoryPressureSource: DispatchSourceMemoryPressure?
+
     /// Computed: Ist gerade irgendeine Session am Streamen?
     public var isStreamingToDaemon: Bool { !streamingSessions.isEmpty }
 
@@ -226,11 +234,15 @@ public class RuntimeViewModel: ObservableObject {
         loadSessions()
         // Initiale Session anlegen
         sessionAgentStates[currentSessionId] = SessionAgentState()
+        sessionLastAccess[currentSessionId] = Date()
         // Bei App-Beendigung Sessions speichern
         NotificationCenter.default.addObserver(forName: .koboldShutdownSave, object: nil, queue: .main) { [weak self] _ in
             self?.upsertCurrentSession()
         }
         startConnectivityTimer()
+        // Memory Management: Offload inactive sessions + handle system memory pressure
+        startSessionOffloadTimer()
+        setupMemoryPressureHandler()
         // Ollama + Embedding bei Start prüfen (nach kurzem Delay für Startup)
         Task { [weak self] in
             try? await Task.sleep(nanoseconds: 2_000_000_000) // 2s warten bis Ollama bereit
@@ -247,6 +259,7 @@ public class RuntimeViewModel: ObservableObject {
     }
 
     /// Sessions von Disk laden (~/Library/Application Support/KoboldOS/sessions.json)
+    /// Startet immer mit leerem Chat für Stabilität — alte Sessions bleiben in der Sidebar verfügbar.
     private func loadSessions() {
         let url = sessionsURL
         guard FileManager.default.fileExists(atPath: url.path),
@@ -256,13 +269,10 @@ public class RuntimeViewModel: ObservableObject {
             return
         }
         sessions = loaded
-        // Lade Messages der letzten Session falls vorhanden
-        if let last = loaded.last {
-            currentSessionId = last.id
-            messages = last.messages.map { $0.toChatMessage() }
-            pendingMessages[last.id] = messages
-        }
-        print("[RuntimeViewModel] Loaded \(loaded.count) sessions from disk")
+        // Fresh start: Neuer leerer Chat statt letzte Session laden
+        // Alte Sessions bleiben in der Sidebar und können jederzeit gewechselt werden
+        // Das verhindert, dass ein langer Chat-Verlauf beim Start die UI belastet
+        print("[RuntimeViewModel] Loaded \(loaded.count) sessions from disk — starting fresh chat")
     }
     
     // MARK: - API Helpers
@@ -362,10 +372,11 @@ public class RuntimeViewModel: ObservableObject {
             print("[SSE-Client] Connecting to \(url) (delegate mode)...")
             let lines = self.sseLines(for: req)
 
-            // Start 400ms flush timer for UI updates (balanced: responsive but not too frequent)
+            // Start 1.5s flush timer for UI updates (user-requested: stability over responsiveness)
+            // SSEAccumulator still collects events in real-time, but UI only refreshes every 1.5s
             let flushTask = Task { [weak self] in
                 while !Task.isCancelled {
-                    try? await Task.sleep(nanoseconds: 400_000_000)
+                    try? await Task.sleep(nanoseconds: 1_500_000_000)
                     guard let self, !Task.isCancelled else { break }
                     let flush = await accumulator.takePendingFlush()
                     if !flush.steps.isEmpty || flush.contextPromptTokens != nil {
@@ -462,41 +473,54 @@ public class RuntimeViewModel: ObservableObject {
             await accumulator.markDone()
             let finalResult = await accumulator.takeFinalResult()
 
+            // CHUNKED UI UPDATES — spread message insertion across multiple MainActor runs
+            // with micro-pauses to prevent a single massive re-render storm
+
+            // Chunk 1: Update agent state
             await MainActor.run {
                 var state = self.sessionAgentStates[sessionId] ?? SessionAgentState()
                 state.thinkingSteps = finalResult.thinkingSteps
                 self.sessionAgentStates[sessionId] = state
+            }
 
+            // Chunk 2: Error or thinking box
+            await MainActor.run {
                 if let error = finalResult.error, !error.isEmpty {
                     self.appendMessage(ChatMessage(kind: .assistant(text: "Fehler: \(error)")), for: sessionId)
                     self.addNotification(title: "Agent-Fehler", message: String(error.prefix(100)), type: .error, navigationTarget: "chat")
-                } else {
-                    // Persist the thinking box as a permanent chat message (orange box stays visible)
-                    if !finalResult.thinkingSteps.isEmpty {
-                        self.appendMessage(ChatMessage(kind: .thinking(entries: finalResult.thinkingSteps)), for: sessionId)
+                } else if !finalResult.thinkingSteps.isEmpty {
+                    self.appendMessage(ChatMessage(kind: .thinking(entries: finalResult.thinkingSteps)), for: sessionId)
+                }
+            }
+            try? await Task.sleep(nanoseconds: 50_000_000) // 50ms pause
+
+            // Chunk 3: Final answer
+            if !finalResult.finalAnswer.isEmpty && finalResult.error == nil {
+                await MainActor.run {
+                    self.appendMessage(ChatMessage(kind: .assistant(text: finalResult.finalAnswer)), for: sessionId)
+                }
+                try? await Task.sleep(nanoseconds: 50_000_000) // 50ms pause
+            }
+
+            // Chunk 4: Interactive + embed messages (batch — usually few)
+            if !finalResult.interactiveMessages.isEmpty || !finalResult.embedMessages.isEmpty {
+                await MainActor.run {
+                    for interactive in finalResult.interactiveMessages {
+                        self.appendMessage(ChatMessage(kind: .interactive(text: interactive.text, options: interactive.options)), for: sessionId)
                     }
-                    if !finalResult.finalAnswer.isEmpty {
-                        self.appendMessage(ChatMessage(kind: .assistant(text: finalResult.finalAnswer)), for: sessionId)
+                    for embed in finalResult.embedMessages {
+                        self.appendMessage(ChatMessage(kind: .image(path: embed.path, caption: embed.caption)), for: sessionId)
                     }
                 }
+                try? await Task.sleep(nanoseconds: 50_000_000) // 50ms pause
+            }
 
-                for step in finalResult.thinkingSteps where step.type == .toolResult {
-                    self.appendMessage(ChatMessage(kind: .toolResult(name: step.toolName, success: step.success, output: step.content)), for: sessionId)
-                }
-
-                for interactive in finalResult.interactiveMessages {
-                    self.appendMessage(ChatMessage(kind: .interactive(text: interactive.text, options: interactive.options)), for: sessionId)
-                }
-
-                for embed in finalResult.embedMessages {
-                    self.appendMessage(ChatMessage(kind: .image(path: embed.path, caption: embed.caption)), for: sessionId)
-                }
-
+            // Chunk 5: Notifications + finalize
+            await MainActor.run {
                 if sessionId != self.currentSessionId && !finalResult.finalAnswer.isEmpty {
                     let preview = String(finalResult.finalAnswer.prefix(80))
                     self.addNotification(title: "Chat fertig", message: preview, type: .success, navigationTarget: "chat")
                 }
-
                 if finalResult.toolStepCount >= 5 && !finalResult.finalAnswer.isEmpty {
                     self.addNotification(
                         title: "Aufgabe abgeschlossen",
@@ -505,10 +529,8 @@ public class RuntimeViewModel: ObservableObject {
                         navigationTarget: "chat"
                     )
                 }
-
                 self.upsertCurrentSession()
                 self.streamingSessions.remove(sessionId)
-                // agentLoading is @Published — setting it auto-triggers objectWillChange (no manual send needed)
                 if sessionId == self.currentSessionId {
                     self.agentLoading = false
                 }
@@ -587,9 +609,10 @@ public class RuntimeViewModel: ObservableObject {
     // MARK: - Multi-Chat Session Isolation
 
     /// Append a message to the correct session (routes to pendingMessages for background sessions)
-    private let maxMessagesPerSession = 500
+    private let maxMessagesPerSession = 200
 
     private func appendMessage(_ message: ChatMessage, for sessionId: UUID) {
+        sessionLastAccess[sessionId] = Date()
         pendingMessages[sessionId, default: []].append(message)
         // Trim to prevent unbounded memory growth (keep last N messages)
         if pendingMessages[sessionId]!.count > maxMessagesPerSession {
@@ -604,6 +627,7 @@ public class RuntimeViewModel: ObservableObject {
     }
 
     /// Synchrones Upsert der aktuellen Session (speichert echte Messages!)
+    /// A4: Already protected by 3s debouncedSave — synchronous is fine on MainActor
     private func upsertCurrentSession() {
         // pendingMessages ist Source of Truth — sync von self.messages
         pendingMessages[currentSessionId] = messages
@@ -648,6 +672,7 @@ public class RuntimeViewModel: ObservableObject {
 
         // 2. Zu neuer Session wechseln
         currentSessionId = sessionId
+        sessionLastAccess[sessionId] = Date()
 
         // 3. Session-Agent-State initialisieren falls nicht vorhanden
         if sessionAgentStates[sessionId] == nil {
@@ -655,11 +680,16 @@ public class RuntimeViewModel: ObservableObject {
         }
 
         // 4. Messages der neuen Session laden (pendingMessages hat Vorrang, dann ChatSession)
+        //    Falls Session offloaded war (pendingMessages leer), lädt aus sessions[].messages
+        //    WICHTIG: Nur letzte 50 Messages sofort laden — der Rest ist via "Mehr laden" erreichbar
+        //    Das verhindert UI-Freeze beim Öffnen langer alter Chats
         if let pending = pendingMessages[sessionId], !pending.isEmpty {
-            messages = pending
+            messages = pending.count > 50 ? Array(pending.suffix(50)) : pending
+            // Volle Messages bleiben in pendingMessages für conversationHistory
         } else if let session = sessions.first(where: { $0.id == sessionId }), !session.messages.isEmpty {
-            messages = session.messages.map { $0.toChatMessage() }
-            pendingMessages[sessionId] = messages
+            let allMessages = session.messages.map { $0.toChatMessage() }
+            pendingMessages[sessionId] = allMessages
+            messages = allMessages.count > 50 ? Array(allMessages.suffix(50)) : allMessages
         } else {
             messages = []
             pendingMessages[sessionId] = []
@@ -682,6 +712,7 @@ public class RuntimeViewModel: ObservableObject {
         // 3. Agent State initialisieren
         sessionAgentStates[currentSessionId] = SessionAgentState()
         pendingMessages[currentSessionId] = []
+        sessionLastAccess[currentSessionId] = Date()
 
         // 4. UI aktualisieren
         messages = []
@@ -926,16 +957,29 @@ public class RuntimeViewModel: ObservableObject {
     public func clearChatHistory() {
         messages = []
         pendingMessages[currentSessionId] = []
+        sessionAgentStates[currentSessionId]?.thinkingSteps = []
+        sessionAgentStates[currentSessionId]?.messageQueue = []
+        sessionAgentStates[currentSessionId]?.checklist = []
+        // B3: Reset session metadata in sidebar
+        if let idx = sessions.firstIndex(where: { $0.id == currentSessionId }) {
+            sessions[idx].title = "Neuer Chat"
+            sessions[idx].messages = []
+            sessions[idx].createdAt = Date()
+        }
+        topics = []
+        activeTopicId = nil
+        debouncedSave()
     }
 
     public func deleteSession(_ s: ChatSession) {
         // Cancel any running stream for this session
         sessionAgentStates[s.id]?.streamTask?.cancel()
-        // Remove all in-memory state
+        // Remove ALL in-memory state (complete cleanup)
         sessions.removeAll { $0.id == s.id }
         sessionAgentStates.removeValue(forKey: s.id)
         pendingMessages.removeValue(forKey: s.id)
         streamingSessions.remove(s.id)
+        sessionLastAccess.removeValue(forKey: s.id)
         // If we deleted the currently displayed session → create fresh session
         if s.id == currentSessionId {
             currentSessionId = UUID()
@@ -966,6 +1010,110 @@ public class RuntimeViewModel: ObservableObject {
         sessionAgentStates.removeValue(forKey: sessionId)
         pendingMessages.removeValue(forKey: sessionId)
         streamingSessions.remove(sessionId)
+        sessionLastAccess.removeValue(forKey: sessionId)
+    }
+
+    // MARK: - Memory Management (Background Session Offloading)
+
+    /// Starts a periodic timer that offloads inactive background sessions from RAM.
+    /// Sessions not accessed for >2 minutes get their pendingMessages cleared.
+    /// switchToSession() automatically reloads from sessions[].messages on next access.
+    private func startSessionOffloadTimer() {
+        offloadTimer = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 60_000_000_000) // Check every 60s
+                guard !Task.isCancelled else { break }
+                await MainActor.run {
+                    self?.offloadInactiveSessions()
+                }
+            }
+        }
+    }
+
+    /// Offloads pendingMessages for sessions inactive > 2 minutes.
+    /// The data remains available via sessions[].messages (CodableMessage on disk).
+    private func offloadInactiveSessions() {
+        let now = Date()
+        let inactivityThreshold: TimeInterval = 120 // 2 min
+        var offloadedCount = 0
+
+        for (sessionId, lastAccess) in sessionLastAccess {
+            // Skip: current session, streaming sessions, already empty
+            guard sessionId != currentSessionId,
+                  !streamingSessions.contains(sessionId),
+                  now.timeIntervalSince(lastAccess) > inactivityThreshold,
+                  let pending = pendingMessages[sessionId],
+                  !pending.isEmpty else { continue }
+
+            // Sync latest messages to sessions array before clearing
+            let codableMessages = pending.map { $0.toCodable() }
+            if let idx = sessions.firstIndex(where: { $0.id == sessionId }) {
+                sessions[idx].messages = codableMessages
+            }
+
+            // Clear from RAM — switchToSession will reload from sessions[].messages
+            let count = pending.count
+            pendingMessages.removeValue(forKey: sessionId)
+
+            // Also clear thinking steps for dormant sessions
+            sessionAgentStates[sessionId]?.thinkingSteps = []
+
+            offloadedCount += 1
+            print("[MemoryManager] Offloaded session \(sessionId.uuidString.prefix(8)) — freed \(count) messages from RAM")
+        }
+
+        if offloadedCount > 0 {
+            // Persist to disk so the offloaded data is safe
+            debouncedSave()
+        }
+    }
+
+    /// Registers a macOS memory pressure handler.
+    /// On .warning or .critical: immediately offloads ALL background sessions.
+    private func setupMemoryPressureHandler() {
+        let source = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical], queue: .main)
+        source.setEventHandler { [weak self] in
+            Task { @MainActor in
+                self?.handleMemoryPressure()
+            }
+        }
+        source.resume()
+        memoryPressureSource = source
+        print("[MemoryManager] Memory pressure handler registered")
+    }
+
+    /// Emergency offload: clears ALL background session data from RAM immediately.
+    private func handleMemoryPressure() {
+        print("[MemoryManager] Memory pressure detected — emergency offload of background sessions")
+        var freed = 0
+
+        for sessionId in pendingMessages.keys {
+            guard sessionId != currentSessionId,
+                  !streamingSessions.contains(sessionId) else { continue }
+
+            // Sync to sessions array
+            if let pending = pendingMessages[sessionId], !pending.isEmpty {
+                let codableMessages = pending.map { $0.toCodable() }
+                if let idx = sessions.firstIndex(where: { $0.id == sessionId }) {
+                    sessions[idx].messages = codableMessages
+                }
+            }
+            pendingMessages.removeValue(forKey: sessionId)
+            freed += 1
+        }
+
+        // Clear thinking steps for all non-active, non-streaming sessions
+        for sessionId in sessionAgentStates.keys {
+            guard sessionId != currentSessionId,
+                  !streamingSessions.contains(sessionId) else { continue }
+            sessionAgentStates[sessionId]?.thinkingSteps = []
+            sessionAgentStates[sessionId]?.messageQueue = []
+        }
+
+        if freed > 0 {
+            saveSessionsWithRetry()
+            print("[MemoryManager] Emergency offloaded \(freed) background sessions")
+        }
     }
 
     // MARK: - Message Queue (Per-Session)
@@ -1158,11 +1306,11 @@ public struct ChatSession: Identifiable, Codable, Sendable {
     public var topicId: UUID? = nil
     public var createdAt: Date = Date()
     public var hasUnread: Bool = false
+    private static let dateFormatter: DateFormatter = {
+        let f = DateFormatter(); f.dateStyle = .short; f.timeStyle = .short; return f
+    }()
     public var formattedDate: String {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .short
-        formatter.timeStyle = .short
-        return formatter.string(from: createdAt)
+        ChatSession.dateFormatter.string(from: createdAt)
     }
 }
 
@@ -1223,9 +1371,11 @@ extension ChatMessageCodable {
 
 public struct Project: Identifiable, Codable, Sendable {
     public let id: UUID; public var name: String; public var createdAt: Date = Date()
+    private static let dateFormatter: DateFormatter = {
+        let f = DateFormatter(); f.dateStyle = .short; f.timeStyle = .short; return f
+    }()
     public var formattedDate: String {
-        let f = DateFormatter(); f.dateStyle = .short; f.timeStyle = .short
-        return f.string(from: createdAt)
+        Project.dateFormatter.string(from: createdAt)
     }
     public static func defaultProjects() -> [Project] { [Project(id: UUID(), name: "Standard-Projekt")] }
 }

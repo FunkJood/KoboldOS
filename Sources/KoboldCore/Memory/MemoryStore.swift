@@ -72,11 +72,19 @@ public actor MemoryStore {
         storageDirectory.appendingPathComponent("\(id).json")
     }
 
+    private var hasLoaded = false
+
     public init(agentID: String? = nil, sessionID: String? = nil) {
         Task { await self.loadFromDisk() }
     }
 
+    /// Ensures entries are loaded before first access (guards against init race)
+    private func ensureLoaded() {
+        if !hasLoaded { loadFromDisk() }
+    }
+
     private func loadFromDisk() {
+        guard !hasLoaded else { return }
         let fm = FileManager.default
         try? fm.createDirectory(at: storageDirectory, withIntermediateDirectories: true)
 
@@ -103,11 +111,14 @@ public actor MemoryStore {
                 return try? decoder.decode(MemoryEntry.self, from: data)
             }
             .sorted { $0.timestamp < $1.timestamp }
+        hasLoaded = true
+        print("[MemoryStore] Loaded \(localEntries.count) entries from disk")
     }
 
     // MARK: - Add
 
     public func add(text: String, memoryType: String = "kurzzeit", tags: [String] = []) async throws -> MemoryEntry {
+        ensureLoaded()
         let entry = MemoryEntry(text: text, memoryType: memoryType, tags: tags)
         localEntries.append(entry)
         try saveEntry(entry)
@@ -127,6 +138,7 @@ public actor MemoryStore {
     // MARK: - Update
 
     public func update(id: String, text: String? = nil, memoryType: String? = nil, tags: [String]? = nil) async throws -> MemoryEntry? {
+        ensureLoaded()
         guard let index = localEntries.firstIndex(where: { $0.id == id }) else { return nil }
         if let text = text { localEntries[index].text = text }
         if let memoryType = memoryType { localEntries[index].memoryType = memoryType }
@@ -148,6 +160,7 @@ public actor MemoryStore {
     // MARK: - Delete
 
     public func delete(id: String) async throws -> Bool {
+        ensureLoaded()
         let countBefore = localEntries.count
         localEntries.removeAll { $0.id == id }
         if localEntries.count < countBefore {
@@ -164,6 +177,7 @@ public actor MemoryStore {
     // MARK: - Search (TF-IDF cosine similarity — semantic-like)
 
     public func search(query: String, nResults: Int = 3) async throws -> [String] {
+        ensureLoaded()
         guard !localEntries.isEmpty else { return [] }
         let texts = localEntries.map { $0.text + " " + $0.tags.joined(separator: " ") }
         let results = VectorSearch.search(query: query, entries: texts, limit: nResults)
@@ -173,6 +187,7 @@ public actor MemoryStore {
     // MARK: - Smart Search (by query, type, and/or tags)
 
     public func smartSearch(query: String = "", type: String? = nil, tags: [String]? = nil, limit: Int = 5) async throws -> [MemoryEntry] {
+        ensureLoaded()
         var candidates = localEntries
 
         // Filter by type
@@ -205,7 +220,8 @@ public actor MemoryStore {
     // MARK: - Get All Entries
 
     public func allEntries() async -> [MemoryEntry] {
-        localEntries.sorted { $0.timestamp > $1.timestamp }
+        ensureLoaded()
+        return localEntries.sorted { $0.timestamp > $1.timestamp }
     }
 
     // MARK: - Get by Type
