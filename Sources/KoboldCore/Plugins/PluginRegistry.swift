@@ -71,7 +71,7 @@ public actor PluginRegistry {
     public func enable(_ name: String) {
         disabledPlugins.remove(name)
         errorCounts[name] = 0
-        if var info = plugins[name] {
+        if let info = plugins[name] {
             plugins[name] = PluginInfo(
                 manifest: info.manifest,
                 isEnabled: true,

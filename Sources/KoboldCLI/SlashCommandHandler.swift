@@ -28,7 +28,7 @@ struct SlashCommandHandler {
 
         case "/new":
             let session = await sessionManager.newSession()
-            try? await client.post("/history/clear", body: [:])
+            _ = try? await client.post("/history/clear", body: [:])
             print(TerminalFormatter.success("Neue Session gestartet: \(session.id)"))
             return true
 
@@ -66,7 +66,7 @@ struct SlashCommandHandler {
 
         case "/clear":
             await sessionManager.clearCurrentSession()
-            try? await client.post("/history/clear", body: [:])
+            _ = try? await client.post("/history/clear", body: [:])
             print(TerminalFormatter.success("Session geleert"))
             return true
 
@@ -225,7 +225,7 @@ struct SlashCommandHandler {
         case "/resume":
             do {
                 if let id = args.first {
-                    let result = try await client.post("/checkpoints/resume", body: ["id": id])
+                    _ = try await client.post("/checkpoints/resume", body: ["id": id])
                     print(TerminalFormatter.success("Checkpoint '\(id)' fortgesetzt"))
                 } else {
                     let result = try await client.get("/checkpoints")

@@ -1250,9 +1250,11 @@ final class RawTerminalNSView: NSView {
 
         // Cursor blink timer (600ms — slightly slower to reduce CPU, only redraws if window visible)
         cursorBlinkTimer = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: true) { [weak self] _ in
-            guard let self = self, self.window != nil, !(self.window?.isVisible == false) else { return }
-            self.cursorVisible.toggle()
-            self.renderScreen(autoScroll: false)
+            MainActor.assumeIsolated {
+                guard let self = self, self.window != nil, !(self.window?.isVisible == false) else { return }
+                self.cursorVisible.toggle()
+                self.renderScreen(autoScroll: false)
+            }
         }
     }
 

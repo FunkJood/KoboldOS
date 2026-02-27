@@ -2,7 +2,7 @@
 
 **KoboldOS** is a native macOS application that runs a self-contained AI agent system locally on your Mac. It wraps an Ollama-backed LLM in a full agent loop with tools, persistent memory, a scheduling system, and a polished SwiftUI control panel — no cloud required.
 
-**Current version: Alpha v0.3.2**
+**Current version: Alpha v0.3.3**
 
 ---
 
@@ -15,10 +15,10 @@ ollama pull llama3.2  # or any other model
 
 # 2. Build and run KoboldOS
 swift build -c release
-bash scripts/build.sh  # creates ~/Desktop/KoboldOS-0.3.16.dmg
+bash scripts/build.sh  # creates ~/Desktop/KoboldOS-0.3.3.dmg
 ```
 
-Or just open `~/Desktop/KoboldOS-0.3.16.dmg`, drag to Applications, and launch.
+Or just open `~/Desktop/KoboldOS-0.3.3.dmg`, drag to Applications, and launch.
 
 ---
 
@@ -34,7 +34,7 @@ Or just open `~/Desktop/KoboldOS-0.3.16.dmg`, drag to Applications, and launch.
 - **Speech**: Text-to-Speech (AVSpeechSynthesizer) + Speech-to-Text (whisper.cpp via SwiftWhisper)
 - **Image Generation**: Local Stable Diffusion via Apple ml-stable-diffusion (CoreML) mit Modell-Auswahl
 - **Persistent Memory**: Three-tier memory system (Kurzzeit/Langzeit/Wissen) with vector search
-- **Connections**: Google OAuth, SoundCloud, Telegram Bot, iMessage, WebApp Server, Cloudflare Tunnel, A2A Protocol
+- **Connections**: Google OAuth, SoundCloud, Telegram Bot, WebApp Server, Cloudflare Tunnel, A2A Protocol
 - **Proactive Agent**: Heartbeat-System, Idle-Tasks, Goals, System-Health-Alerts
 - **Scheduled Tasks**: Cron-based task scheduler with auto-execution + Team-Integration
 - **Workflows**: Visual workflow editor with multi-step automations + Team-Nodes
@@ -176,13 +176,11 @@ Final answers go through the `response` tool: `{"tool_name": "response", "tool_a
 
 ### Agent Types
 
-| Type | Step Limit | Rule Engine |
-|---|---|---|
-| instructor | 12 | default |
-| general | 10 | default |
-| coder | 15 | coder (allows shell/file) |
-| researcher | 20 | research (allows browser/web) |
-| planner | 8 | default |
+| Type | Description |
+|---|---|
+| general | Orchestrator agent (user-facing, routes to other agents) |
+| coder | Code-focused agent (shell/file access) |
+| web | Web-focused agent (browser/search) |
 
 ---
 
@@ -245,7 +243,7 @@ Accessible via **Einstellungen** tab (14 sections):
 - **Gedächtnis**: Memory limits, recall, auto-memorization, export/import
 - **Berechtigungen**: Autonomy level (1=safe/2=normal/3=full), individual permission toggles, Playwright + Screen Control
 - **Datenschutz & Sicherheit**: Safe mode, API keys, secrets (Keychain)
-- **Verbindungen**: Google, SoundCloud, iMessage, Telegram, WebApp, Cloudflare Tunnel, A2A Protocol
+- **Verbindungen**: Google, SoundCloud, Telegram, WebApp, Cloudflare Tunnel, A2A Protocol
 - **Sprache & Audio**: TTS (voice, rate, volume), STT (model, language), Stable Diffusion (model selection, prompts, steps, guidance)
 - **Fähigkeiten**: Skill management with enable/disable toggles
 - **Benachrichtigungen**: Notification settings

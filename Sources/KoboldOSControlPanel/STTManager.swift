@@ -1,4 +1,5 @@
 import Foundation
+import KoboldCore
 @preconcurrency import SwiftWhisper
 import AppKit
 
@@ -47,13 +48,13 @@ final class STTManager: ObservableObject {
             isModelLoaded = false
             return
         }
-        do {
-            whisper = try Whisper(fromFileURL: url)
+        whisper = Whisper(fromFileURL: url)
+        if whisper != nil {
             isModelLoaded = true
             currentModelName = size
             print("[STT] Model '\(size)' loaded")
-        } catch {
-            print("[STT] Failed to load model: \(error)")
+        } else {
+            print("[STT] Failed to load model from \(url.path)")
             isModelLoaded = false
         }
     }
@@ -130,18 +131,12 @@ final class STTManager: ObservableObject {
         defer { try? FileManager.default.removeItem(at: pcmURL) }
 
         // Try ffmpeg conversion first (handles most formats)
-        let ffmpegProcess = Process()
-        ffmpegProcess.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        ffmpegProcess.arguments = ["ffmpeg", "-i", url.path, "-ar", "16000", "-ac", "1", "-f", "wav", "-y", pcmURL.path]
-        ffmpegProcess.standardOutput = FileHandle.nullDevice
-        ffmpegProcess.standardError = FileHandle.nullDevice
-
-        do {
-            try ffmpegProcess.run()
-            ffmpegProcess.waitUntilExit()
-        } catch {
-            // ffmpeg not available — try direct WAV reading
-        }
+        // ffmpeg async mit Timeout (blockiert nicht den Main Thread)
+        _ = try? await AsyncProcess.run(
+            executable: "/usr/bin/env",
+            arguments: ["ffmpeg", "-i", url.path, "-ar", "16000", "-ac", "1", "-f", "wav", "-y", pcmURL.path],
+            timeout: 30
+        )
 
         let dataURL = FileManager.default.fileExists(atPath: pcmURL.path) ? pcmURL : url
         let data = try Data(contentsOf: dataURL)

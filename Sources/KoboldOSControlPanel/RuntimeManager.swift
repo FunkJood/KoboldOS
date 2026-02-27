@@ -28,6 +28,8 @@ class RuntimeManager: ObservableObject {
     @AppStorage("kobold.authToken") var authToken: String = "kobold-secret"
 
     private var daemonTask: Task<Void, Never>? = nil
+    /// B2: Stored reference für graceful shutdown
+    private var daemonInstance: DaemonListener?
     private var healthTimer: Timer?
     private var cancellables = Set<AnyCancellable>()
     private var didPlayBootSound = false
@@ -41,6 +43,10 @@ class RuntimeManager: ObservableObject {
         healthTimer?.invalidate()
         healthTimer = nil
         daemonTask?.cancel()
+        // B2: DaemonListener graceful stop
+        if let daemon = daemonInstance {
+            Task { await daemon.stop() }
+        }
     }
 
     var baseURL: String { "http://localhost:\(port)" }
@@ -53,8 +59,9 @@ class RuntimeManager: ObservableObject {
         let listenPort = port
         let token = authToken  // @AppStorage — same source as RuntimeViewModel
 
+        let daemon = DaemonListener(port: listenPort, authToken: token)
+        daemonInstance = daemon
         daemonTask = Task.detached(priority: .userInitiated) {
-            let daemon = DaemonListener(port: listenPort, authToken: token)
             await daemon.start()
         }
 

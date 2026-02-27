@@ -38,10 +38,9 @@ struct ChatView: View {
                     LazyVStack(alignment: .leading, spacing: 10) {
                         if viewModel.messages.isEmpty { emptyState }
 
-                        // Only render last N messages for performance
+                        // E1: Range-basiertes ForEach — kein Array-Copy bei jedem Render
                         let allMessages = viewModel.messages
                         let startIndex = max(0, allMessages.count - visibleMessageCount)
-                        let visibleMessages = Array(allMessages.suffix(visibleMessageCount))
 
                         if startIndex > 0 {
                             Button {
@@ -62,12 +61,11 @@ struct ChatView: View {
                             .id("load-more")
                         }
 
-                        // A1: Pre-compute newest thinking ID once instead of O(n) per bubble
-                        let newestThinkingId = viewModel.messages.last(where: {
-                            if case .thinking = $0.kind { return true }; return false
-                        })?.id
+                        // E2: newestThinkingId aus RuntimeViewModel (O(1) statt O(n) Suche)
+                        let newestThinkingId = viewModel.newestThinkingId
 
-                        ForEach(visibleMessages) { msg in
+                        ForEach(startIndex..<allMessages.count, id: \.self) { idx in
+                            let msg = allMessages[idx]
                             messageBubble(for: msg, newestThinkingId: newestThinkingId)
                                 .id(msg.id)
                         }

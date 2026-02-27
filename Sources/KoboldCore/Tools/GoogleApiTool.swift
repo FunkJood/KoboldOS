@@ -30,15 +30,15 @@ public struct GoogleApiTool: Tool {
         let paramsStr = arguments["params"]
         let bodyStr = arguments["body"]
 
-        // Get access token from Keychain via SecretStore
-        let store = SecretStore.shared
-        guard var accessToken = await store.get("google.access_token") else {
+        // Get access token from UserDefaults (same storage as GoogleOAuth in UI)
+        let defaults = UserDefaults.standard
+        guard var accessToken = defaults.string(forKey: "kobold.google.accessToken"), !accessToken.isEmpty else {
             return "Error: Nicht bei Google angemeldet. Bitte zuerst in den Einstellungen unter Verbindungen → Google anmelden."
         }
 
         // Check token expiry and refresh if needed
-        if let expiryStr = await store.get("google.token_expiry"),
-           let expiryInterval = Double(expiryStr) {
+        let expiryInterval = defaults.double(forKey: "kobold.google.tokenExpiry")
+        if expiryInterval > 0 {
             let expiry = Date(timeIntervalSince1970: expiryInterval)
             if expiry < Date() {
                 let refreshed = await refreshToken()
@@ -110,8 +110,8 @@ public struct GoogleApiTool: Tool {
     private let googleClientSecret = "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"
 
     private func refreshToken() async -> String? {
-        let store = SecretStore.shared
-        guard let refreshToken = await store.get("google.refresh_token") else { return nil }
+        let defaults = UserDefaults.standard
+        guard let refreshToken = defaults.string(forKey: "kobold.google.refreshToken"), !refreshToken.isEmpty else { return nil }
 
         guard let url = URL(string: "https://oauth2.googleapis.com/token") else { return nil }
         var request = URLRequest(url: url)
@@ -136,8 +136,8 @@ public struct GoogleApiTool: Tool {
             let expiresIn = json["expires_in"] as? Int ?? 3600
             let expiry = Date().addingTimeInterval(TimeInterval(expiresIn - 60))
 
-            await store.set(newToken, forKey: "google.access_token")
-            await store.set(String(expiry.timeIntervalSince1970), forKey: "google.token_expiry")
+            defaults.set(newToken, forKey: "kobold.google.accessToken")
+            defaults.set(expiry.timeIntervalSince1970, forKey: "kobold.google.tokenExpiry")
 
             return newToken
         } catch {

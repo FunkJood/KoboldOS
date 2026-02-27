@@ -202,7 +202,7 @@ struct MemoryView: View {
             guard !isLoading else { return }
             Task.detached(priority: .utility) { [weak l10n] in
                 _ = l10n // keep reference alive
-                await MainActor.run { Task { await loadEntries() } }
+                _ = await MainActor.run { Task { await loadEntries() } }
             }
         }
         .sheet(isPresented: $showAddEntry) { addEntrySheet }

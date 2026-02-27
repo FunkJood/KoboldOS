@@ -49,12 +49,12 @@ public struct ShellTool: Tool, Sendable {
     ]
 
     // ── Blocked injection patterns ──
+    // H2: \n und \r entfernt — blockierte ALLE mehrzeiligen Befehle (false positive)
     private let blockedInjection = [
         "`",        // backtick subshell
         "$(", "${", // variable/command substitution
         ":(){",     // fork bomb
         ":(){ :|: &};",
-        "\n", "\r", // newline injection
     ]
 
     // ── Blocked sensitive paths ──
@@ -72,12 +72,17 @@ public struct ShellTool: Tool, Sendable {
         "printenv", "env", "hostname", "uptime", "sw_vers",
     ]
 
-    // ── Normal tier: adds filesystem + git ──
+    // ── Normal tier: adds filesystem + git + dev tools ──
+    // H4: Erweitert um gängige Utilities (sed, awk, python3, brew, swift, etc.)
     private let normalTierAllowlist = [
         "grep", "find", "sort", "uniq", "cut", "tr",
         "mkdir", "rmdir", "touch", "cp", "mv", "ln",
         "git", "open", "pbcopy", "pbpaste",
         "xattr", "mdls", "mdfind", "ditto",
+        "sed", "awk", "python3", "pip3", "npm", "node",
+        "brew", "zip", "unzip", "tar", "curl", "wget",
+        "chmod", "chown", "xcode-select", "swift", "swiftc",
+        "xcrun", "xcodebuild", "make", "cmake",
     ]
 
     public init() {}
@@ -131,7 +136,7 @@ public struct ShellTool: Tool, Sendable {
         let workdir = arguments["workdir"] ?? NSTemporaryDirectory()
         let timeoutStr = arguments["timeout"] ?? "30"
         let hardCap = Double(UserDefaults.standard.integer(forKey: "kobold.shell.timeout"))
-        let maxTimeout = hardCap > 0 ? hardCap : 300.0
+        let maxTimeout = hardCap > 0 ? hardCap : 60.0
         let timeout = min(Double(timeoutStr) ?? 60.0, maxTimeout)
 
         try validateCommand(command)
@@ -190,11 +195,14 @@ public struct ShellTool: Tool, Sendable {
             return
         }
 
-        // For safe/normal tiers, also block shell operators (pipes, redirects, chaining)
-        let restrictedOperators = ["&&", "||", ";;", "|", ">", ">>", "<", "<<", ";"]
-        for op in restrictedOperators {
-            if command.contains(op) {
-                throw ToolError.unauthorized("Operator '\(op)' requires Power-Tier")
+        // H3: Operatoren nur in Safe-Tier blockiert (vorher: auch Normal-Tier)
+        // Normal-Tier braucht Pipes/Redirects für praktische Aufgaben (grep | sort, echo > file)
+        if autonomyLevel < 2 {
+            let restrictedOperators = ["&&", "||", ";;", "|", ">", ">>", "<", "<<", ";"]
+            for op in restrictedOperators {
+                if command.contains(op) {
+                    throw ToolError.unauthorized("Operator '\(op)' requires Normal or Power-Tier")
+                }
             }
         }
 

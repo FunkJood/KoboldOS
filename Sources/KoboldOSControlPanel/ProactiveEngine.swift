@@ -422,7 +422,7 @@ class ProactiveEngine: ObservableObject {
         if let userTask = getNextUserIdleTask() {
             heartbeatStatus = "Führt aus: \(userTask.name)"
             addHeartbeatLog(status: "Idle-Aufgabe", action: userTask.name)
-            viewModel.sendMessage(userTask.prompt)
+            viewModel.executeTask(taskId: "idle-\(userTask.id)", taskName: userTask.name, prompt: userTask.prompt, navigate: false)
             markIdleTaskRun(userTask.id)
             idleTasksCompleted += 1
             idleExecutionsThisHour += 1
@@ -434,7 +434,7 @@ class ProactiveEngine: ObservableObject {
         if let task = autoTasks.first {
             heartbeatStatus = "Führt aus: \(task.title)"
             addHeartbeatLog(status: "Auto-Aufgabe", action: task.title)
-            viewModel.sendMessage(task.action)
+            viewModel.executeTask(taskId: "auto-\(task.id)", taskName: task.title, prompt: task.action, navigate: false)
             idleTasksCompleted += 1
             idleExecutionsThisHour += 1
         } else {

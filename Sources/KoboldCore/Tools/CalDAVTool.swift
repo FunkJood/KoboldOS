@@ -102,28 +102,16 @@ public struct CalDAVTool: Tool {
             args += ["-d", body]
         }
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
-        process.arguments = Array(args.dropFirst())
-
-        let stdout = Pipe()
-        let stderr = Pipe()
-        process.standardOutput = stdout
-        process.standardError = stderr
-
         do {
-            try process.run()
-            process.waitUntilExit()
-
-            let outData = stdout.fileHandleForReading.readDataToEndOfFile()
-            let errData = stderr.fileHandleForReading.readDataToEndOfFile()
-            let outStr = String(data: outData, encoding: .utf8) ?? ""
-            let errStr = String(data: errData, encoding: .utf8) ?? ""
-
-            if process.terminationStatus != 0 {
-                return "Error: CalDAV-Anfrage fehlgeschlagen: \(errStr.isEmpty ? outStr : errStr)"
+            let result = try await AsyncProcess.run(
+                executable: "/usr/bin/curl",
+                arguments: Array(args.dropFirst()),
+                timeout: 30
+            )
+            if result.exitCode != 0 {
+                return "Error: CalDAV-Anfrage fehlgeschlagen: \(result.stderr.isEmpty ? result.stdout : result.stderr)"
             }
-            return outStr
+            return result.stdout
         } catch {
             return "Error: \(error.localizedDescription)"
         }

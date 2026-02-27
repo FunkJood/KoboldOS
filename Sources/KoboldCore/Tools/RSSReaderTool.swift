@@ -165,7 +165,7 @@ private class RSSParser: NSObject, XMLParserDelegate {
             // Atom feeds use <link href="..."/>
             if isInItem, let href = attributes["href"] {
                 currentItem?.link = href
-            } else if !isInItem, let href = attributes["href"] {
+            } else if !isInItem, let _ = attributes["href"] {
                 // Feed-level link, ignore
             }
         default: break

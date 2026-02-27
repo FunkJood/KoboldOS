@@ -92,18 +92,10 @@ public struct MQTTTool: Tool {
 
         let args = buildMosquittoArgs(config: config, extra: ["-t", topic, "-m", message, "-q", qos])
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: path)
-        process.arguments = args
-        let stderr = Pipe()
-        process.standardError = stderr
-
         do {
-            try process.run()
-            process.waitUntilExit()
-            if process.terminationStatus != 0 {
-                let err = String(data: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-                return "Error: mosquitto_pub fehlgeschlagen: \(err)"
+            let result = try await AsyncProcess.run(executable: path, arguments: args, timeout: 15)
+            if result.exitCode != 0 {
+                return "Error: mosquitto_pub fehlgeschlagen: \(result.stderr)"
             }
             return "MQTT Nachricht publiziert: \(topic) → \(message)"
         } catch {
@@ -119,25 +111,14 @@ public struct MQTTTool: Tool {
 
         let args = buildMosquittoArgs(config: config, extra: ["-t", topic, "-C", count, "-W", timeout, "-v"])
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: path)
-        process.arguments = args
-        let stdout = Pipe()
-        let stderr = Pipe()
-        process.standardOutput = stdout
-        process.standardError = stderr
-
         do {
-            try process.run()
-            process.waitUntilExit()
+            let timeoutSec = TimeInterval(Int(timeout) ?? 10) + 5
+            let result = try await AsyncProcess.run(executable: path, arguments: args, timeout: timeoutSec)
 
-            let outData = stdout.fileHandleForReading.readDataToEndOfFile()
-            let outStr = String(data: outData, encoding: .utf8) ?? ""
-
-            if outStr.isEmpty {
+            if result.stdout.isEmpty {
                 return "Keine Nachrichten empfangen innerhalb von \(timeout)s auf Topic '\(topic)'."
             }
-            return "MQTT Empfangen:\n\(outStr)"
+            return "MQTT Empfangen:\n\(result.stdout)"
         } catch {
             return "Error: \(error.localizedDescription)"
         }

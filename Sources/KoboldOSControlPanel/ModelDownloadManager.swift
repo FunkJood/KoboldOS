@@ -1,5 +1,6 @@
 import SwiftUI
 import Foundation
+import KoboldCore
 
 // MARK: - ModelDownloadManager
 // Handles downloading AI models from HuggingFace and Ollama
@@ -220,20 +221,13 @@ class ModelDownloadManager: ObservableObject {
     private func isOllamaModelInstalled(_ model: String) async -> Bool {
         guard let ollama = findOllama() else { return false }
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: ollama)
-        process.arguments = ["list"]
-
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
-
         do {
-            try process.run()
-            process.waitUntilExit()
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            let output = String(data: data, encoding: .utf8) ?? ""
-            return output.contains(model.components(separatedBy: ":").first ?? model)
+            let result = try await AsyncProcess.run(
+                executable: ollama,
+                arguments: ["list"],
+                timeout: 15
+            )
+            return result.stdout.contains(model.components(separatedBy: ":").first ?? model)
         } catch {
             return false
         }

@@ -98,7 +98,7 @@ final class WebAppServer: @unchecked Sendable {
     }
 
     /// Install cloudflared via brew
-    static func installCloudflared(completion: @escaping (Bool) -> Void) {
+    static func installCloudflared(completion: @escaping @Sendable (Bool) -> Void) {
         DispatchQueue.global().async {
             // Find brew binary (not in PATH when launched from GUI app)
             let brewPaths = ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"]

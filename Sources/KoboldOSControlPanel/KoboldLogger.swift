@@ -1,38 +1,71 @@
 import Foundation
 
-/// File-based diagnostic logger for freeze/crash investigation.
-/// Writes to ~/Library/Application Support/KoboldOS/kobold_debug.log
-/// Previous log preserved as kobold_debug.prev.log
-/// Read with: cat ~/Library/Application\ Support/KoboldOS/kobold_debug.log
+/// G1: Konsolidiertes Logging-System in ~/Library/Application Support/KoboldOS/logs/
+/// Alle Logs (debug, crash, tools, build, performance) in einem Ordner.
+/// Shorthand-Funktionen: klog(), kcrit(), ktool(), kbuild(), kperf()
 final class KoboldLogger: @unchecked Sendable {
-    static nonisolated(unsafe) let shared = KoboldLogger()
+    static let shared = KoboldLogger()
 
     private let queue = DispatchQueue(label: "kobold.logger", qos: .utility)
-    private let fileHandle: FileHandle?
-    private let logURL: URL
-    private let prevLogURL: URL
-    private let crashLogURL: URL
-    let logDir: URL
+    private let debugHandle: FileHandle?
+    private let toolsHandle: FileHandle?
+    private let buildHandle: FileHandle?
+    private let perfHandle: FileHandle?
+
+    private let debugURL: URL
+    private let prevDebugURL: URL
+    private let crashURL: URL
+    private let toolsURL: URL
+    private let buildURL: URL
+    private let perfURL: URL
+
+    let logDir: URL       // ~/Library/Application Support/KoboldOS/logs/
+    let baseDir: URL      // ~/Library/Application Support/KoboldOS/
+
     private let startTime = Date()
     private let maxLogSize: UInt64 = 20_000_000  // 20MB max before rotation
 
     private init() {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        logDir = appSupport.appendingPathComponent("KoboldOS")
+        baseDir = appSupport.appendingPathComponent("KoboldOS")
+        logDir = baseDir.appendingPathComponent("logs")
         try? FileManager.default.createDirectory(at: logDir, withIntermediateDirectories: true)
-        logURL = logDir.appendingPathComponent("kobold_debug.log")
-        prevLogURL = logDir.appendingPathComponent("kobold_debug.prev.log")
-        crashLogURL = logDir.appendingPathComponent("kobold_crash.log")
 
-        // Rotate: preserve previous log before truncating
-        if FileManager.default.fileExists(atPath: logURL.path) {
-            try? FileManager.default.removeItem(at: prevLogURL)
-            try? FileManager.default.moveItem(at: logURL, to: prevLogURL)
+        // G1: Migration — alte Logs aus Hauptordner in logs/ verschieben (einmalig)
+        KoboldLogger.migrateOldLogs(baseDir: baseDir, logDir: logDir)
+
+        // Log-Dateien
+        debugURL = logDir.appendingPathComponent("debug.log")
+        prevDebugURL = logDir.appendingPathComponent("debug.prev.log")
+        crashURL = logDir.appendingPathComponent("crash.log")
+        toolsURL = logDir.appendingPathComponent("tools.log")
+        buildURL = logDir.appendingPathComponent("build.log")
+        perfURL = logDir.appendingPathComponent("performance.log")
+
+        // Rotate debug log: preserve previous
+        if FileManager.default.fileExists(atPath: debugURL.path) {
+            try? FileManager.default.removeItem(at: prevDebugURL)
+            try? FileManager.default.moveItem(at: debugURL, to: prevDebugURL)
         }
-        FileManager.default.createFile(atPath: logURL.path, contents: nil)
-        fileHandle = try? FileHandle(forWritingTo: logURL)
-        fileHandle?.seekToEndOfFile()
 
+        // Create/open all log files
+        func openLog(_ url: URL) -> FileHandle? {
+            if !FileManager.default.fileExists(atPath: url.path) {
+                FileManager.default.createFile(atPath: url.path, contents: nil)
+            }
+            let handle = try? FileHandle(forWritingTo: url)
+            handle?.seekToEndOfFile()
+            return handle
+        }
+
+        FileManager.default.createFile(atPath: debugURL.path, contents: nil)
+        debugHandle = try? FileHandle(forWritingTo: debugURL)
+        debugHandle?.seekToEndOfFile()
+        toolsHandle = openLog(toolsURL)
+        buildHandle = openLog(buildURL)
+        perfHandle = openLog(perfURL)
+
+        // Header für debug.log
         let header = """
         === KoboldOS Debug Log ===
         Started: \(ISO8601DateFormatter().string(from: Date()))
@@ -41,18 +74,36 @@ final class KoboldLogger: @unchecked Sendable {
         Build: \(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "unknown")
         macOS: \(ProcessInfo.processInfo.operatingSystemVersionString)
         Memory: \(ProcessInfo.processInfo.physicalMemory / 1_073_741_824)GB
+        LogDir: \(logDir.path)
         ================================
 
         """
         if let data = header.data(using: .utf8) {
-            fileHandle?.write(data)
+            debugHandle?.write(data)
         }
 
-        // Install crash/signal handlers
         installCrashHandlers()
     }
 
-    // MARK: - Logging Methods
+    // MARK: - Migration (einmalig)
+
+    private static func migrateOldLogs(baseDir: URL, logDir: URL) {
+        let migrations: [(String, String)] = [
+            ("kobold_debug.log", "debug.log"),
+            ("kobold_debug.prev.log", "debug.prev.log"),
+            ("kobold_crash.log", "crash.log"),
+            ("daemon.log", "daemon.log"),
+        ]
+        for (old, new) in migrations {
+            let oldURL = baseDir.appendingPathComponent(old)
+            let newURL = logDir.appendingPathComponent(new)
+            if FileManager.default.fileExists(atPath: oldURL.path) && !FileManager.default.fileExists(atPath: newURL.path) {
+                try? FileManager.default.moveItem(at: oldURL, to: newURL)
+            }
+        }
+    }
+
+    // MARK: - Debug Logging
 
     func log(_ message: String, file: String = #file, line: Int = #line) {
         let elapsed = String(format: "%.3f", Date().timeIntervalSince(startTime))
@@ -61,27 +112,26 @@ final class KoboldLogger: @unchecked Sendable {
         queue.async { [weak self] in
             guard let self = self else { return }
             if let data = entry.data(using: .utf8) {
-                self.fileHandle?.write(data)
+                self.debugHandle?.write(data)
             }
-            self.checkRotation()
+            self.checkRotation(handle: self.debugHandle, url: self.debugURL)
         }
     }
 
     /// Log with forced flush (for right before potential crash/freeze)
-    /// Uses async dispatch to avoid blocking the calling thread (especially MainActor).
     func critical(_ message: String, file: String = #file, line: Int = #line) {
         let elapsed = String(format: "%.3f", Date().timeIntervalSince(startTime))
         let fileName = (file as NSString).lastPathComponent
         let entry = "⚠️ CRIT [\(elapsed)s] [\(fileName):\(line)] \(message)\n"
         queue.async { [weak self] in
             if let data = entry.data(using: .utf8) {
-                self?.fileHandle?.write(data)
-                self?.fileHandle?.synchronizeFile()
+                self?.debugHandle?.write(data)
+                self?.debugHandle?.synchronizeFile()
             }
         }
     }
 
-    /// Log session lifecycle events with structured data
+    /// Log session lifecycle events
     func session(_ event: String, sessionId: UUID, extra: [String: Any] = [:], file: String = #file, line: Int = #line) {
         let id = sessionId.uuidString.prefix(8)
         let extraStr = extra.isEmpty ? "" : " " + extra.map { "\($0.key)=\($0.value)" }.joined(separator: " ")
@@ -95,38 +145,87 @@ final class KoboldLogger: @unchecked Sendable {
         log("AGENT[\(id)] \(event)\(extraStr)", file: file, line: line)
     }
 
-    // MARK: - Log Reading (for diagnostics)
+    // MARK: - Tool Logging (G2)
 
-    /// Read the current log contents (last N lines)
+    /// Log tool executions with name, duration, success, input/output
+    func tool(_ message: String, file: String = #file, line: Int = #line) {
+        let timestamp = ISO8601DateFormatter().string(from: Date())
+        let entry = "[\(timestamp)] \(message)\n"
+        queue.async { [weak self] in
+            guard let self else { return }
+            if let data = entry.data(using: .utf8) {
+                self.toolsHandle?.write(data)
+            }
+            self.checkRotation(handle: self.toolsHandle, url: self.toolsURL)
+        }
+        // Auch ins Debug-Log (kürzer)
+        log("TOOL \(String(message.prefix(200)))", file: file, line: line)
+    }
+
+    // MARK: - Build Logging (G3)
+
+    /// Log build/compile output
+    func build(_ message: String, file: String = #file, line: Int = #line) {
+        let timestamp = ISO8601DateFormatter().string(from: Date())
+        let entry = "[\(timestamp)] \(message)\n"
+        queue.async { [weak self] in
+            guard let self else { return }
+            if let data = entry.data(using: .utf8) {
+                self.buildHandle?.write(data)
+            }
+            self.checkRotation(handle: self.buildHandle, url: self.buildURL)
+        }
+        log("BUILD \(String(message.prefix(200)))", file: file, line: line)
+    }
+
+    // MARK: - Performance Logging (G4)
+
+    /// Log performance/freeze diagnostics (only when kobold.debug.perfLog is enabled)
+    func perf(_ message: String, file: String = #file, line: Int = #line) {
+        let elapsed = String(format: "%.3f", Date().timeIntervalSince(startTime))
+        let entry = "[\(elapsed)s] \(message)\n"
+        queue.async { [weak self] in
+            guard let self else { return }
+            if let data = entry.data(using: .utf8) {
+                self.perfHandle?.write(data)
+            }
+            self.checkRotation(handle: self.perfHandle, url: self.perfURL)
+        }
+    }
+
+    // MARK: - Log Reading
+
     func readLog(lastLines: Int = 200) -> String {
-        guard let data = try? Data(contentsOf: logURL),
-              let content = String(data: data, encoding: .utf8) else { return "[Log leer]" }
-        let lines = content.components(separatedBy: "\n")
-        let tail = lines.suffix(lastLines)
-        return tail.joined(separator: "\n")
+        readFile(debugURL, lastLines: lastLines, fallback: "[Log leer]")
     }
 
-    /// Read the previous session's log
     func readPrevLog(lastLines: Int = 200) -> String {
-        guard let data = try? Data(contentsOf: prevLogURL),
-              let content = String(data: data, encoding: .utf8) else { return "[Kein vorheriges Log]" }
-        let lines = content.components(separatedBy: "\n")
-        let tail = lines.suffix(lastLines)
-        return tail.joined(separator: "\n")
+        readFile(prevDebugURL, lastLines: lastLines, fallback: "[Kein vorheriges Log]")
     }
 
-    /// Read crash log if it exists
     func readCrashLog() -> String {
-        guard let data = try? Data(contentsOf: crashLogURL),
+        guard let data = try? Data(contentsOf: crashURL),
               let content = String(data: data, encoding: .utf8) else { return "[Kein Crash-Log]" }
         return content
     }
 
-    /// Get a diagnostic summary combining all logs
+    func readToolsLog(lastLines: Int = 100) -> String {
+        readFile(toolsURL, lastLines: lastLines, fallback: "[Kein Tool-Log]")
+    }
+
+    func readBuildLog(lastLines: Int = 100) -> String {
+        readFile(buildURL, lastLines: lastLines, fallback: "[Kein Build-Log]")
+    }
+
+    func readPerfLog(lastLines: Int = 100) -> String {
+        readFile(perfURL, lastLines: lastLines, fallback: "[Kein Performance-Log]")
+    }
+
     func diagnosticSummary() -> String {
         var summary = "=== KoboldOS Diagnostic Summary ===\n"
         summary += "Generated: \(ISO8601DateFormatter().string(from: Date()))\n"
-        summary += "Uptime: \(String(format: "%.1f", Date().timeIntervalSince(startTime)))s\n\n"
+        summary += "Uptime: \(String(format: "%.1f", Date().timeIntervalSince(startTime)))s\n"
+        summary += "LogDir: \(logDir.path)\n\n"
 
         let crash = readCrashLog()
         if crash != "[Kein Crash-Log]" {
@@ -138,30 +237,37 @@ final class KoboldLogger: @unchecked Sendable {
             summary += "--- PREVIOUS SESSION (last 50 lines) ---\n\(prev)\n\n"
         }
 
-        summary += "--- CURRENT SESSION (last 100 lines) ---\n\(readLog(lastLines: 100))\n"
+        summary += "--- CURRENT SESSION (last 100 lines) ---\n\(readLog(lastLines: 100))\n\n"
+        summary += "--- TOOLS (last 50 lines) ---\n\(readToolsLog(lastLines: 50))\n\n"
+        summary += "--- BUILD (last 50 lines) ---\n\(readBuildLog(lastLines: 50))\n"
         return summary
     }
 
-    var logPath: String { logURL.path }
+    var logPath: String { debugURL.path }
 
-    // MARK: - Rotation
+    // MARK: - Helpers
 
-    private func checkRotation() {
-        guard let attrs = try? FileManager.default.attributesOfItem(atPath: logURL.path),
+    private func readFile(_ url: URL, lastLines: Int, fallback: String) -> String {
+        guard let data = try? Data(contentsOf: url),
+              let content = String(data: data, encoding: .utf8) else { return fallback }
+        let lines = content.components(separatedBy: "\n")
+        return lines.suffix(lastLines).joined(separator: "\n")
+    }
+
+    private func checkRotation(handle: FileHandle?, url: URL) {
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
               let size = attrs[.size] as? UInt64,
               size > maxLogSize else { return }
-        // Truncate to last 2MB
-        if let data = try? Data(contentsOf: logURL) {
+        if let data = try? Data(contentsOf: url) {
             let keep = data.suffix(2_000_000)
-            try? keep.write(to: logURL, options: .atomic)
-            fileHandle?.seekToEndOfFile()
+            try? keep.write(to: url, options: .atomic)
+            handle?.seekToEndOfFile()
         }
     }
 
     // MARK: - Crash Handlers
 
     private func installCrashHandlers() {
-        // Write crash marker on uncaught exceptions
         NSSetUncaughtExceptionHandler { exception in
             let msg = """
             === UNCAUGHT EXCEPTION ===
@@ -170,12 +276,11 @@ final class KoboldLogger: @unchecked Sendable {
             Reason: \(exception.reason ?? "unknown")
             Stack: \(exception.callStackSymbols.prefix(20).joined(separator: "\n"))
             """
-            let crashURL = KoboldLogger.shared.crashLogURL
+            let crashURL = KoboldLogger.shared.logDir.appendingPathComponent("crash.log")
             try? msg.data(using: .utf8)?.write(to: crashURL, options: .atomic)
             KoboldLogger.shared.critical("CRASH: \(exception.name.rawValue) — \(exception.reason ?? "?")")
         }
 
-        // Signal handlers for SIGABRT, SIGSEGV, SIGBUS
         for sig: Int32 in [SIGABRT, SIGSEGV, SIGBUS, SIGFPE, SIGILL] {
             signal(sig) { signum in
                 let sigName: String
@@ -193,9 +298,8 @@ final class KoboldLogger: @unchecked Sendable {
                 Signal: \(sigName) (\(signum))
                 PID: \(ProcessInfo.processInfo.processIdentifier)
                 """
-                let crashURL = KoboldLogger.shared.logDir.appendingPathComponent("kobold_crash.log")
+                let crashURL = KoboldLogger.shared.logDir.appendingPathComponent("crash.log")
                 try? msg.data(using: .utf8)?.write(to: crashURL, options: .atomic)
-                // Re-raise to get default behavior (core dump etc.)
                 signal(signum, SIG_DFL)
                 raise(signum)
             }
@@ -203,11 +307,15 @@ final class KoboldLogger: @unchecked Sendable {
     }
 
     deinit {
-        fileHandle?.closeFile()
+        debugHandle?.closeFile()
+        toolsHandle?.closeFile()
+        buildHandle?.closeFile()
+        perfHandle?.closeFile()
     }
 }
 
-/// Shorthand
+// MARK: - Shorthand Functions
+
 func klog(_ msg: String, file: String = #file, line: Int = #line) {
     KoboldLogger.shared.log(msg, file: file, line: line)
 }
@@ -219,4 +327,13 @@ func ksession(_ event: String, _ sessionId: UUID, _ extra: [String: Any] = [:], 
 }
 func kagent(_ event: String, _ sessionId: UUID, _ extra: [String: Any] = [:], file: String = #file, line: Int = #line) {
     KoboldLogger.shared.agent(event, sessionId: sessionId, extra: extra, file: file, line: line)
+}
+func ktool(_ msg: String, file: String = #file, line: Int = #line) {
+    KoboldLogger.shared.tool(msg, file: file, line: line)
+}
+func kbuild(_ msg: String, file: String = #file, line: Int = #line) {
+    KoboldLogger.shared.build(msg, file: file, line: line)
+}
+func kperf(_ msg: String, file: String = #file, line: Int = #line) {
+    KoboldLogger.shared.perf(msg, file: file, line: line)
 }

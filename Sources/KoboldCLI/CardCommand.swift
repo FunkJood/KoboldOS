@@ -16,7 +16,7 @@ private struct CardShow: AsyncParsableCommand {
     @Option(name: .long, help: "Daemon port") var port: Int = 8080
 
     mutating func run() async throws {
-        let client = DaemonClient(port: port, token: "")
+        _ = DaemonClient(port: port, token: "")
         // Agent card is public (no auth needed), use direct URL fetch
         guard let url = URL(string: "http://localhost:\(port)/.well-known/agent.json") else { return }
         var req = URLRequest(url: url)

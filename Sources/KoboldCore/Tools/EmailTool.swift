@@ -110,6 +110,7 @@ public struct EmailTool: Tool {
         let smtpURL = "smtp\(config.useTLS ? "s" : "")://\(config.smtpHost):\(config.smtpPort)"
         let args = [
             "/usr/bin/curl", "--silent", "--show-error",
+            "--max-time", "15", "--connect-timeout", "5",
             "--url", smtpURL,
             "--ssl-reqd",
             "--mail-from", config.email,
@@ -127,6 +128,7 @@ public struct EmailTool: Tool {
         let imapURL = "imaps://\(config.imapHost):\(config.imapPort)/INBOX"
         let args = [
             "/usr/bin/curl", "--silent", "--show-error",
+            "--max-time", "15", "--connect-timeout", "5",
             "--url", "\(imapURL);MAILINDEX=1:\(limit)",
             "--user", "\(config.email):\(config.password)",
             "-X", "FETCH 1:\(limit) (FLAGS BODY[HEADER.FIELDS (FROM SUBJECT DATE)])"
@@ -142,6 +144,7 @@ public struct EmailTool: Tool {
         let imapURL = "imaps://\(config.imapHost):\(config.imapPort)/INBOX;UID=\(uid)"
         let args = [
             "/usr/bin/curl", "--silent", "--show-error",
+            "--max-time", "15", "--connect-timeout", "5",
             "--url", imapURL,
             "--user", "\(config.email):\(config.password)"
         ]
@@ -155,6 +158,7 @@ public struct EmailTool: Tool {
         let imapURL = "imaps://\(config.imapHost):\(config.imapPort)/INBOX"
         let args = [
             "/usr/bin/curl", "--silent", "--show-error",
+            "--max-time", "15", "--connect-timeout", "5",
             "--url", imapURL,
             "--user", "\(config.email):\(config.password)",
             "-X", "SEARCH SUBJECT \"\(query)\""
@@ -169,29 +173,18 @@ public struct EmailTool: Tool {
     // MARK: - Process Helper
 
     private func runProcess(args: [String], successMessage: String?) async -> String {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: args[0])
-        process.arguments = Array(args.dropFirst())
-
-        let stdout = Pipe()
-        let stderr = Pipe()
-        process.standardOutput = stdout
-        process.standardError = stderr
-
         do {
-            try process.run()
-            process.waitUntilExit()
-
-            let outData = stdout.fileHandleForReading.readDataToEndOfFile()
-            let errData = stderr.fileHandleForReading.readDataToEndOfFile()
-            let outStr = String(data: outData, encoding: .utf8) ?? ""
-            let errStr = String(data: errData, encoding: .utf8) ?? ""
-
-            if process.terminationStatus != 0 {
-                return "Error: curl fehlgeschlagen (\(process.terminationStatus)): \(errStr.isEmpty ? outStr : errStr)"
+            let result = try await AsyncProcess.run(
+                executable: args[0],
+                arguments: Array(args.dropFirst()),
+                timeout: 30
+            )
+            if result.exitCode != 0 {
+                return "Error: curl fehlgeschlagen (\(result.exitCode)): \(result.stderr.isEmpty ? result.stdout : result.stderr)"
             }
-
-            return successMessage ?? outStr
+            return successMessage ?? result.stdout
+        } catch is ToolError {
+            return "Error: Timeout — curl hat nicht rechtzeitig geantwortet"
         } catch {
             return "Error: \(error.localizedDescription)"
         }

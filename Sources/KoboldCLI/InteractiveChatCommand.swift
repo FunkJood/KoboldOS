@@ -86,7 +86,7 @@ struct InteractiveChatCommand: AsyncParsableCommand {
         }
 
         // Setup Ctrl+C handler
-        var streamCancelled = false
+        // streamCancelled reserved for future SIGINT handling
         signal(SIGINT) { _ in
             // Will be handled in the loop
         }

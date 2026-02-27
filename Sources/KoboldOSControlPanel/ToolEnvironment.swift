@@ -203,13 +203,13 @@ final class ToolEnvironment: ObservableObject {
         let extractDir = FileManager.default.temporaryDirectory.appendingPathComponent("python-extract-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: extractDir, withIntermediateDirectories: true)
 
-        let tar = Process()
-        tar.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
-        tar.arguments = ["xzf", tempURL.path, "-C", extractDir.path]
-        try tar.run()
-        tar.waitUntilExit()
+        let tarResult = try await AsyncProcess.run(
+            executable: "/usr/bin/tar",
+            arguments: ["xzf", tempURL.path, "-C", extractDir.path],
+            timeout: 120
+        )
 
-        guard tar.terminationStatus == 0 else {
+        guard tarResult.exitCode == 0 else {
             pythonDownloadProgress = nil
             throw ToolError.executionFailed("Python konnte nicht entpackt werden")
         }

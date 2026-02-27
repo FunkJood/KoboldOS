@@ -879,7 +879,7 @@ struct SettingsView: View {
                            binding: $permContacts)
                 Divider()
                 permToggle("Mail & Nachrichten",
-                           detail: "Emails lesen/senden, iMessage lesen/senden via AppleScript",
+                           detail: "Emails lesen/senden via AppleScript",
                            icon: "envelope.fill", color: .blue,
                            binding: $permMail)
                 Divider()
@@ -1344,7 +1344,7 @@ struct SettingsView: View {
 
     // MARK: - Verbindungen
 
-    @State private var iMessageAvailable: Bool = false
+    // iMessage removed — Telegram is the stable messaging integration
 
     // MARK: - Weather Settings
 
@@ -1393,7 +1393,7 @@ struct SettingsView: View {
             Picker("Kanal", selection: $notifyChannel) {
                 Text("Nur System (macOS)").tag("system")
                 Text("System + Telegram").tag("telegram")
-                Text("System + iMessage").tag("imessage")
+                // iMessage removed — use Telegram
             }
             .pickerStyle(.radioGroup)
 
@@ -1404,13 +1404,7 @@ struct SettingsView: View {
                         .font(.caption).foregroundColor(.secondary)
                 }
             }
-            if notifyChannel == "imessage" {
-                HStack(spacing: 6) {
-                    Image(systemName: "message.fill").foregroundColor(.green)
-                    Text("iMessage sendet an deine Apple-ID.")
-                        .font(.caption).foregroundColor(.secondary)
-                }
-            }
+            // iMessage notification channel removed
         }
     }
 
@@ -1659,7 +1653,9 @@ struct SettingsView: View {
         private func startFetching() {
             fetchDaemonLogs()
             logFetchTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { _ in
-                fetchDaemonLogs()
+                MainActor.assumeIsolated {
+                    fetchDaemonLogs()
+                }
             }
         }
 
@@ -1748,11 +1744,8 @@ struct SettingsView: View {
             soundCloudOAuthSection()
         }
 
-        // Row 2: iMessage + Telegram
-        HStack(alignment: .top, spacing: 12) {
-            iMessageSection()
-            telegramSection()
-        }
+        // Row 2: Telegram (full width)
+        telegramSection()
 
         // Row 3: WebApp-Server + Cloudflare Tunnel
         HStack(alignment: .top, spacing: 12) {
@@ -2111,18 +2104,7 @@ struct SettingsView: View {
         }
     }
 
-    private var brandLogoIMessage: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 8)
-                .fill(
-                    LinearGradient(colors: [Color(red: 0.208, green: 0.824, blue: 0.341), Color(red: 0.118, green: 0.706, blue: 0.267)],
-                                   startPoint: .top, endPoint: .bottom)
-                )
-            Image(systemName: "message.fill")
-                .font(.system(size: 18.5, weight: .semibold))
-                .foregroundColor(.white)
-        }
-    }
+    // brandLogoIMessage removed — iMessage integration removed
 
     var brandLogoGitHub: some View {
         ZStack {
@@ -2356,22 +2338,24 @@ struct SettingsView: View {
                         pullOutput = ""
                         let modelToPull = embeddingModel
                         Task.detached {
-                            let process = Process()
-                            process.executableURL = URL(fileURLWithPath: "/usr/local/bin/ollama")
-                            if !FileManager.default.fileExists(atPath: "/usr/local/bin/ollama") {
-                                process.executableURL = URL(fileURLWithPath: "/opt/homebrew/bin/ollama")
-                            }
-                            process.arguments = ["pull", modelToPull]
-                            let pipe = Pipe()
-                            process.standardOutput = pipe
-                            process.standardError = pipe
-                            try? process.run()
-                            process.waitUntilExit()
-                            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                            let out = String(data: data, encoding: .utf8) ?? ""
-                            await MainActor.run {
-                                pullOutput = out
-                                isPullingEmbeddingModel = false
+                            let ollama = FileManager.default.fileExists(atPath: "/usr/local/bin/ollama")
+                                ? "/usr/local/bin/ollama" : "/opt/homebrew/bin/ollama"
+                            do {
+                                let result = try await AsyncProcess.run(
+                                    executable: ollama,
+                                    arguments: ["pull", modelToPull],
+                                    timeout: 600 // Model-Downloads brauchen Zeit
+                                )
+                                let out = result.stdout.isEmpty ? result.stderr : result.stdout
+                                await MainActor.run {
+                                    pullOutput = out
+                                    isPullingEmbeddingModel = false
+                                }
+                            } catch {
+                                await MainActor.run {
+                                    pullOutput = "Fehler: \(error.localizedDescription)"
+                                    isPullingEmbeddingModel = false
+                                }
                             }
                         }
                     }
@@ -3002,6 +2986,10 @@ struct SettingsView: View {
             googleConnected = GoogleOAuth.shared.isConnected
             googleEmail = GoogleOAuth.shared.userEmail
         }
+        .onReceive(Timer.publish(every: 5, on: .main, in: .common).autoconnect()) { _ in
+            googleConnected = GoogleOAuth.shared.isConnected
+            googleEmail = GoogleOAuth.shared.userEmail
+        }
     }
 
     // MARK: - Google Scope Selection
@@ -3096,102 +3084,13 @@ struct SettingsView: View {
             soundCloudConnected = SoundCloudOAuth.shared.isConnected
             soundCloudUser = SoundCloudOAuth.shared.userName
         }
-        .onReceive(Timer.publish(every: 2, on: .main, in: .common).autoconnect()) { _ in
+        .onReceive(Timer.publish(every: 10, on: .main, in: .common).autoconnect()) { _ in
             soundCloudConnected = SoundCloudOAuth.shared.isConnected
             soundCloudUser = SoundCloudOAuth.shared.userName
         }
     }
 
-    // MARK: - iMessage
-
-    @AppStorage("kobold.imessage.enabled") private var iMessageEnabled: Bool = false
-
-    @ViewBuilder
-    private func iMessageSection() -> some View {
-        connectionCard(
-            logo: AnyView(brandLogoIMessage),
-            name: "iMessage",
-            subtitle: "Nachrichten lesen & senden",
-            isConnected: iMessageAvailable && iMessageEnabled,
-            connectedDetail: {
-                AnyView(VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 14.5)).foregroundColor(.koboldEmerald)
-                        Text("Automation-Berechtigung erteilt")
-                            .font(.system(size: 13.5)).foregroundColor(.secondary)
-                    }
-                    Text("Der Agent kann über AppleScript Nachrichten lesen und senden.")
-                        .font(.system(size: 12.5)).foregroundColor(.secondary)
-
-                    Toggle("iMessage aktiviert", isOn: $iMessageEnabled)
-                        .toggleStyle(.switch)
-                        .tint(.koboldEmerald)
-                        .font(.system(size: 14.5))
-                        .onChange(of: iMessageEnabled) {
-                            if !iMessageEnabled { iMessageAvailable = false }
-                        }
-                })
-            },
-            signInButton: {
-                AnyView(VStack(alignment: .leading, spacing: 10) {
-                    Text("Aktiviere iMessage um deinem Agent Zugriff auf Nachrichten zu geben. macOS fragt nach Automation-Berechtigung.")
-                        .font(.system(size: 13.5)).foregroundColor(.secondary)
-
-                    Toggle("iMessage aktivieren", isOn: Binding(
-                        get: { iMessageEnabled },
-                        set: { newVal in
-                            if newVal {
-                                // Trigger macOS permission prompt
-                                requestIMessageAccess()
-                            }
-                            iMessageEnabled = newVal
-                        }
-                    ))
-                    .toggleStyle(.switch)
-                    .tint(Color(red: 0.208, green: 0.824, blue: 0.341))
-                    .font(.system(size: 14.5))
-
-                    if iMessageEnabled && !iMessageAvailable {
-                        HStack(spacing: 6) {
-                            Image(systemName: "exclamationmark.triangle.fill")
-                                .font(.system(size: 12.5)).foregroundColor(.orange)
-                            Text("Berechtigung noch nicht erteilt")
-                                .font(.system(size: 12.5)).foregroundColor(.orange)
-                        }
-                        Button("Systemeinstellungen öffnen") {
-                            NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation")!)
-                        }
-                        .font(.system(size: 13.5))
-                        .buttonStyle(.borderless)
-                        .foregroundColor(.secondary)
-                    }
-                })
-            }
-        )
-        .onAppear {
-            if iMessageEnabled { checkIMessageAvailability() }
-        }
-    }
-
-    private func checkIMessageAvailability() {
-        // Run on background thread to avoid Main Thread freeze
-        Task.detached(priority: .utility) {
-            let script = NSAppleScript(source: "tell application \"Messages\" to count of every chat")
-            var errorInfo: NSDictionary?
-            script?.executeAndReturnError(&errorInfo)
-            let available = (errorInfo == nil)
-            await MainActor.run { iMessageAvailable = available }
-        }
-    }
-
-    private func requestIMessageAccess() {
-        // This triggers the macOS automation permission dialog
-        let script = NSAppleScript(source: "tell application \"Messages\" to count of every chat")
-        var errorInfo: NSDictionary?
-        script?.executeAndReturnError(&errorInfo)
-        iMessageAvailable = (errorInfo == nil)
-    }
+    // iMessage section removed — Telegram is the stable messaging integration
 
     // MARK: - Telegram Bot
 
@@ -3235,7 +3134,7 @@ struct SettingsView: View {
                         telegramBotName = ""
                     }
                     .buttonStyle(.bordered).foregroundColor(.red).controlSize(.small)
-                    .onReceive(Timer.publish(every: 3, on: .main, in: .common).autoconnect()) { _ in
+                    .onReceive(Timer.publish(every: 10, on: .main, in: .common).autoconnect()) { _ in
                         telegramStats = TelegramBot.shared.stats
                         if telegramBotName.isEmpty {
                             telegramBotName = TelegramBot.shared.botUsername
@@ -4013,7 +3912,7 @@ struct SettingsView: View {
                     )
                 VStack(alignment: .leading, spacing: 4) {
                     Text("KoboldOS").font(.title.bold())
-                    Text("Alpha v0.3.2").font(.title3).foregroundColor(.koboldGold)
+                    Text("Alpha v0.3.3").font(.title3).foregroundColor(.koboldGold)
                     Text("Dein lokaler KI-Assistent für macOS")
                         .font(.subheadline).foregroundColor(.secondary)
                 }
@@ -4023,8 +3922,8 @@ struct SettingsView: View {
         }
 
         FuturisticBox(icon: "info.circle", title: "Build-Info", accent: .koboldGold) {
-                infoRow("Version", "Alpha v0.3.2")
-                infoRow("Build", "2026-02-23")
+                infoRow("Version", "Alpha v0.3.3")
+                infoRow("Build", "2026-02-27")
                 infoRow("Swift", "6.0")
                 infoRow("Plattform", "macOS 14+ (Sonoma)")
                 infoRow("Backend", "Ollama \(viewModel.ollamaStatus)")
@@ -4101,7 +4000,7 @@ struct SettingsView: View {
         panel.allowedContentTypes = [.plainText]
         panel.nameFieldStringValue = "koboldos-logs.txt"
         if panel.runModal() == .OK, let url = panel.url {
-            let logs = "KoboldOS Alpha v0.3.2 — Logs\nPID: \(ProcessInfo.processInfo.processIdentifier)\nUptime: \(Date())\n"
+            let logs = "KoboldOS Alpha v0.3.3 — Logs\nPID: \(ProcessInfo.processInfo.processIdentifier)\nUptime: \(Date())\n"
             try? logs.write(to: url, atomically: true, encoding: .utf8)
         }
     }
@@ -4300,71 +4199,93 @@ struct IdleTasksSettingsView: View {
             // Einstellungen (nur wenn aktiviert)
             if proactiveEngine.idleTasksEnabled {
                 Divider()
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Timing").font(.system(size: 13, weight: .semibold))
-                    HStack {
-                        Text("Min. Leerlaufzeit").font(.caption.bold()).foregroundColor(.secondary)
+
+                // Timing — Picker + kompakte Toggle-Reihe
+                Text("Timing").font(.system(size: 13, weight: .semibold))
+                HStack(spacing: 16) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Min. Leerlaufzeit").font(.caption2.bold()).foregroundColor(.secondary)
                         Picker("", selection: $proactiveEngine.idleMinIdleMinutes) {
                             Text("2m").tag(2); Text("5m").tag(5); Text("10m").tag(10); Text("15m").tag(15); Text("30m").tag(30)
-                        }.pickerStyle(.segmented).frame(maxWidth: 300)
+                        }.pickerStyle(.segmented)
                     }
-                    HStack {
-                        Text("Max. pro Stunde").font(.caption.bold()).foregroundColor(.secondary)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Max. pro Stunde").font(.caption2.bold()).foregroundColor(.secondary)
                         Picker("", selection: $proactiveEngine.idleMaxPerHour) {
                             Text("1").tag(1); Text("3").tag(3); Text("5").tag(5); Text("10").tag(10)
-                        }.pickerStyle(.segmented).frame(maxWidth: 240)
+                        }.pickerStyle(.segmented)
                     }
-                    Toggle("Bei User-Aktivität pausieren", isOn: $proactiveEngine.idlePauseOnUserActivity)
+                }
+                HStack(spacing: 20) {
+                    Toggle("Pause bei Aktivität", isOn: $proactiveEngine.idlePauseOnUserActivity)
                         .toggleStyle(.switch).tint(.indigo)
-                    Toggle("Bei Ausführung benachrichtigen", isOn: $proactiveEngine.idleNotifyOnExecution)
+                    Toggle("Benachrichtigen", isOn: $proactiveEngine.idleNotifyOnExecution)
                         .toggleStyle(.switch).tint(.koboldEmerald)
-                    Toggle("Nur Hochprioritäts-Tasks", isOn: $proactiveEngine.idleOnlyHighPriority)
+                    Toggle("Nur Hochpriorität", isOn: $proactiveEngine.idleOnlyHighPriority)
                         .toggleStyle(.switch).tint(.indigo)
                 }
 
                 Divider()
-                VStack(alignment: .leading, spacing: 4) {
-                    Toggle("Ruhezeiten", isOn: $proactiveEngine.idleQuietHoursEnabled)
-                        .toggleStyle(.switch).tint(.indigo)
-                    if proactiveEngine.idleQuietHoursEnabled {
-                        HStack(spacing: 8) {
-                            Text("Von").font(.caption.bold()).foregroundColor(.secondary)
-                            Picker("", selection: $proactiveEngine.idleQuietHoursStart) {
-                                ForEach(0..<24, id: \.self) { h in Text(String(format: "%02d:00", h)).tag(h) }
-                            }.pickerStyle(.menu).frame(width: 80)
-                            Text("Bis").font(.caption.bold()).foregroundColor(.secondary)
-                            Picker("", selection: $proactiveEngine.idleQuietHoursEnd) {
-                                ForEach(0..<24, id: \.self) { h in Text(String(format: "%02d:00", h)).tag(h) }
-                            }.pickerStyle(.menu).frame(width: 80)
+
+                // Ruhezeiten + Berechtigungen nebeneinander
+                HStack(alignment: .top, spacing: 24) {
+                    // Ruhezeiten (links)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Toggle("Ruhezeiten", isOn: $proactiveEngine.idleQuietHoursEnabled)
+                            .toggleStyle(.switch).tint(.indigo)
+                        if proactiveEngine.idleQuietHoursEnabled {
+                            HStack(spacing: 6) {
+                                Text("Von").font(.caption2.bold()).foregroundColor(.secondary)
+                                Picker("", selection: $proactiveEngine.idleQuietHoursStart) {
+                                    ForEach(0..<24, id: \.self) { h in Text(String(format: "%02d:00", h)).tag(h) }
+                                }.pickerStyle(.menu).frame(width: 80)
+                                Text("Bis").font(.caption2.bold()).foregroundColor(.secondary)
+                                Picker("", selection: $proactiveEngine.idleQuietHoursEnd) {
+                                    ForEach(0..<24, id: \.self) { h in Text(String(format: "%02d:00", h)).tag(h) }
+                                }.pickerStyle(.menu).frame(width: 80)
+                            }
+                        }
+                    }
+
+                    Divider().frame(height: 50)
+
+                    // Berechtigungen (rechts)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Berechtigungen").font(.caption2.bold()).foregroundColor(.secondary)
+                        HStack(spacing: 14) {
+                            Toggle("Shell", isOn: $proactiveEngine.idleAllowShell)
+                                .toggleStyle(.switch).tint(.orange)
+                            Toggle("Netzwerk", isOn: $proactiveEngine.idleAllowNetwork)
+                                .toggleStyle(.switch).tint(.orange)
+                            Toggle("Dateien", isOn: $proactiveEngine.idleAllowFileWrite)
+                                .toggleStyle(.switch).tint(.orange)
                         }
                     }
                 }
 
                 Divider()
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Berechtigungen im Idle-Modus").font(.caption.bold()).foregroundColor(.secondary)
-                    Toggle("Shell-Befehle", isOn: $proactiveEngine.idleAllowShell)
-                        .toggleStyle(.switch).tint(.orange)
-                    Toggle("Netzwerk-Zugriff", isOn: $proactiveEngine.idleAllowNetwork)
-                        .toggleStyle(.switch).tint(.orange)
-                    Toggle("Dateien schreiben", isOn: $proactiveEngine.idleAllowFileWrite)
-                        .toggleStyle(.switch).tint(.orange)
-                }
 
-                Divider()
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Erlaubte Kategorien").font(.caption.bold()).foregroundColor(.secondary)
-                    let categories = [("system", "System-Health"), ("error", "Fehler-Recovery"), ("time", "Tageszeit"), ("idle", "Leerlauf"), ("custom", "Benutzerdefiniert")]
-                    let activeCategories = Set(proactiveEngine.idleCategoriesRaw.split(separator: ",").map { String($0.trimmingCharacters(in: .whitespaces)) })
-                    ForEach(categories, id: \.0) { key, label in
-                        Toggle(label, isOn: Binding(
-                            get: { activeCategories.contains(key) },
-                            set: { enabled in
-                                var cats = activeCategories
-                                if enabled { cats.insert(key) } else { cats.remove(key) }
+                // Kategorien als kompakte Chip-Buttons
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Erlaubte Kategorien").font(.caption2.bold()).foregroundColor(.secondary)
+                    HStack(spacing: 6) {
+                        let categories = [("system", "System"), ("error", "Recovery"), ("time", "Tageszeit"), ("idle", "Leerlauf"), ("custom", "Custom")]
+                        ForEach(categories, id: \.0) { key, label in
+                            let isActive = proactiveEngine.idleCategoriesRaw.split(separator: ",").map { String($0.trimmingCharacters(in: .whitespaces)) }.contains(key)
+                            Button(action: {
+                                var cats = Set(proactiveEngine.idleCategoriesRaw.split(separator: ",").map { String($0.trimmingCharacters(in: .whitespaces)) })
+                                if cats.contains(key) { cats.remove(key) } else { cats.insert(key) }
                                 proactiveEngine.idleCategoriesRaw = cats.sorted().joined(separator: ",")
-                            }
-                        )).toggleStyle(.switch).tint(.indigo)
+                            }) {
+                                Text(label)
+                                    .font(.system(size: 11.5, weight: isActive ? .semibold : .regular))
+                                    .padding(.horizontal, 10).padding(.vertical, 4)
+                                    .background(isActive ? Color.indigo.opacity(0.2) : Color.gray.opacity(0.08))
+                                    .foregroundColor(isActive ? .indigo : .secondary)
+                                    .cornerRadius(6)
+                                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(isActive ? Color.indigo.opacity(0.4) : Color.clear, lineWidth: 1))
+                            }.buttonStyle(.plain)
+                        }
                     }
                 }
             }

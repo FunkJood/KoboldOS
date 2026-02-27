@@ -1,5 +1,34 @@
 # KoboldOS Changelog
 
+## Alpha v0.3.3 — 2026-02-27
+
+### Task-Chat-System
+- **Eigene Chats pro Task**: Jede geplante und Idle-Task bekommt einen isolierten Chat
+- **ChatSession.taskId**: Neues Feld unterscheidet Task-Sessions von normalen Chats
+- **executeTask()**: Zentraler Entry-Point für Cron- und Idle-Task-Ausführung
+- **Sidebar-Sektion "Task-Chats"**: Eigene Sektion mit blauem Checklist-Icon über den normalen Chats
+- **Background-Execution**: Idle-Tasks laufen im Hintergrund ohne UI-Disruption
+
+### Cron-Task Routing
+- **DaemonListener → NotificationCenter**: Cron-Tasks posten jetzt Notification statt `handleAgent()` direkt (Output ging vorher verloren)
+- **MainView.onReceive**: Empfängt Task-Notification auf MainActor, öffnet Task-Chat
+- **ProactiveEngine**: Idle-Tasks nutzen `executeTask()` statt `sendMessage()` auf dem aktuellen Chat
+
+### Notification-System
+- **UNUserNotificationCenter**: Ersetzt deprecated `NSUserNotification` für macOS System-Notifications
+- **Click-to-Navigate**: Klick auf In-App-Notification navigiert zum Task-Chat
+- **System-Notifications**: Bei Task-Abschluss erscheint macOS-Notification mit Ergebnis-Preview
+
+### Bug Fixes
+- **SoundCloud OAuth Token Mismatch**: API-Tool las aus SecretStore statt UserDefaults — Token-Keys synchronisiert
+- **Sidebar-Filter**: Task-Sessions erscheinen nicht mehr in der normalen Chat-Liste
+- **sendMessage(targetSessionId:)**: Messages landen in der richtigen Session statt immer im aktuellen Chat
+
+### Statistik
+- ~49.500 Lines of Code
+
+---
+
 ## Alpha v0.3.2 Update — 2026-02-27
 
 ### Performance: Freeze-Fixes (Second-Message Lag)

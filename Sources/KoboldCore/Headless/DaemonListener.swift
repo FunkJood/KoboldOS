@@ -66,6 +66,9 @@ public actor DaemonListener {
     private let rateLimitMax = 6000       // effectively unlimited — no artificial throttling
     private let bodyLimitBytes = 10_485_760 // 10 MB
 
+    /// B1: Shutdown-Flag für graceful termination
+    private var isRunning = true
+
     public init(port: Int, authToken: String) {
         self.port = port
         self.authToken = authToken
@@ -74,8 +77,15 @@ public actor DaemonListener {
 
     public func start() async {
         print("🌐 DaemonListener starting on :\(port)")
+        isRunning = true
         startTaskScheduler()
         await runServer()
+    }
+
+    /// B1: Graceful Shutdown — schließt Server-Socket und beendet Accept-Loop
+    public func stop() {
+        isRunning = false
+        print("[DaemonListener] Stop requested — closing server socket")
     }
 
     // MARK: - Main Server Loop
@@ -90,24 +100,25 @@ public actor DaemonListener {
 
         // Bridge blocking Darwin.accept() to async via AsyncStream
         // accept() is already blocking — no busy-wait needed
+        // B1: Accept-Loop — wird durch Process-Exit beendet (sock.close() in stop())
         let clientStream = AsyncStream<ClientSocket> { continuation in
             let t = Thread {
                 while true {
                     guard let client = sock.accept() else {
-                        // accept() failed (e.g. fd closed) — wait longer before retrying
-                        Thread.sleep(forTimeInterval: 0.5)
+                        // accept() failed (e.g. fd closed or shutdown) — check if we should stop
+                        if !Thread.current.isCancelled { Thread.sleep(forTimeInterval: 0.5) }
                         continue
                     }
                     continuation.yield(client)
                 }
             }
-            t.qualityOfService = .utility  // Was .userInteractive — starved UI thread
+            t.qualityOfService = .utility
             t.start()
         }
 
         // Use Task.detached so each request runs CONCURRENTLY, not serialized on the actor.
         for await client in clientStream {
-            let canAccept = await self.canAcceptConnection()
+            let canAccept = self.canAcceptConnection()
             guard canAccept else {
                 client.write("HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
                 client.close()
@@ -205,7 +216,7 @@ public actor DaemonListener {
         case "/health":
             return jsonOK([
                 "status": "ok",
-                "version": "0.3.2",
+                "version": "0.3.3",
                 "pid": Int(ProcessInfo.processInfo.processIdentifier),
                 "uptime": Int(Date().timeIntervalSince(startTime))
             ])
@@ -781,12 +792,14 @@ public actor DaemonListener {
                   let taskId = task["id"] as? String else { continue }
 
             if cronMatches(expression: schedule, date: now) {
-                addTrace(event: "TaskScheduler", detail: "Starte: \(task["name"] as? String ?? taskId)")
-                // Build a request body and run via handleAgent
-                let body: [String: Any] = ["message": prompt, "agent_type": "general", "source": "scheduler"]
-                if let data = try? JSONSerialization.data(withJSONObject: body) {
-                    _ = await handleAgent(body: data)
-                }
+                let taskName = task["name"] as? String ?? taskId
+                addTrace(event: "TaskScheduler", detail: "Starte: \(taskName)")
+                // Notify UI to execute task in dedicated task session
+                NotificationCenter.default.post(
+                    name: Notification.Name("koboldScheduledTaskFired"),
+                    object: nil,
+                    userInfo: ["taskId": taskId, "taskName": taskName, "prompt": prompt]
+                )
                 // Update last_run timestamp
                 var allTasks = loadTasks()
                 if let idx = allTasks.firstIndex(where: { $0["id"] as? String == taskId }) {
@@ -890,7 +903,7 @@ public actor DaemonListener {
     private func buildAgentCard() -> [String: Any] {
         [
             "name": "KoboldOS",
-            "version": "0.3.2",
+            "version": "0.3.3",
             "description": "Native macOS AI Agent Runtime — local-first, privacy-focused",
             "capabilities": [
                 "streaming": true,

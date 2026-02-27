@@ -1,91 +1,98 @@
-# KoboldOS v0.2.3 — Handoff / Session-Übergabe
+# KoboldOS v0.3.3 — Handoff / Session-Übergabe
 
-## Stand: 2026-02-22 (Session 3)
+## Stand: 2026-02-27
 
-### Was wurde gemacht (alle Sessions zusammen)
+### Was wurde gemacht (v0.3.2 → v0.3.3)
 
-#### 1. Freeze-Fixes (Stabilität) — FERTIG
-Alle kritischen UI-Freeze-Ursachen behoben:
+#### 1. Task-Chat-System — FERTIG
+Jede geplante/idle Task bekommt jetzt einen eigenen Chat:
 
-- **CodingAgent.swift**: `waitUntilExit()` + `readDataToEndOfFile()` durch async `PipeCollector` + `readabilityHandler` ersetzt
-- **ClaudeCodeBackend.swift**: Gleiches Pattern — Sendable-safe `PipeCollector` class für nicht-blockierendes Pipe-Reading
-- **ToolEngine.swift**: `bash()` Funktion — Pipe-Daten werden jetzt über `readabilityHandler` gesammelt statt nach `waitUntilExit()` blockierend gelesen
-- **RuntimeViewModel.swift**:
-  - `loadMetrics()` nach Agent-Response: `await` → fire-and-forget `Task { await loadMetrics() }`
-  - `loadChatHistory()`: Bleibt synchron (async verursachte Race Condition bei Session-Archivierung)
-  - `connect()`: `loadMetrics/loadModels/checkOllamaStatus` parallelisiert mit `async let`, Retry-Intervall 400ms statt 800ms, 15 Versuche
+- **ChatSession.taskId**: Optionales `String?`-Feld unterscheidet Task-Sessions von normalen Chats
+- **taskSessions**: Computed Property filtert `sessions` nach `taskId != nil`
+- **openTaskChat()**: Findet oder erstellt Task-Session, navigiert zum Chat-Tab
+- **executeTask()**: Zentraler Entry-Point für Cron- und Idle-Tasks
+  - `navigate: true` (Cron) → wechselt in den Task-Chat, zeigt Streaming live
+  - `navigate: false` (Idle) → Background-Execution, Notification bei Fertigstellung
+- **sendMessage(targetSessionId:)**: Erweitert um Background-Session-Support — Messages landen in der richtigen Session ohne UI-Disruption
+- **Sidebar-Integration**: Task-Chats erscheinen als eigene Sektion "Task-Chats" über den normalen Chats (blaues Checklist-Icon)
+- **Sidebar-Filter**: `collapsibleChatsList` und `rebuildSessionCache()` filtern Task-Sessions aus der normalen Chat-Liste
 
-#### 2. WebApp Komplett-Redesign — FERTIG
-`WebAppServer.buildHTML()` komplett neu geschrieben:
+#### 2. Cron-Task Routing — FERTIG
+- **DaemonListener**: `checkScheduledTasks()` postet jetzt `koboldScheduledTaskFired` Notification statt `handleAgent()` direkt aufzurufen (Output ging vorher verloren)
+- **MainView.onReceive**: Empfängt die Notification auf MainActor und ruft `executeTask(navigate: true)` auf
+- **ProactiveEngine**: Idle-Tasks nutzen `executeTask(navigate: false)` statt `sendMessage()` auf `currentSessionId`
 
-- **Design**: Apple-inspiriert, Dark Theme, Glassmorphism, Lucide Icons (via CDN), Inter Font
-- **4 Tabs**: Chat, Aufgaben, Gedächtnis, Einstellungen
-- **Chat**: Modernes Bubble-UI, Typing-Dots Animation, Markdown-Rendering, Tool-Result Tags
-- **Aufgaben**: Task-Liste mit Status-Badges, CRUD (Erstellen/Pausieren/Löschen)
-- **Gedächtnis**: Statistik-Karten, Typ-Filter (Kurzzeit/Langzeit/Wissen), Tag-Filterung, Suche, Erstellen/Löschen
-- **Einstellungen**: Metriken-Grid, Model-Picker (alle Ollama-Modelle), Daemon-Info
-- **Responsive**: Desktop (260px Sidebar) → Tablet (64px Icons) → Mobile (Bottom-Tab-Bar)
+#### 3. Notification-System — FERTIG
+- **UNUserNotificationCenter**: Ersetzt deprecated `NSUserNotification` für macOS System-Notifications
+- **KoboldNotification.sessionId**: In-App-Notifications tragen jetzt die Session-UUID
+- **Click-to-Navigate**: Klick auf Notification → `navigateToTaskSession()` → wechselt zum richtigen Chat
+- **System-Notifications**: Bei Task-Abschluss erscheint macOS-Notification mit Preview des Ergebnisses
 
-#### 3. Telegram Bot Konversationskontext — FERTIG
-- Per-Chat History mit max 20 Nachrichten (user + assistant)
-- Bisheriges Gespräch wird als Kontext in den Agent-Request injiziert
-- Neue Befehle: `/clear` (Gespräch zurücksetzen), `/status` (zeigt Kontext-Größe)
-- `source: "telegram"` Feld im Agent-Request für zukünftige Unterscheidung
+#### 4. SoundCloud OAuth Token Fix — FERTIG
+- **Problem**: `SoundCloudOAuth.swift` speicherte Tokens in UserDefaults (`kobold.soundcloud.accessToken`), aber `SoundCloudApiTool.swift` las aus SecretStore/Keychain (`soundcloud.access_token`)
+- **Fix**: API-Tool liest jetzt aus UserDefaults mit den korrekten Keys
 
-#### 4. Auth 401 Bug Fix — FERTIG
-**Root Cause**: `@AppStorage` Default-Werte werden NICHT in UserDefaults geschrieben bis sie explizit gesetzt werden. RuntimeManager las Token via UserDefaults.standard (→ nil), DaemonListener bekam leeren Token, alle API-Requests scheiterten mit 401.
-
-**Fix**:
-- `RuntimeManager.swift`: `@AppStorage("kobold.authToken") var authToken` direkt hinzugefügt — Daemon bekommt jetzt korrekt den Token
-- `RuntimeViewModel.swift`: `init()` schreibt Token explizit in UserDefaults falls nil
-- `SettingsView.swift`: WebApp Token kommt von `RuntimeManager.shared.authToken`
-
-#### 5. Version Bump auf v0.2.3 — FERTIG
-10+ Dateien aktualisiert, DMG gebaut, GitHub Releases erstellt (v0.2.1, v0.2.2, v0.2.3)
+#### 5. Performance & Freeze-Fixes (v0.3.2) — FERTIG
+Alle Blöcke A-F, P1-P8 aus der vorherigen Session:
+- isNewest O(n) eliminiert, SkillLoader Cache, async let Parallelisierung
+- repeatForever Animation entfernt, Markdown NSCache, GlobalHeaderBar DateFormatter
+- Flush-Timer 500ms, Connectivity-Timer async, Session-Save 3s Debounce
+- System-Prompt ~14K → ~6-7K Tokens gekürzt
 
 ### Build-Status
-- `swift build -c release` erfolgreich ✓
-- DMG: `~/Desktop/KoboldOS-0.2.3.dmg` ✓
-- Sources synchron zwischen Arbeitsverzeichnis und GitHub-Repo ✓
+- `swift build` erfolgreich ✓
+- Version: 0.3.3 in `scripts/build.sh`
+- README.md aktualisiert ✓
+- CHANGELOG.md aktualisiert ✓
 
 ### WICHTIG: Vor dem Testen
 **Alle alten KoboldOS-Instanzen beenden!** Der Daemon läuft in-process, d.h. wenn eine alte Version noch im Hintergrund läuft (Window-Close = Minimize to Tray), belegt sie Port 8080. Cmd+Q oder Activity Monitor → KoboldOS beenden.
-
-### Git-Status (GitHub-Repo)
-Dateien bereit zum Commit (via GitHub Desktop):
-- Geänderte + neue Dateien synchronisiert
-- DMG auf Desktop für manuellen Upload zum Release
 
 ### Was noch offen ist / nächste Session
 
 #### Sofort-Todos
 1. **Alte KoboldOS-Instanz beenden** (Cmd+Q, Activity Monitor prüfen)
 2. **Neue DMG installieren** und testen
-3. **GUI Chat testen**: Nachricht senden → Antwort erhalten (kein 401 mehr)
-4. **WebApp testen**: Fernsteuerung aktivieren → alle 4 Tabs durchklicken
-5. **Telegram Bot testen**: Gespräch führen → `/clear` testen
+3. **Task-Chat testen**: Task erstellen → Cron feuern lassen → Eigener Chat öffnet sich
+4. **Idle-Task testen**: Idle-Task anlegen → Background-Execution → Notification erscheint
+5. **Notification testen**: Klick auf Notification → navigiert zum Task-Chat
+6. **Sidebar prüfen**: Task-Chats eigene Sektion, normale Chats gefiltert
+
+#### Geplant (Block G/H/I aus Plan)
+- **Block G**: Konsolidiertes Logging-System (logs/ Ordner, Tool-Logging, Performance-Logging)
+- **Block H**: Tool-Restrictions entschärfen (Newline-Blocking, Operator-Tier, Allowlist erweitern)
+- **Block I**: Brain-Icon statisch machen (scaleEffect entfernen)
 
 #### Bekannte Schwächen
 - **WebApp Chat hat kein SSE-Streaming** — nutzt aktuell einfachen POST + polling
-- **performShutdownSave()** ist noch synchron auf MainThread
-- **Session-Klick in History**: Verhalten bei Archivierung prüfen
+- **UNUserNotificationCenter Delegate**: Tap-Handler für System-Notifications noch nicht implementiert (nur In-App-Notifications navigieren)
+- **Task-Chat Cleanup**: Alte abgeschlossene Task-Chats werden nicht automatisch aufgeräumt
 
-### Projektstruktur-Erinnerung
-- **Source**: `/Users/tim/AgentZero/workdir/KoboldOS/`
-- **GitHub Repo**: `/Users/tim/Documents/GitHub/KoboldOS/KoboldOS/`
-- **Build**: `cd /Users/tim/AgentZero/workdir/KoboldOS && bash scripts/build.sh`
-- **Sync**: `rsync -av --delete Sources/ /Users/tim/Documents/GitHub/KoboldOS/KoboldOS/Sources/`
+### Projektstruktur
+- **Repo**: `/Users/tim/Documents/GitHub/KoboldOS/KoboldOS/`
+- **Build**: `cd /Users/tim/Documents/GitHub/KoboldOS/KoboldOS && bash scripts/build.sh`
 - **Commit**: GitHub Desktop (nicht CLI)
 
-### API-Endpunkte für WebApp-Referenz
+### Architektur-Kurzfassung
+- SwiftUI macOS + In-Process Daemon (Port 8080)
+- sendMessage → `/agent/stream` (SSE, voller AgentLoop) — NICHT `/chat`!
+- `/chat` = Legacy Ollama-Passthrough OHNE System-Prompt/Tools
+- Daemon startet NUR in AppDelegate (nicht MainView.onAppear)
+- Agent-Typen: `general` (Orchestrator), `coder`, `web`
+
+### API-Endpunkte
 | Endpoint | Methode | Beschreibung |
 |----------|---------|-------------|
-| `/health` | GET | Status + Version + PID |
-| `/agent` | POST | Agent-Anfrage (message, source?) |
+| `/health` | GET | Status + PID |
+| `/agent` | POST | Agent-Anfrage (SSE-Streaming) |
+| `/chat` | POST | Direct LLM call (no tools) |
 | `/metrics` | GET | Statistiken |
-| `/models` | GET | Verfügbare Ollama-Modelle |
-| `/model/set` | POST | Modell wechseln |
-| `/tasks` | GET/POST | Tasks CRUD |
-| `/memory/entries` | GET/POST/DELETE | Memory CRUD |
-| `/memory/entries/tags` | GET | Alle Tags |
-| `/history/clear` | POST | Chat-Verlauf leeren |
+| `/metrics/reset` | POST | Reset counters |
+| `/memory` | GET | All CoreMemory blocks |
+| `/memory/update` | POST | Upsert/delete a block |
+| `/memory/snapshot` | POST | Create snapshot |
+| `/models` | GET | Available Ollama models |
+| `/model/set` | POST | Set active model |
+| `/tasks` | GET/POST | Task management |
+| `/trace` | GET | Activity timeline |
+| `/history/clear` | POST | Clear conversation history |

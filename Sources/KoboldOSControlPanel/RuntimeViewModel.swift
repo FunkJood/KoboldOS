@@ -2,6 +2,7 @@ import Foundation
 import SwiftUI
 import Combine
 import KoboldCore
+import UserNotifications
 
 // MARK: - Core Types
 
@@ -38,6 +39,7 @@ public struct KoboldNotification: Identifiable, Codable, Sendable {
     public var message: String
     public var timestamp = Date()
     public var navigationTarget: String? = nil
+    public var sessionId: UUID? = nil
     public enum NotificationType: String, Codable, Sendable { case info, success, warning, error }
     public var type: NotificationType = .info
     public var icon: String { "bell" }
@@ -80,7 +82,7 @@ public class RuntimeViewModel: ObservableObject {
     private var pendingMessages: [UUID: [ChatMessage]] = [:]
 
     /// Streaming Sessions Set (statt Bool für korrekte Multi-Chat Isolation)
-    private var streamingSessions: Set<UUID> = []
+    public private(set) var streamingSessions: Set<UUID> = []
 
     // MARK: - Memory Management
     /// Tracks last access time per session for offloading inactive ones
@@ -89,6 +91,10 @@ public class RuntimeViewModel: ObservableObject {
     private var offloadTimer: Task<Void, Never>?
     /// macOS memory pressure handler — offloads all background sessions on warning/critical
     private var memoryPressureSource: DispatchSourceMemoryPressure?
+    /// A2: Connectivity-Timer Referenz (war fire-and-forget → Zombie-Ursache)
+    private var connectivityTask: Task<Void, Never>?
+    /// A2: Shutdown-Observer Token (für sauberes removeObserver in deinit)
+    private var shutdownObserver: NSObjectProtocol?
 
     /// Computed: Ist gerade irgendeine Session am Streamen?
     public var isStreamingToDaemon: Bool { !streamingSessions.isEmpty }
@@ -99,11 +105,43 @@ public class RuntimeViewModel: ObservableObject {
     }
 
     // UI State (aktive Session)
-    @Published var messages: [ChatMessage] = []
-    @Published public var agentLoading: Bool = false
-    @Published public var isConnected: Bool = false
+    // P1: Chat-only properties use didSet guard — only trigger objectWillChange when Chat tab is visible.
+    // This prevents MemoryView, SettingsView, TasksView etc. from re-rendering on every message append.
+    // G4: Perf-Logging Flag (Default: false, via Einstellungen aktivierbar)
+    private lazy var perfLogEnabled: Bool = UserDefaults.standard.bool(forKey: "kobold.debug.perfLog")
+
+    var messages: [ChatMessage] = [] {
+        didSet {
+            if currentViewTab == "chat" {
+                if perfLogEnabled { kperf("objectWillChange: messages count=\(messages.count)") }
+                objectWillChange.send()
+            }
+        }
+    }
+    public var agentLoading: Bool = false {
+        didSet {
+            if currentViewTab == "chat" {
+                if perfLogEnabled { kperf("objectWillChange: agentLoading=\(agentLoading)") }
+                objectWillChange.send()
+            }
+        }
+    }
+    // F1: isConnected — nur bei ECHTEM Wechsel senden (Connectivity-Timer feuert alle 5s)
+    public var isConnected: Bool = false {
+        didSet {
+            guard oldValue != isConnected else { return }
+            if perfLogEnabled { kperf("objectWillChange: isConnected=\(isConnected)") }
+            objectWillChange.send()
+        }
+    }
     @Published public var currentViewTab: String = "chat"
-    @Published public var notifications: [KoboldNotification] = []
+    // F1: notifications — append/clear ändert immer → bleibt funktional @Published-like
+    public var notifications: [KoboldNotification] = [] {
+        didSet {
+            if perfLogEnabled { kperf("objectWillChange: notifications count=\(notifications.count)") }
+            objectWillChange.send()
+        }
+    }
 
     // Model State
     @Published public var loadedModels: [ModelInfo] = []
@@ -147,6 +185,8 @@ public class RuntimeViewModel: ObservableObject {
         get { sessionAgentStates[currentSessionId]?.lastPrompt }
         set { sessionAgentStates[currentSessionId, default: SessionAgentState()].lastPrompt = newValue }
     }
+    /// E2: Cached newestThinkingId — statt O(n) Suche bei jedem Render
+    public var newestThinkingId: UUID? = nil
 
     // Context Usage (für Context Bar) - per Session
     public var contextPromptTokens: Int {
@@ -166,9 +206,13 @@ public class RuntimeViewModel: ObservableObject {
         set { sessionAgentStates[currentSessionId, default: SessionAgentState()].contextWindowSize = newValue }
     }
 
-    // Topics (für Topic-Badge im Chat-Header)
-    @Published public var topics: [ChatTopic] = []
-    @Published public var activeTopicId: UUID? = nil
+    // Topics (für Topic-Badge im Chat-Header) — P1: only notify when chat visible
+    public var topics: [ChatTopic] = [] {
+        didSet { if currentViewTab == "chat" { objectWillChange.send() } }
+    }
+    public var activeTopicId: UUID? = nil {
+        didSet { if currentViewTab == "chat" { objectWillChange.send() } }
+    }
 
     @AppStorage("kobold.port") private var storedPort: Int = 8080
     @AppStorage("kobold.authToken") private var storedToken: String = "kobold-secret"
@@ -235,14 +279,22 @@ public class RuntimeViewModel: ObservableObject {
         // Initiale Session anlegen
         sessionAgentStates[currentSessionId] = SessionAgentState()
         sessionLastAccess[currentSessionId] = Date()
-        // Bei App-Beendigung Sessions speichern
-        NotificationCenter.default.addObserver(forName: .koboldShutdownSave, object: nil, queue: .main) { [weak self] _ in
-            self?.upsertCurrentSession()
+        // A2/A4: Bei App-Beendigung: speichern → sofort auf Disk → cleanup
+        // queue: .main garantiert Main-Thread → MainActor.assumeIsolated ist sicher
+        shutdownObserver = NotificationCenter.default.addObserver(forName: .koboldShutdownSave, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.upsertCurrentSession()
+                self.saveSessionsWithRetry()  // Sofort speichern (nicht debounced)
+                self.cleanup()
+            }
         }
         startConnectivityTimer()
         // Memory Management: Offload inactive sessions + handle system memory pressure
         startSessionOffloadTimer()
         setupMemoryPressureHandler()
+        // Notification-Berechtigung anfordern (für Task-Benachrichtigungen)
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
         // Ollama + Embedding bei Start prüfen (nach kurzem Delay für Startup)
         Task { [weak self] in
             try? await Task.sleep(nanoseconds: 2_000_000_000) // 2s warten bis Ollama bereit
@@ -296,16 +348,21 @@ public class RuntimeViewModel: ObservableObject {
 
     // MARK: - Messaging
     
-    func sendMessage(_ text: String, agentText: String? = nil, attachments: [MediaAttachment] = []) {
+    func sendMessage(_ text: String, targetSessionId: UUID? = nil, agentText: String? = nil, attachments: [MediaAttachment] = []) {
         let userMsg = ChatMessage(kind: .user(text: text), attachments: attachments)
-        let sessionId = currentSessionId
+        let sessionId = targetSessionId ?? currentSessionId
         appendMessage(userMsg, for: sessionId)
 
         let messageForAgent = agentText ?? text
+        let isBackgroundSession = (sessionId != currentSessionId)
 
-        // Ensure current session appears in sidebar immediately on first message
+        // Ensure session appears in sidebar immediately on first message
         if !sessions.contains(where: { $0.id == sessionId }) {
-            upsertCurrentSession()
+            if isBackgroundSession {
+                debouncedSave()
+            } else {
+                upsertCurrentSession()
+            }
         }
 
         // Nutzerverhalten für personalisierte Vorschläge tracken
@@ -320,9 +377,11 @@ public class RuntimeViewModel: ObservableObject {
         let streamTask = Task { [weak self] in
             guard let self else { return }
             await MainActor.run {
-                self.agentLoading = true
+                if !isBackgroundSession {
+                    self.agentLoading = true
+                    self.activeThinkingSteps = []
+                }
                 self.streamingSessions.insert(sessionId)
-                self.activeThinkingSteps = []
             }
 
             let accumulator = SSEAccumulator()
@@ -374,24 +433,22 @@ public class RuntimeViewModel: ObservableObject {
 
             // Start 1.5s flush timer for UI updates (user-requested: stability over responsiveness)
             // SSEAccumulator still collects events in real-time, but UI only refreshes every 1.5s
+            // P2: Flush interval 2.0s (was 1.5s) — fewer re-renders per second
             let flushTask = Task { [weak self] in
                 while !Task.isCancelled {
-                    try? await Task.sleep(nanoseconds: 1_500_000_000)
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
                     guard let self, !Task.isCancelled else { break }
                     let flush = await accumulator.takePendingFlush()
                     if !flush.steps.isEmpty || flush.contextPromptTokens != nil {
                         await MainActor.run {
-                            var didChange = false
                             if !flush.steps.isEmpty {
                                 var state = self.sessionAgentStates[sessionId] ?? SessionAgentState()
                                 state.thinkingSteps.append(contentsOf: flush.steps)
                                 // Cap thinkingSteps to prevent unbounded growth during long sub-agent runs
-                                // Without this, 100+ entries cause O(n) re-renders every 400ms → UI freeze
                                 if state.thinkingSteps.count > 50 {
                                     state.thinkingSteps = Array(state.thinkingSteps.suffix(40))
                                 }
                                 self.sessionAgentStates[sessionId] = state
-                                didChange = true
                             }
                             if let pt = flush.contextPromptTokens {
                                 self.updateContextUsage(
@@ -400,11 +457,11 @@ public class RuntimeViewModel: ObservableObject {
                                     completionTokens: flush.contextCompletionTokens ?? 0,
                                     windowSize: flush.contextWindowSize ?? 32000
                                 )
-                                didChange = true
                             }
-                            // Only send objectWillChange if this session is visible (avoid re-rendering for background chats)
-                            if didChange && sessionId == self.currentSessionId {
-                                self.objectWillChange.send()
+                            // P2: No manual objectWillChange.send() — P1 didSet handles granular notification
+                            // sessionAgentStates mutation + syncAgentStateToUI will trigger needed UI updates
+                            if sessionId == self.currentSessionId {
+                                self.syncAgentStateToUI()
                             }
                         }
                     }
@@ -473,67 +530,66 @@ public class RuntimeViewModel: ObservableObject {
             await accumulator.markDone()
             let finalResult = await accumulator.takeFinalResult()
 
-            // CHUNKED UI UPDATES — spread message insertion across multiple MainActor runs
-            // with micro-pauses to prevent a single massive re-render storm
-
-            // Chunk 1: Update agent state
+            // P8: SINGLE MainActor.run block statt 5 separate Chunks mit 50ms Pausen.
+            // Vorher: 5 objectWillChange-Trigger in 150ms → 5 Full Re-Renders.
+            // Jetzt: 1 Block → 1 Re-Render am Ende.
             await MainActor.run {
+                // 1. Agent state
                 var state = self.sessionAgentStates[sessionId] ?? SessionAgentState()
                 state.thinkingSteps = finalResult.thinkingSteps
                 self.sessionAgentStates[sessionId] = state
-            }
 
-            // Chunk 2: Error or thinking box
-            await MainActor.run {
+                // 2. Error or thinking box
                 if let error = finalResult.error, !error.isEmpty {
                     self.appendMessage(ChatMessage(kind: .assistant(text: "Fehler: \(error)")), for: sessionId)
                     self.addNotification(title: "Agent-Fehler", message: String(error.prefix(100)), type: .error, navigationTarget: "chat")
                 } else if !finalResult.thinkingSteps.isEmpty {
                     self.appendMessage(ChatMessage(kind: .thinking(entries: finalResult.thinkingSteps)), for: sessionId)
                 }
-            }
-            try? await Task.sleep(nanoseconds: 50_000_000) // 50ms pause
 
-            // Chunk 3: Final answer
-            if !finalResult.finalAnswer.isEmpty && finalResult.error == nil {
-                await MainActor.run {
+                // 3. Final answer
+                if !finalResult.finalAnswer.isEmpty && finalResult.error == nil {
                     self.appendMessage(ChatMessage(kind: .assistant(text: finalResult.finalAnswer)), for: sessionId)
                 }
-                try? await Task.sleep(nanoseconds: 50_000_000) // 50ms pause
-            }
 
-            // Chunk 4: Interactive + embed messages (batch — usually few)
-            if !finalResult.interactiveMessages.isEmpty || !finalResult.embedMessages.isEmpty {
-                await MainActor.run {
-                    for interactive in finalResult.interactiveMessages {
-                        self.appendMessage(ChatMessage(kind: .interactive(text: interactive.text, options: interactive.options)), for: sessionId)
-                    }
-                    for embed in finalResult.embedMessages {
-                        self.appendMessage(ChatMessage(kind: .image(path: embed.path, caption: embed.caption)), for: sessionId)
-                    }
+                // 4. Interactive + embed messages
+                for interactive in finalResult.interactiveMessages {
+                    self.appendMessage(ChatMessage(kind: .interactive(text: interactive.text, options: interactive.options)), for: sessionId)
                 }
-                try? await Task.sleep(nanoseconds: 50_000_000) // 50ms pause
-            }
+                for embed in finalResult.embedMessages {
+                    self.appendMessage(ChatMessage(kind: .image(path: embed.path, caption: embed.caption)), for: sessionId)
+                }
 
-            // Chunk 5: Notifications + finalize
-            await MainActor.run {
+                // 5. Notifications + finalize
+                let taskSession = self.sessions.first(where: { $0.id == sessionId })
+                let isTask = taskSession?.taskId != nil
                 if sessionId != self.currentSessionId && !finalResult.finalAnswer.isEmpty {
+                    let prefix = isTask ? "Task fertig" : "Chat fertig"
                     let preview = String(finalResult.finalAnswer.prefix(80))
-                    self.addNotification(title: "Chat fertig", message: preview, type: .success, navigationTarget: "chat")
+                    self.addNotification(title: prefix, message: preview, type: .success, sessionId: sessionId)
                 }
-                if finalResult.toolStepCount >= 5 && !finalResult.finalAnswer.isEmpty {
+                if isTask && !finalResult.finalAnswer.isEmpty {
+                    // macOS System-Notification für Task-Ergebnis
+                    self.postSystemNotification(
+                        title: "Task abgeschlossen",
+                        body: String(finalResult.finalAnswer.prefix(120)),
+                        sessionId: sessionId
+                    )
+                } else if finalResult.toolStepCount >= 5 && !finalResult.finalAnswer.isEmpty {
                     self.addNotification(
                         title: "Aufgabe abgeschlossen",
                         message: "\(finalResult.toolStepCount) Schritte ausgef\u{00FC}hrt",
                         type: .success,
-                        navigationTarget: "chat"
+                        sessionId: sessionId
                     )
                 }
-                self.upsertCurrentSession()
-                self.streamingSessions.remove(sessionId)
                 if sessionId == self.currentSessionId {
+                    self.upsertCurrentSession()
                     self.agentLoading = false
+                } else {
+                    self.debouncedSave()
                 }
+                self.streamingSessions.remove(sessionId)
             }
         }
 
@@ -620,18 +676,19 @@ public class RuntimeViewModel: ObservableObject {
         }
         if sessionId == currentSessionId {
             messages.append(message)
+            // E2: newestThinkingId O(1) statt O(n) Suche in ChatView
+            if case .thinking = message.kind { newestThinkingId = message.id }
             if messages.count > maxMessagesPerSession {
                 messages = Array(messages.suffix(maxMessagesPerSession - 100))
             }
         }
     }
 
-    /// Synchrones Upsert der aktuellen Session (speichert echte Messages!)
-    /// A4: Already protected by 3s debouncedSave — synchronous is fine on MainActor
+    /// P8: Leichtgewichtiges Upsert — NUR Titel/Timestamp für Sidebar.
+    /// toCodable-Konvertierung passiert erst im debouncedSave (alle 3s statt bei jedem append).
     private func upsertCurrentSession() {
         // pendingMessages ist Source of Truth — sync von self.messages
         pendingMessages[currentSessionId] = messages
-        let codableMessages = messages.map { $0.toCodable() }
         // Titel aus erster User-Nachricht generieren
         let title: String
         if let firstUser = messages.first(where: {
@@ -641,11 +698,12 @@ public class RuntimeViewModel: ObservableObject {
         } else {
             title = topics.first?.name ?? "Chat"
         }
-        var session = ChatSession(id: currentSessionId, title: title, messages: codableMessages)
-        session.createdAt = sessions.first(where: { $0.id == currentSessionId })?.createdAt ?? Date()
         if let idx = sessions.firstIndex(where: { $0.id == currentSessionId }) {
-            sessions[idx] = session
+            sessions[idx].title = title
+            // P8: sessions[idx].messages wird im debouncedSave aktualisiert — NICHT hier
         } else {
+            var session = ChatSession(id: currentSessionId, title: title, messages: [])
+            session.createdAt = Date()
             sessions.append(session)
         }
         // Debounced disk save — don't write on every single message
@@ -658,8 +716,14 @@ public class RuntimeViewModel: ObservableObject {
         saveDebounceTask?.cancel()
         saveDebounceTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 3_000_000_000) // 3s debounce
-            guard !Task.isCancelled else { return }
-            self?.saveSessionsWithRetry()
+            guard !Task.isCancelled, let self else { return }
+            // P8: toCodable-Konvertierung nur hier (alle 3s) statt bei jedem appendMessage
+            for (sid, pending) in self.pendingMessages where !pending.isEmpty {
+                if let idx = self.sessions.firstIndex(where: { $0.id == sid }) {
+                    self.sessions[idx].messages = pending.map { $0.toCodable() }
+                }
+            }
+            self.saveSessionsWithRetry()
         }
     }
 
@@ -695,7 +759,16 @@ public class RuntimeViewModel: ObservableObject {
             pendingMessages[sessionId] = []
         }
 
-        // 5. Agent Loading State für neue Session setzen
+        // 5. ChatMode basierend auf Session-Typ setzen
+        if let session = sessions.first(where: { $0.id == sessionId }), session.taskId != nil {
+            chatMode = .task
+            taskChatLabel = session.title.hasPrefix("Task: ") ? String(session.title.dropFirst(6)) : session.title
+        } else if chatMode == .task {
+            chatMode = .normal
+            taskChatLabel = ""
+        }
+
+        // 6. Agent Loading State für neue Session setzen
         agentLoading = streamingSessions.contains(sessionId)
         syncAgentStateToUI()
         objectWillChange.send()
@@ -706,18 +779,19 @@ public class RuntimeViewModel: ObservableObject {
         // 1. Aktuelle Session speichern
         upsertCurrentSession()
 
-        // 2. Neue Session-ID
-        currentSessionId = UUID()
+        // 2. ChatSession erstellen und in sessions einfügen (damit Sidebar sofort zeigt)
+        let session = ChatSession(id: UUID(), title: "Neuer Chat", messages: [])
+        sessions.insert(session, at: 0)
 
-        // 3. Agent State initialisieren
+        // 3. Zur neuen Session wechseln
+        currentSessionId = session.id
         sessionAgentStates[currentSessionId] = SessionAgentState()
         pendingMessages[currentSessionId] = []
         sessionLastAccess[currentSessionId] = Date()
 
-        // 4. UI aktualisieren
+        // 4. UI aktualisieren (topics NICHT clearen — das sind die Sidebar-Themenordner!)
         messages = []
         chatMode = .normal
-        topics = []
         activeTopicId = nil
     }
 
@@ -751,8 +825,10 @@ public class RuntimeViewModel: ObservableObject {
         switchToSession(session.id)
     }
 
-    // Stub-Properties für Task/Workflow Sessions
-    @Published public var taskSessions: [ChatSession] = []
+    // Task Sessions: Alle Sessions mit taskId (gefiltert aus sessions)
+    public var taskSessions: [ChatSession] {
+        sessions.filter { $0.taskId != nil }.sorted { $0.createdAt > $1.createdAt }
+    }
     @Published public var workflowSessions: [ChatSession] = []
 
     @Published public var workflowDefinitions: [WorkflowDef] = []
@@ -792,10 +868,17 @@ public class RuntimeViewModel: ObservableObject {
         topics.append(topic)
     }
 
-    public func newSession(topicId: UUID? = nil) {
+    public func newSession(topicId: UUID) {
+        upsertCurrentSession()
         let session = ChatSession(id: UUID(), title: "Neuer Chat", messages: [], topicId: topicId)
-        sessions.append(session)
-        switchToSession(session.id)
+        sessions.insert(session, at: 0)
+        currentSessionId = session.id
+        sessionAgentStates[currentSessionId] = SessionAgentState()
+        pendingMessages[currentSessionId] = []
+        sessionLastAccess[currentSessionId] = Date()
+        messages = []
+        chatMode = .normal
+        activeTopicId = topicId
     }
 
     public func deleteProject(_ project: Project) {
@@ -810,10 +893,35 @@ public class RuntimeViewModel: ObservableObject {
     }
 
     public func openTaskChat(taskId: String, taskName: String) {
+        // 1. Aktuelle Session speichern
+        upsertCurrentSession()
+
+        // 2. Existierende Task-Session suchen oder neue erstellen
+        if let existing = sessions.first(where: { $0.taskId == taskId }) {
+            // Task-Session existiert → dahin wechseln
+            switchToSession(existing.id)
+        } else {
+            // Neue Task-Session erstellen
+            let session = ChatSession(
+                id: UUID(),
+                title: "Task: \(taskName)",
+                messages: [],
+                taskId: taskId
+            )
+            sessions.insert(session, at: 0)
+            currentSessionId = session.id
+            sessionAgentStates[currentSessionId] = SessionAgentState()
+            pendingMessages[currentSessionId] = []
+            sessionLastAccess[currentSessionId] = Date()
+            messages = []
+        }
+
+        // 3. Chat-Mode setzen
         chatMode = .task
         taskChatLabel = taskName
-        upsertCurrentSession()
-        messages = []
+
+        // 4. Zum Chat-Tab navigieren
+        NotificationCenter.default.post(name: .koboldNavigate, object: SidebarTab.chat)
     }
 
     // MARK: - Ollama Controls
@@ -902,7 +1010,7 @@ public class RuntimeViewModel: ObservableObject {
             try? ollamaProc.run()
 
             try? await Task.sleep(nanoseconds: 2_000_000_000) // 2s warten
-            await MainActor.run { [weak self] in
+            _ = await MainActor.run { [weak self] in
                 Task { await self?.checkOllamaStatus() }
             }
         }
@@ -917,8 +1025,8 @@ public class RuntimeViewModel: ObservableObject {
     // MARK: - Connectivity
     
     private func startConnectivityTimer() {
-        // Use async Task loop instead of Timer on main RunLoop (avoids main thread blocking)
-        Task { [weak self] in
+        // A2: Referenz speichern (war fire-and-forget → konnte nie gecancelt werden → Zombie)
+        connectivityTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 5_000_000_000)
                 guard let self, !Task.isCancelled else { break }
@@ -936,13 +1044,14 @@ public class RuntimeViewModel: ObservableObject {
             let (data, _) = try await URLSession.shared.data(for: req)
             if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                json["status"] as? String == "ok" {
-                self.isConnected = true
+                // P5: Nur mutieren wenn sich der Wert ÄNDERT (vermeidet unnötiges objectWillChange)
+                if !self.isConnected { self.isConnected = true }
                 if !wasConnected {
                     addNotification(title: "Daemon verbunden", message: "KoboldOS Daemon ist online", type: .success)
                 }
-            } else { self.isConnected = false }
+            } else { if self.isConnected { self.isConnected = false } }
         } catch {
-            self.isConnected = false
+            if self.isConnected { self.isConnected = false }
             if wasConnected {
                 addNotification(title: "Daemon offline", message: "Verbindung zum Daemon verloren", type: .warning)
             }
@@ -1145,9 +1254,11 @@ public class RuntimeViewModel: ObservableObject {
     }
 
     /// Fügt eine In-App Benachrichtigung hinzu
-    public func addNotification(title: String, message: String, type: KoboldNotification.NotificationType = .info, navigationTarget: String? = nil) {
-        let notif = KoboldNotification(title: title, message: message, navigationTarget: navigationTarget, type: type)
-        notifications.insert(notif, at: 0)
+    public func addNotification(title: String, message: String, type: KoboldNotification.NotificationType = .info, navigationTarget: String? = nil, sessionId: UUID? = nil) {
+        var notif = KoboldNotification(title: title, message: message, navigationTarget: navigationTarget, type: type)
+        notif.sessionId = sessionId
+        // P6: append statt insert(at:0) — O(1) statt O(n) Array-Shuffle
+        notifications.append(notif)
         unreadNotificationCount += 1
         // Max 50 Notifications behalten
         if notifications.count > 50 {
@@ -1157,6 +1268,66 @@ public class RuntimeViewModel: ObservableObject {
 
     public func navigateToTarget(_ target: String) {
         currentViewTab = target
+    }
+
+    // MARK: - Task Execution (Scheduled + Idle)
+
+    /// Task im Hintergrund ausführen — erstellt Task-Session, sendet Message dorthin.
+    /// navigate=true → wechselt UI zur Task-Session (für Cron-Tasks).
+    /// navigate=false → läuft unsichtbar, Notification wenn fertig (für Idle-Tasks).
+    public func executeTask(taskId: String, taskName: String, prompt: String, navigate: Bool) {
+        // 1. Task-Session finden oder erstellen
+        let sessionId: UUID
+        if let existing = sessions.first(where: { $0.taskId == taskId }) {
+            sessionId = existing.id
+        } else {
+            let session = ChatSession(id: UUID(), title: "Task: \(taskName)", messages: [], taskId: taskId)
+            sessions.insert(session, at: 0)
+            sessionId = session.id
+            sessionAgentStates[sessionId] = SessionAgentState()
+            pendingMessages[sessionId] = []
+            sessionLastAccess[sessionId] = Date()
+        }
+
+        if navigate {
+            // Aktuelle Session speichern, zur Task-Session wechseln
+            upsertCurrentSession()
+            currentSessionId = sessionId
+            messages = pendingMessages[sessionId] ?? []
+            chatMode = .task
+            taskChatLabel = taskName
+            objectWillChange.send()
+            // Zum Chat-Tab navigieren
+            NotificationCenter.default.post(name: .koboldNavigate, object: SidebarTab.chat)
+            // Nachricht in aktuelle (= Task) Session senden
+            sendMessage(prompt)
+        } else {
+            // Hintergrund: Nachricht in Task-Session senden ohne UI zu stören
+            sendMessage(prompt, targetSessionId: sessionId)
+        }
+    }
+
+    /// macOS System-Notification (Banner oben rechts) + Klick navigiert zur Session
+    func postSystemNotification(title: String, body: String, sessionId: UUID? = nil) {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.sound = .default
+        if let sid = sessionId {
+            content.userInfo = ["sessionId": sid.uuidString]
+        }
+        let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(request)
+    }
+
+    /// Navigiere zur Task-Session (z.B. wenn Notification geklickt wird)
+    public func navigateToTaskSession(_ sessionId: UUID) {
+        switchToSession(sessionId)
+        NotificationCenter.default.post(
+            name: Notification.Name("koboldNavigateToSession"),
+            object: nil,
+            userInfo: ["sessionId": sessionId]
+        )
     }
 
     public func answerInteractive(messageId: UUID, optionId: String, optionLabel: String) {
@@ -1231,6 +1402,41 @@ public class RuntimeViewModel: ObservableObject {
             contextWindowSize = windowSize
         }
     }
+
+    // MARK: - Cleanup & Deinit (A2: Zombie-Prozess verhindern)
+
+    /// Stoppt alle Background-Tasks und löst Referenzen.
+    /// Wird beim App-Beenden via .koboldShutdownSave Notification aufgerufen.
+    public func cleanup() {
+        connectivityTask?.cancel()
+        connectivityTask = nil
+        offloadTimer?.cancel()
+        offloadTimer = nil
+        saveDebounceTask?.cancel()
+        saveDebounceTask = nil
+        memoryPressureSource?.cancel()
+        memoryPressureSource = nil
+        // Alle laufenden SSE-Streams stoppen
+        for (_, state) in sessionAgentStates {
+            state.streamTask?.cancel()
+        }
+        // NotificationCenter Observer entfernen (nicht in deinit möglich — NSObjectProtocol nicht Sendable)
+        if let obs = shutdownObserver {
+            NotificationCenter.default.removeObserver(obs)
+            shutdownObserver = nil
+        }
+        print("[RuntimeViewModel] Cleanup complete — all background tasks cancelled")
+    }
+
+    deinit {
+        // cleanup() ist @MainActor-isoliert → inline Task-Cancellation in nonisolated deinit.
+        // Task.cancel() und DispatchSource.cancel() sind thread-safe.
+        // shutdownObserver wird in cleanup() entfernt (NSObjectProtocol ist nicht Sendable).
+        connectivityTask?.cancel()
+        offloadTimer?.cancel()
+        saveDebounceTask?.cancel()
+        memoryPressureSource?.cancel()
+    }
 }
 
 // MARK: - Supporting Models
@@ -1304,6 +1510,7 @@ struct ChatMessage: Identifiable, Equatable, Sendable {
 public struct ChatSession: Identifiable, Codable, Sendable {
     public let id: UUID; public var title: String; public var messages: [ChatMessageCodable]
     public var topicId: UUID? = nil
+    public var taskId: String? = nil
     public var createdAt: Date = Date()
     public var hasUnread: Bool = false
     private static let dateFormatter: DateFormatter = {
@@ -1494,6 +1701,8 @@ extension Color {
 private final class SSEStreamDelegate: NSObject, URLSessionDataDelegate, @unchecked Sendable {
     private let continuation: AsyncStream<String>.Continuation
     private var buffer = Data()
+    /// D1: Weak reference to owning URLSession — für invalidateAndCancel() in didComplete
+    weak var owningSession: URLSession?
 
     init(continuation: AsyncStream<String>.Continuation) {
         self.continuation = continuation
@@ -1535,6 +1744,8 @@ private final class SSEStreamDelegate: NSObject, URLSessionDataDelegate, @unchec
             continuation.yield(line)
         }
         continuation.finish()
+        // D1: Bricht den URLSession → Delegate → Continuation Reference Cycle
+        session.invalidateAndCancel()
     }
 }
 
@@ -1574,7 +1785,7 @@ public final class DaemonLog: ObservableObject, @unchecked Sendable {
 
     private init() {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let dir = appSupport.appendingPathComponent("KoboldOS", isDirectory: true)
+        let dir = appSupport.appendingPathComponent("KoboldOS/logs", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         logFileURL = dir.appendingPathComponent("daemon.log")
         loadFromDisk()

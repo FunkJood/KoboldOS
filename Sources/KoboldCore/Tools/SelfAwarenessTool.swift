@@ -85,7 +85,7 @@ public struct SelfAwarenessTool: Tool {
     // MARK: - State
 
     private func getAppState() -> String {
-        let version = "v0.3.2 Alpha"
+        let version = "v0.3.3 Alpha"
         let agentName = UserDefaults.standard.string(forKey: "kobold.agent.name") ?? "Kobold"
         let personality = UserDefaults.standard.string(forKey: "kobold.personality.soul") ?? "(Standard)"
         let model = UserDefaults.standard.string(forKey: "kobold.ollamaModel") ?? "unbekannt"

@@ -228,12 +228,10 @@ struct GlassChatBubble: View {
                             RoundedRectangle(cornerRadius: 18)
                                 .fill(Color.koboldEmerald)
                         } else {
+                            // F2: Einfache Farbe statt .ultraThinMaterial
+                            // Material erzeugt GPU-composited NSVisualEffectView PRO Bubble → Scroll-Lag
                             RoundedRectangle(cornerRadius: 18)
-                                .fill(.ultraThinMaterial)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 18)
-                                        .fill(Color.white.opacity(0.08))
-                                )
+                                .fill(Color.white.opacity(0.08))
                         }
                     }
                 )
@@ -350,7 +348,8 @@ struct LoadingDots: View {
         .onAppear {
             animationTask = Task { @MainActor in
                 while !Task.isCancelled {
-                    try? await Task.sleep(nanoseconds: 400_000_000)
+                    // P7: 600ms statt 400ms — weniger State-Mutations
+                    try? await Task.sleep(nanoseconds: 600_000_000)
                     guard !Task.isCancelled else { break }
                     dotCount = (dotCount + 1) % 4
                 }
@@ -1321,7 +1320,6 @@ struct ThinkingPanelBubble: View {
     let isLive: Bool
     var isNewest: Bool = false
     @State private var expanded: Bool
-    @State private var pulse = false
     @State private var verbIndex = Int.random(in: 0..<ThinkingPlaceholderBubble.thinkingVerbs.count)
     @State private var verbTimer: Task<Void, Never>?
     @State private var scrollDebounceTask: Task<Void, Never>?
@@ -1392,11 +1390,20 @@ struct ThinkingPanelBubble: View {
 
                 // Stream content — always expanded when live
                 if expanded && !entries.isEmpty {
+                    // P3: Only render last 15 entries to reduce layout passes from O(50) to O(15)
+                    let visibleEntries = entries.count > 15 ? Array(entries.suffix(15)) : entries
+                    let hiddenCount = entries.count - visibleEntries.count
+
                     ScrollViewReader { scrollProxy in
                         ScrollView {
                             LazyVStack(alignment: .leading, spacing: 2) {
-                                ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
-                                    thinkingRow(entry, isLatest: isLive && index == entries.count - 1)
+                                if hiddenCount > 0 {
+                                    Text("\(hiddenCount) ältere Schritte")
+                                        .font(.caption).foregroundColor(.secondary)
+                                        .padding(.leading, 8).padding(.top, 4)
+                                }
+                                ForEach(Array(visibleEntries.enumerated()), id: \.element.id) { index, entry in
+                                    thinkingRow(entry, isLatest: isLive && index == visibleEntries.count - 1)
                                         .id(entry.id)
                                 }
                             }
@@ -1430,9 +1437,7 @@ struct ThinkingPanelBubble: View {
                         Image(systemName: "brain")
                             .font(.system(size: 14.5))
                             .foregroundColor(.koboldGold)
-                            .scaleEffect(pulse ? 1.1 : 0.95)
-                            // Single animation — NO dual repeatForever (was causing infinite re-render loop)
-                            .animation(.easeInOut(duration: 1.5).repeatForever(autoreverses: true), value: pulse)
+                            // I1: Komplett statisch — kein scaleEffect-Wechsel mehr
                         Text(thinkingVerb)
                             .font(.system(size: 14, weight: .semibold))
                             .foregroundColor(.koboldGold)
@@ -1449,7 +1454,8 @@ struct ThinkingPanelBubble: View {
                     .fill(Color.koboldGold.opacity(isLive ? 0.08 : 0.06))
                     .overlay(
                         RoundedRectangle(cornerRadius: 12)
-                            .stroke(Color.koboldGold.opacity(isLive ? (pulse ? 0.7 : 0.2) : 0.2), lineWidth: isLive ? 1.5 : 0.5)
+                            // P4: Static opacity — no pulse dependency
+                            .stroke(Color.koboldGold.opacity(isLive ? 0.5 : 0.2), lineWidth: isLive ? 1.5 : 0.5)
                     )
                     // REMOVED: .animation(.repeatForever) on border — dual infinite animations caused 100% CPU
             )
@@ -1457,14 +1463,12 @@ struct ThinkingPanelBubble: View {
         }
         .onAppear {
             if isLive {
-                pulse = true
                 startVerbRotation()
             }
         }
         .onDisappear {
             verbTimer?.cancel()
             scrollDebounceTask?.cancel()
-            pulse = false
         }
     }
 
@@ -1640,7 +1644,9 @@ struct NotificationPopover: View {
                     VStack(spacing: 0) {
                         ForEach(viewModel.notifications) { notif in
                             NotificationRow(notification: notif, onTap: {
-                                if let target = notif.navigationTarget {
+                                if let sid = notif.sessionId {
+                                    viewModel.navigateToTaskSession(sid)
+                                } else if let target = notif.navigationTarget {
                                     viewModel.navigateToTarget(target)
                                 }
                             }, onDismiss: {
@@ -1750,7 +1756,6 @@ struct ToolStatusRow: View {
 // MARK: - ThinkingPlaceholderBubble (sofort sichtbar, bevor Steps ankommen)
 
 struct ThinkingPlaceholderBubble: View {
-    @State private var pulse = false
 
     static let thinkingVerbs = [
         "Denkt...", "Grübelt...", "Brütet...", "Fermentiert...", "Kocht...",
@@ -1772,8 +1777,7 @@ struct ThinkingPlaceholderBubble: View {
                 Image(systemName: "brain")
                     .font(.system(size: 15.5))
                     .foregroundColor(.koboldGold)
-                    .scaleEffect(pulse ? 1.1 : 0.95)
-                    .animation(.easeInOut(duration: 1.0).repeatForever(autoreverses: true), value: pulse)
+                    // I2: Komplett statisch
                 Text(verb)
                     .font(.system(size: 14.5, weight: .semibold))
                     .foregroundColor(.koboldGold)
@@ -1790,8 +1794,7 @@ struct ThinkingPlaceholderBubble: View {
             )
             Spacer(minLength: 80)
         }
-        .onAppear { pulse = true }
-        .onDisappear { pulse = false }
+        // P4: pulse removed — no more repeatForever animations
     }
 }
 

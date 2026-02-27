@@ -57,7 +57,7 @@ public struct ScreenControlTool: Tool, Sendable {
 
         switch action {
         case "screenshot":
-            return try captureScreen(region: arguments["region"])
+            return try await captureScreen(region: arguments["region"])
 
         case "mouse_move":
             guard let x = Double(arguments["x"] ?? ""), let y = Double(arguments["y"] ?? "") else {
@@ -108,7 +108,7 @@ public struct ScreenControlTool: Tool, Sendable {
 
     // MARK: - Screenshot
 
-    private func captureScreen(region: String?) throws -> String {
+    private func captureScreen(region: String?) async throws -> String {
         let id = UUID().uuidString.prefix(8)
         let path = "/tmp/kobold_screen_\(id).png"
 
@@ -126,14 +126,45 @@ public struct ScreenControlTool: Tool, Sendable {
             process.arguments = ["-x", "-t", "png", path]
         }
 
-        try process.run()
-        process.waitUntilExit()
+        // Async statt synchronem waitUntilExit() — verhindert Thread-Blockade
+        let result: String = try await withCheckedThrowingContinuation { continuation in
+            nonisolated(unsafe) let resumed = UnsafeMutablePointer<Bool>.allocate(capacity: 1)
+            resumed.initialize(to: false)
 
-        guard FileManager.default.fileExists(atPath: path) else {
-            throw ToolError.executionFailed("Screenshot fehlgeschlagen. Eventuell fehlen Bildschirmaufnahme-Berechtigungen (Systemeinstellungen → Datenschutz → Bildschirmaufnahme).")
+            let timer = DispatchSource.makeTimerSource(queue: .global())
+            timer.schedule(deadline: .now() + 15) // 15s Timeout für Screenshots
+            timer.setEventHandler {
+                guard !resumed.pointee else { return }
+                resumed.pointee = true
+                process.terminate()
+                continuation.resume(throwing: ToolError.timeout)
+            }
+            timer.resume()
+
+            process.terminationHandler = { _ in
+                timer.cancel()
+                guard !resumed.pointee else { return }
+                resumed.pointee = true
+                if FileManager.default.fileExists(atPath: path) {
+                    continuation.resume(returning: "Screenshot gespeichert: \(path)")
+                } else {
+                    continuation.resume(throwing: ToolError.executionFailed("Screenshot fehlgeschlagen. Eventuell fehlen Bildschirmaufnahme-Berechtigungen (Systemeinstellungen → Datenschutz → Bildschirmaufnahme)."))
+                }
+                resumed.deallocate()
+            }
+
+            do {
+                try process.run()
+            } catch {
+                timer.cancel()
+                if !resumed.pointee {
+                    resumed.pointee = true
+                    continuation.resume(throwing: error)
+                    resumed.deallocate()
+                }
+            }
         }
-
-        return "Screenshot gespeichert: \(path)"
+        return result
     }
 
     // MARK: - Mouse
@@ -254,13 +285,39 @@ public struct ScreenControlTool: Tool, Sendable {
     // MARK: - OCR / Find Text
 
     private func findTextOnScreen(_ searchText: String) async throws -> String {
-        // 1. Take screenshot
+        // 1. Take screenshot (async statt synchronem waitUntilExit)
         let path = "/tmp/kobold_ocr_\(UUID().uuidString.prefix(8)).png"
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
         process.arguments = ["-x", "-t", "png", path]
-        try process.run()
-        process.waitUntilExit()
+
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            nonisolated(unsafe) let resumed = UnsafeMutablePointer<Bool>.allocate(capacity: 1)
+            resumed.initialize(to: false)
+
+            let timer = DispatchSource.makeTimerSource(queue: .global())
+            timer.schedule(deadline: .now() + 15)
+            timer.setEventHandler {
+                guard !resumed.pointee else { return }
+                resumed.pointee = true
+                process.terminate()
+                continuation.resume(throwing: ToolError.timeout)
+            }
+            timer.resume()
+
+            process.terminationHandler = { _ in
+                timer.cancel()
+                guard !resumed.pointee else { return }
+                resumed.pointee = true
+                continuation.resume()
+                resumed.deallocate()
+            }
+
+            do { try process.run() } catch {
+                timer.cancel()
+                if !resumed.pointee { resumed.pointee = true; continuation.resume(throwing: error); resumed.deallocate() }
+            }
+        }
 
         guard let image = NSImage(contentsOfFile: path),
               let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {

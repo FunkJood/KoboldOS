@@ -105,6 +105,11 @@ public actor AgentLoop {
     private var agentType: AgentType = .general
     private var currentProviderConfig: LLMProviderConfig?
 
+    /// G6: Statische Logging-Callbacks — einmal bei App-Start setzen, gelten für ALLE AgentLoop-Instanzen.
+    /// Ermöglicht Cross-Module Logging ohne KoboldLogger-Dependency in KoboldCore.
+    public nonisolated(unsafe) static var onToolLog: (@Sendable (String) -> Void)?
+    public nonisolated(unsafe) static var onBuildLog: (@Sendable (String) -> Void)?
+
     /// Maximum number of message pairs (assistant+user) to keep in context window.
     /// System prompt + original user message are always preserved.
     private let maxContextMessages = 200
@@ -214,8 +219,8 @@ public actor AgentLoop {
         // Apple Integration tools
         await registry.register(CalendarTool())
         await registry.register(ContactsTool())
-        // Browser automation (Playwright/Chrome) & Screen control
-        await registry.register(PlaywrightTool())
+        // Browser automation — Screen control only (PlaywrightTool deaktiviert: synchrones waitUntilExit blockiert UI)
+        // await registry.register(PlaywrightTool())
         await registry.register(ScreenControlTool())
         #endif
 
@@ -591,8 +596,12 @@ public actor AgentLoop {
                 continue
             }
 
+            // G2: Tool-Logging mit Dauer
+            let toolStart = CFAbsoluteTimeGetCurrent()
             let result = await registry.execute(call: call)
+            let toolDuration = CFAbsoluteTimeGetCurrent() - toolStart
             ruleEngine.record(toolName: call.name)
+            Self.onToolLog?("[\(call.name)] duration=\(String(format: "%.2f", toolDuration))s success=\(result.isSuccess) input=\(String(call.arguments.description.prefix(200))) output=\(String(result.outputOrError.prefix(500)))")
 
             let resultText = parser.formatToolResult(result, callId: parsed.callId, toolName: call.name)
 
@@ -737,7 +746,11 @@ public actor AgentLoop {
 
                     messages.append(["role": "assistant", "content": llmResponse])
                     let call = parsed.toToolCall()
+                    // G2: Tool-Logging mit Dauer
+                    let toolStart2 = CFAbsoluteTimeGetCurrent()
                     let result = await self.registry.execute(call: call)
+                    let toolDuration2 = CFAbsoluteTimeGetCurrent() - toolStart2
+                    AgentLoop.onToolLog?("[\(call.name)] duration=\(String(format: "%.2f", toolDuration2))s success=\(result.isSuccess) input=\(String(call.arguments.description.prefix(200))) output=\(String(result.outputOrError.prefix(500)))")
                     let resultText = self.parser.formatToolResult(result, callId: parsed.callId, toolName: call.name)
 
                     continuation.yield(AgentStep(stepNumber: actualStep, type: .toolResult, content: result.outputOrError, toolCallName: call.name, toolResultSuccess: result.isSuccess))
@@ -1135,7 +1148,9 @@ public actor AgentLoop {
                     }
 
                     // Tool execution with timeout to prevent infinite hangs
+                    // G2: Tool-Logging mit Dauer
                     let toolTimeoutSecs: UInt64 = call.name.contains("subordinate") || call.name.contains("parallel") || call.name.contains("delegate") ? 900 : 300
+                    let toolStart3 = CFAbsoluteTimeGetCurrent()
                     let result: ToolResult
                     do {
                         result = try await withThrowingTaskGroup(of: ToolResult.self) { group in
@@ -1155,7 +1170,9 @@ public actor AgentLoop {
                     } catch {
                         result = .failure(error: "Tool '\(call.name)' Timeout nach \(toolTimeoutSecs)s")
                     }
+                    let toolDuration3 = CFAbsoluteTimeGetCurrent() - toolStart3
                     ruleEngine.record(toolName: call.name)
+                    Self.onToolLog?("[\(call.name)] duration=\(String(format: "%.2f", toolDuration3))s success=\(result.isSuccess) input=\(String(call.arguments.description.prefix(200))) output=\(String(result.outputOrError.prefix(500)))")
 
                     let resultText = parser.formatToolResult(result, callId: parsed.callId, toolName: call.name)
 
@@ -1186,7 +1203,7 @@ public actor AgentLoop {
                         let cpUser = userMessage
                         Task { [weak self] in
                             guard let self = self else { return }
-                            await self.saveCheckpoint(messages: cpMessages, stepCount: cpStep, userMessage: cpUser)
+                            _ = await self.saveCheckpoint(messages: cpMessages, stepCount: cpStep, userMessage: cpUser)
                         }
                     }
 
@@ -1611,10 +1628,6 @@ public actor AgentLoop {
         {"tool_name": "speak", "tool_args": {"text": "The weather is nice today.", "voice": "en-US"}}
         {"tool_name": "speak", "tool_args": {"text": "Wichtige Nachricht!", "rate": "0.4"}}
         ```
-
-        {"tool_name": "generate_image", "tool_args": {"prompt": "cute robot playing guitar in a garden", "steps": "40", "guidance_scale": "8.0"}}
-        {"tool_name": "generate_image", "tool_args": {"prompt": "futuristic city at night, neon lights, cyberpunk", "negative_prompt": "ugly, blurry, text, watermark"}}
-        ```
         """
     }
 
@@ -1713,7 +1726,7 @@ public actor AgentLoop {
         // Current model + identity info for self-awareness
         let currentModel = UserDefaults.standard.string(forKey: "kobold.ollamaModel") ?? "unbekannt"
         let koboldName = UserDefaults.standard.string(forKey: "kobold.koboldName") ?? "KoboldOS"
-        let koboldVersion = "v0.3.2"
+        let koboldVersion = "v0.3.3"
 
         let userGreeting = userName.isEmpty ? "" : "\nDer Nutzer heißt \(userName)."
 

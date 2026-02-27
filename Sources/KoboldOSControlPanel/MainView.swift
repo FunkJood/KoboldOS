@@ -75,6 +75,21 @@ struct MainView: View {
         .onChange(of: selectedTab) {
             viewModel.currentViewTab = String(describing: selectedTab)
         }
+        // Scheduled-Task-Observer: Wenn Daemon Cron-Task feuert → Task-Chat öffnen + ausführen
+        .onReceive(NotificationCenter.default.publisher(for: .koboldScheduledTaskFired)) { note in
+            guard let taskId = note.userInfo?["taskId"] as? String,
+                  let taskName = note.userInfo?["taskName"] as? String,
+                  let prompt = note.userInfo?["prompt"] as? String else { return }
+            viewModel.executeTask(taskId: taskId, taskName: taskName, prompt: prompt, navigate: true)
+            selectedTab = .chat
+        }
+        // Notification-Klick: Navigiere zur Task-Session
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("koboldNavigateToSession"))) { note in
+            if let sessionId = note.userInfo?["sessionId"] as? UUID {
+                viewModel.switchToSession(sessionId)
+                selectedTab = .chat
+            }
+        }
     }
 }
 
@@ -281,7 +296,8 @@ struct SidebarView: View {
             .buttonStyle(.plain)
 
             if showNormalChatsInSubTab {
-                ForEach(viewModel.sessions.prefix(100)) { session in
+                let normalOnly = viewModel.sessions.filter { $0.taskId == nil }
+                ForEach(normalOnly.prefix(100)) { session in
                     SidebarSessionRow(
                         session: session,
                         isCurrent: session.id == viewModel.currentSessionId,
@@ -294,8 +310,8 @@ struct SidebarView: View {
                         viewModel.deleteSession(session)
                     }
                 }
-                if viewModel.sessions.count > 20 {
-                    Text("+ \(viewModel.sessions.count - 20) weitere...")
+                if normalOnly.count > 20 {
+                    Text("+ \(normalOnly.count - 20) weitere...")
                         .font(.system(size: 11.5))
                         .foregroundColor(.secondary)
                         .padding(.horizontal, 16)
@@ -444,6 +460,9 @@ struct SidebarView: View {
     @State private var showNewTopicSheet: Bool = false
     @State private var newTopicName: String = ""
     @State private var newTopicColor: String = "#34d399"
+    @State private var cachedFilteredSessions: [ChatSession] = []
+    @State private var cachedDateGroups: [SessionGroup] = []
+    @State private var lastSessionsHash: Int = 0
 
     private var sessionsList: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -509,6 +528,41 @@ struct SidebarView: View {
                 .padding(.bottom, 6)
             }
 
+            // Task-Chats (wenn vorhanden) — immer oben, klar getrennt
+            if !viewModel.taskSessions.isEmpty {
+                HStack(spacing: 6) {
+                    Image(systemName: "checklist")
+                        .font(.system(size: 11))
+                        .foregroundColor(.blue)
+                    Text("Task-Chats")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Text("\(viewModel.taskSessions.count)")
+                        .font(.system(size: 10, weight: .medium, design: .rounded))
+                        .foregroundColor(.secondary.opacity(0.5))
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 4)
+
+                ForEach(viewModel.taskSessions) { session in
+                    SidebarSessionRow(
+                        session: session,
+                        isCurrent: session.id == viewModel.currentSessionId,
+                        icon: "checklist",
+                        accentColor: .blue,
+                        isStreaming: viewModel.streamingSessions.contains(session.id)
+                    ) {
+                        viewModel.switchToSession(session)
+                        selectedTab = .chat
+                    } onDelete: {
+                        withAnimation(.easeOut(duration: 0.25)) { viewModel.deleteSession(session) }
+                    }
+                }
+
+                Rectangle().fill(LinearGradient(colors: [.clear, Color.blue.opacity(0.12), .clear], startPoint: .leading, endPoint: .trailing)).frame(height: 0.5).padding(.horizontal, 10).padding(.vertical, 4)
+            }
+
             // Topic folders
             ForEach(viewModel.topics) { topic in
                 SidebarTopicFolder(
@@ -540,11 +594,9 @@ struct SidebarView: View {
                 )
             }
 
-            // Ungrouped sessions (no topic) — grouped by date
-            let ungrouped = filteredSessions.filter { $0.topicId == nil }
-            if !ungrouped.isEmpty {
-                let dateGroups = groupByDate(ungrouped)
-                ForEach(dateGroups, id: \.label) { group in
+            // Ungrouped sessions (no topic) — grouped by date (gecacht, kein Inline-Sort)
+            if !cachedDateGroups.isEmpty {
+                ForEach(cachedDateGroups, id: \.label) { group in
                     SessionGroupHeader(label: group.label)
                     ForEach(group.sessions) { session in
                         SidebarSessionRow(
@@ -599,6 +651,10 @@ struct SidebarView: View {
         .popover(isPresented: $showNewTopicSheet, arrowEdge: .trailing) {
             newTopicPopover
         }
+        .onAppear { rebuildSessionCache() }
+        .onChange(of: viewModel.sessions.count) { rebuildSessionCache() }
+        .onChange(of: sessionSearchText) { rebuildSessionCache() }
+        .onChange(of: viewModel.sessions.first?.title) { rebuildSessionCache() }
     }
 
     // MARK: - New Topic Popover
@@ -657,15 +713,8 @@ struct SidebarView: View {
 
     // MARK: - Helpers
 
-    private var filteredSessions: [ChatSession] {
-        if sessionSearchText.isEmpty {
-            return viewModel.sessions.sorted { $0.createdAt > $1.createdAt }
-        }
-        let q = sessionSearchText.lowercased()
-        return viewModel.sessions
-            .filter { $0.title.lowercased().contains(q) }
-            .sorted { $0.createdAt > $1.createdAt }
-    }
+    // filteredSessions ist jetzt gecacht — nur bei Änderungen neu berechnet (nicht bei jedem Render)
+    private var filteredSessions: [ChatSession] { cachedFilteredSessions }
 
     private struct SessionGroup: Identifiable {
         let label: String
@@ -673,7 +722,27 @@ struct SidebarView: View {
         var id: String { label }
     }
 
-    private func groupByDate(_ sessions: [ChatSession]) -> [SessionGroup] {
+    /// Sessions + DateGroups neu berechnen (nur aufrufen wenn sessions/searchText sich ändern)
+    private func rebuildSessionCache() {
+        // Task-Sessions aus normaler Chat-Liste ausschließen (werden in tasksSidebarList angezeigt)
+        let normalSessions = viewModel.sessions.filter { $0.taskId == nil }
+        let sorted: [ChatSession]
+        if sessionSearchText.isEmpty {
+            sorted = normalSessions.sorted { $0.createdAt > $1.createdAt }
+        } else {
+            let q = sessionSearchText.lowercased()
+            sorted = normalSessions
+                .filter { $0.title.lowercased().contains(q) }
+                .sorted { $0.createdAt > $1.createdAt }
+        }
+        cachedFilteredSessions = sorted
+
+        // DateGroups für ungrouped sessions
+        let ungrouped = sorted.filter { $0.topicId == nil }
+        cachedDateGroups = buildDateGroups(ungrouped)
+    }
+
+    private func buildDateGroups(_ sessions: [ChatSession]) -> [SessionGroup] {
         let calendar = Calendar.current
         let now = Date()
         let sorted = sessions.sorted { $0.createdAt > $1.createdAt }
@@ -903,7 +972,7 @@ struct SidebarTopicFolder: View {
 
             // Sessions inside folder
             if topic.isExpanded {
-                ForEach(sessions.sorted { $0.createdAt > $1.createdAt }) { session in
+                ForEach(sessions) { session in
                     SidebarSessionRow(
                         session: session,
                         isCurrent: session.id == currentSessionId,
@@ -1165,7 +1234,6 @@ struct SidebarSessionRow: View {
     let onDelete: () -> Void
 
     @State private var isHovered: Bool = false
-    @State private var pulseScale: CGFloat = 1.0
 
     private var effectiveAccent: Color { topicColor ?? accentColor }
 
@@ -1185,17 +1253,15 @@ struct SidebarSessionRow: View {
         HStack(spacing: 0) {
             Button(action: onTap) {
                 HStack(spacing: 8) {
-                    // Status indicator dot (AgentZero-style)
+                    // Status indicator dot — statisch, keine repeatForever Animation
                     ZStack {
                         Circle()
                             .fill(isCurrent ? effectiveAccent : Color.secondary.opacity(0.3))
                             .frame(width: 7, height: 7)
                         if isStreaming {
                             Circle()
-                                .fill(effectiveAccent.opacity(0.4))
-                                .frame(width: 7, height: 7)
-                                .scaleEffect(pulseScale)
-                                .opacity(2.0 - Double(pulseScale))
+                                .stroke(effectiveAccent.opacity(0.6), lineWidth: 1.5)
+                                .frame(width: 12, height: 12)
                         }
                         if session.hasUnread && !isCurrent {
                             Circle()
@@ -1251,19 +1317,7 @@ struct SidebarSessionRow: View {
         }
         .cornerRadius(8)
         .padding(.horizontal, 4)
-        .scaleEffect(isHovered && !isCurrent ? 1.01 : 1.0)
-        .animation(.easeOut(duration: 0.15), value: isHovered)
         .onHover { hovering in isHovered = hovering }
-        .onAppear { if isStreaming { startPulse() } }
-        .onChange(of: isStreaming) {
-            if isStreaming { startPulse() } else { pulseScale = 1.0 }
-        }
-    }
-
-    private func startPulse() {
-        withAnimation(.easeInOut(duration: 1.0).repeatForever(autoreverses: false)) {
-            pulseScale = 2.0
-        }
     }
 }
 

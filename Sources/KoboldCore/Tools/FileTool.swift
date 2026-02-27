@@ -88,7 +88,7 @@ public struct FileTool: Tool, Sendable {
             guard permissionEnabled("kobold.perm.createFiles") || FileManager.default.fileExists(atPath: resolvedPath) else {
                 throw ToolError.unauthorized("Dateien erstellen ist in den Einstellungen deaktiviert.")
             }
-            return try writeFile(at: resolvedPath, content: content)
+            return try await writeFile(at: resolvedPath, content: content)
         case "list":
             return try listDirectory(at: resolvedPath)
         case "exists":
@@ -147,8 +147,8 @@ public struct FileTool: Tool, Sendable {
 
         // Check for symlink escape
         let url = URL(fileURLWithPath: canonical)
-        if let resolved = try? url.resolvingSymlinksInPath(),
-           !resolved.path.hasPrefix(canonical) {
+        let resolved = url.resolvingSymlinksInPath()
+        if resolved.path != canonical {
             let resolvedStr = resolved.path
             let allowed2 = Self.allowedBases.contains { resolvedStr.hasPrefix($0) }
             if !allowed2 {
@@ -182,7 +182,7 @@ public struct FileTool: Tool, Sendable {
         return "File: \(path)\nSize: \(size) bytes\n---\n\(content)"
     }
 
-    private func writeFile(at path: String, content: String) throws -> String {
+    private func writeFile(at path: String, content: String) async throws -> String {
         if content.utf8.count > 5 * 1024 * 1024 { // 5MB limit
             throw ToolError.executionFailed("Content too large (> 5MB limit)")
         }
@@ -198,9 +198,12 @@ public struct FileTool: Tool, Sendable {
             withIntermediateDirectories: true
         )
 
-        // Atomic write
+        // H1: Atomic write — removeItem vor moveItem damit Overwrite funktioniert
         let tmp = path + ".tmp.\(UUID().uuidString)"
         try content.write(toFile: tmp, atomically: false, encoding: .utf8)
+        if FileManager.default.fileExists(atPath: path) {
+            try FileManager.default.removeItem(atPath: path)
+        }
         try FileManager.default.moveItem(atPath: tmp, toPath: path)
 
         let newLines = content.components(separatedBy: "\n")
@@ -208,7 +211,7 @@ public struct FileTool: Tool, Sendable {
 
         // Generate diff for UI display (Claude Code-style)
         if let old = oldContent {
-            let diff = generateUnifiedDiff(old: old, new: content, fileName: fileName)
+            let diff = await generateUnifiedDiff(old: old, new: content, fileName: fileName)
             if !diff.isEmpty {
                 output += "\n__DIFF__\n\(diff)"
             }
@@ -224,7 +227,7 @@ public struct FileTool: Tool, Sendable {
 
     // MARK: - Unified Diff Generator (for Claude Code-style display)
 
-    private func generateUnifiedDiff(old: String, new: String, fileName: String) -> String {
+    private func generateUnifiedDiff(old: String, new: String, fileName: String) async -> String {
         let oldLines = old.components(separatedBy: "\n")
         let newLines = new.components(separatedBy: "\n")
         if oldLines == newLines { return "" }
@@ -244,21 +247,17 @@ public struct FileTool: Tool, Sendable {
             return ""
         }
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/diff")
-        process.arguments = ["-u", "-U3",
-                             "--label", "a/\(fileName)",
-                             "--label", "b/\(fileName)",
-                             oldFile, newFile]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
+        guard let result = try? await AsyncProcess.run(
+            executable: "/usr/bin/diff",
+            arguments: ["-u", "-U3",
+                        "--label", "a/\(fileName)",
+                        "--label", "b/\(fileName)",
+                        oldFile, newFile],
+            timeout: 10
+        ) else { return "" }
 
-        guard let _ = try? process.run() else { return "" }
-        process.waitUntilExit()
-
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        guard let diffOutput = String(data: data, encoding: .utf8), !diffOutput.isEmpty else { return "" }
+        let diffOutput = result.stdout
+        guard !diffOutput.isEmpty else { return "" }
 
         // Limit output to prevent huge diffs from bloating the chat
         let lines = diffOutput.components(separatedBy: "\n")
@@ -293,9 +292,10 @@ public struct FileTool: Tool, Sendable {
             throw ToolError.executionFailed("File not found: \(path)")
         }
 
-        // Extra safety: don't delete KoboldOS core files
-        if path.hasSuffix(".swift") || path.hasSuffix(".app") {
-            throw ToolError.unauthorized("Cannot delete code/app files")
+        // H5: Nur Systemdateien schützen — User-Dateien in erlaubten Verzeichnissen sind OK
+        let isInAllowedDir = Self.allowedBases.contains(where: { path.hasPrefix($0) })
+        if !isInAllowedDir && (path.hasSuffix(".swift") || path.hasSuffix(".app")) {
+            throw ToolError.unauthorized("Cannot delete code/app files outside allowed directories")
         }
 
         try FileManager.default.removeItem(atPath: path)

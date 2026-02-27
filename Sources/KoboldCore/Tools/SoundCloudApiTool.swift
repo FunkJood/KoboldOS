@@ -30,15 +30,14 @@ public struct SoundCloudApiTool: Tool {
         let paramsStr = arguments["params"]
         let bodyStr = arguments["body"]
 
-        let store = SecretStore.shared
-        guard var accessToken = await store.get("soundcloud.access_token") else {
+        let d = UserDefaults.standard
+        guard var accessToken = d.string(forKey: "kobold.soundcloud.accessToken"), !accessToken.isEmpty else {
             return "Error: Nicht bei SoundCloud angemeldet. Bitte zuerst in Einstellungen → Verbindungen → SoundCloud anmelden."
         }
 
         // Check expiry and refresh
-        if let expiryStr = await store.get("soundcloud.token_expiry"),
-           let expiryInterval = Double(expiryStr),
-           Date(timeIntervalSince1970: expiryInterval) < Date() {
+        let expiryInterval = d.double(forKey: "kobold.soundcloud.tokenExpiry")
+        if expiryInterval > 0 && Date(timeIntervalSince1970: expiryInterval) < Date() {
             if let newToken = await refreshToken() {
                 accessToken = newToken
             } else {
@@ -98,8 +97,8 @@ public struct SoundCloudApiTool: Tool {
     private let scClientSecret = "wj9oBAItfD0X1asfihfOABkql9FTZAV1"
 
     private func refreshToken() async -> String? {
-        let store = SecretStore.shared
-        guard let refreshToken = await store.get("soundcloud.refresh_token") else { return nil }
+        let d = UserDefaults.standard
+        guard let refreshToken = d.string(forKey: "kobold.soundcloud.refreshToken"), !refreshToken.isEmpty else { return nil }
 
         guard let url = URL(string: "https://secure.soundcloud.com/oauth/token") else { return nil }
         var request = URLRequest(url: url)
@@ -122,8 +121,11 @@ public struct SoundCloudApiTool: Tool {
             let expiresIn = json["expires_in"] as? Int ?? 86400
             let expiry = Date().addingTimeInterval(TimeInterval(expiresIn - 60))
 
-            await store.set(newToken, forKey: "soundcloud.access_token")
-            await store.set(String(expiry.timeIntervalSince1970), forKey: "soundcloud.token_expiry")
+            d.set(newToken, forKey: "kobold.soundcloud.accessToken")
+            d.set(expiry.timeIntervalSince1970, forKey: "kobold.soundcloud.tokenExpiry")
+            if let newRefresh = json["refresh_token"] as? String, !newRefresh.isEmpty {
+                d.set(newRefresh, forKey: "kobold.soundcloud.refreshToken")
+            }
             return newToken
         } catch {
             return nil

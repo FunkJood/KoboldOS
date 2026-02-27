@@ -13,6 +13,7 @@ extension Notification.Name {
     static let koboldProjectsChanged = Notification.Name("koboldProjectsChanged")
     static let koboldWorkflowRun = Notification.Name("koboldWorkflowRun")
     static let koboldLateStartup = Notification.Name("koboldLateStartup")
+    static let koboldScheduledTaskFired = Notification.Name("koboldScheduledTaskFired")
 }
 
 // MARK: - App Entry Point
@@ -136,6 +137,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         )
         print("[AppDelegate] High-performance activity token acquired")
 
+        // G6: Cross-Module Logging-Callbacks setzen (KoboldCore → KoboldOSControlPanel)
+        AgentLoop.onToolLog = { msg in ktool(msg) }
+        AgentLoop.onBuildLog = { msg in kbuild(msg) }
+
         // Start daemon
         RuntimeManager.shared.startDaemon()
         print("[AppDelegate] Daemon start triggered")
@@ -158,8 +163,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        // A4: Shutdown-Reihenfolge: Save → Cleanup → Token freigeben
+        // 1. RuntimeViewModel reagiert auf diese Notification: save + cleanup
         NotificationCenter.default.post(name: .koboldShutdownSave, object: nil)
+
+        // A3: Telegram-Bot stoppen (Polling-Task läuft sonst ewig)
+        TelegramBot.shared.stop()
+
+        // 3. Proactive + Runtime cleanup
         ProactiveEngine.shared.cleanup()
         RuntimeManager.shared.cleanup()
+
+        // A1: Activity Token freigeben (macOS hielt Prozess wegen beginActivity() am Leben)
+        if let token = activityToken {
+            ProcessInfo.processInfo.endActivity(token)
+            activityToken = nil
+            print("[AppDelegate] Activity token released")
+        }
     }
 }
