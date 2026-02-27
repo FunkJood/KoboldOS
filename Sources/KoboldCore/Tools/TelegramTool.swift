@@ -68,7 +68,7 @@ public struct TelegramTool: Tool, Sendable {
             return "Error: Ungültige Bot-Token URL"
         }
 
-        let chunks = splitMessage(text, maxLength: 4000)
+        let chunks = splitMessage(text, maxLength: 4096)
         var sentCount = 0
 
         for chunk in chunks {

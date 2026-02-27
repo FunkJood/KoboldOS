@@ -249,14 +249,22 @@ final class TelegramBot: @unchecked Sendable {
             return
         }
 
-        // Send "typing" indicator
-        await sendChatAction(token: token, chatId: chatId, action: "typing")
+        // Continuous "typing" indicator — runs every 4s until agent responds
+        let typingTask = Task {
+            while !Task.isCancelled {
+                await sendChatAction(token: token, chatId: chatId, action: "typing")
+                try? await Task.sleep(nanoseconds: 4_000_000_000)
+            }
+        }
 
         // Add user message to history
         appendHistory(chatId: chatId, role: "user", text: messageText)
 
         // Forward to KoboldOS agent with conversation context
         var response = await forwardToAgent(message: messageText, chatId: chatId)
+
+        // Stop typing indicator
+        typingTask.cancel()
 
         // Guard against empty responses (Telegram rejects empty messages)
         if response.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -266,7 +274,7 @@ final class TelegramBot: @unchecked Sendable {
         // Add assistant response to history
         appendHistory(chatId: chatId, role: "assistant", text: response)
 
-        // Send response back to Telegram
+        // Send response back to Telegram (full message — split at API limit 4096)
         await sendMessage(token: token, chatId: chatId, text: response)
     }
 
@@ -535,7 +543,7 @@ final class TelegramBot: @unchecked Sendable {
     private func sendMessage(token: String, chatId: Int64, text: String) async {
         guard let url = URL(string: "https://api.telegram.org/bot\(token)/sendMessage") else { return }
 
-        let chunks = splitMessage(text, maxLength: 4000)
+        let chunks = splitMessage(text, maxLength: 4096)
         for chunk in chunks {
             var req = URLRequest(url: url)
             req.httpMethod = "POST"
