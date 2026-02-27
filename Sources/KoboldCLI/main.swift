@@ -1,12 +1,13 @@
 import ArgumentParser
 import Foundation
+import KoboldCore
 
 @main
 struct KoboldCLI: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "kobold",
         abstract: "KoboldOS — Native macOS AI Agent Runtime",
-        version: "0.3.4",
+        version: KoboldVersion.current,
         subcommands: [
             InteractiveChatCommand.self,
             DaemonCommand.self,

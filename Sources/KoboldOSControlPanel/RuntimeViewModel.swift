@@ -457,12 +457,12 @@ public class RuntimeViewModel: ObservableObject {
             DaemonLog.shared.add("SSE connecting to \(url)", category: .network)
             let lines = self.sseLines(for: req)
 
-            // Start 1.5s flush timer for UI updates (user-requested: stability over responsiveness)
-            // SSEAccumulator still collects events in real-time, but UI only refreshes every 1.5s
-            // P2: Flush interval 2.0s (was 1.5s) — fewer re-renders per second
+            // Flush timer for UI updates (stability over responsiveness)
+            // SSEAccumulator collects events in real-time, UI refreshes every 3s
+            // P3: Flush interval 3.0s (was 2.0s) — fewer re-renders per second
             let flushTask = Task { [weak self] in
                 while !Task.isCancelled {
-                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                    try? await Task.sleep(nanoseconds: 3_000_000_000)
                     guard let self, !Task.isCancelled else { break }
                     let flush = await accumulator.takePendingFlush()
                     if !flush.steps.isEmpty || flush.contextPromptTokens != nil {
@@ -1115,7 +1115,7 @@ public class RuntimeViewModel: ObservableObject {
         // A2: Referenz speichern (war fire-and-forget → konnte nie gecancelt werden → Zombie)
         connectivityTask = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                try? await Task.sleep(nanoseconds: 15_000_000_000)
                 guard let self, !Task.isCancelled else { break }
                 await self.checkConnectivity()
             }

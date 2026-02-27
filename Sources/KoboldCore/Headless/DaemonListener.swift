@@ -226,7 +226,7 @@ public actor DaemonListener {
         case "/health":
             return jsonOK([
                 "status": "ok",
-                "version": "0.3.4",
+                "version": KoboldVersion.current,
                 "pid": Int(ProcessInfo.processInfo.processIdentifier),
                 "uptime": Int(Date().timeIntervalSince(startTime))
             ])
@@ -925,7 +925,7 @@ public actor DaemonListener {
     private func buildAgentCard() -> [String: Any] {
         [
             "name": "KoboldOS",
-            "version": "0.3.4",
+            "version": KoboldVersion.current,
             "description": "Native macOS AI Agent Runtime — local-first, privacy-focused",
             "capabilities": [
                 "streaming": true,

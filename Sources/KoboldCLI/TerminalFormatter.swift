@@ -1,4 +1,5 @@
 import Foundation
+import KoboldCore
 
 // MARK: - TerminalFormatter
 // ANSI color formatting for terminal output.
@@ -91,7 +92,7 @@ enum TerminalFormatter {
     static func banner() -> String {
         let art = """
 
-         \u{1F432} KoboldOS v0.3.4
+         \u{1F432} KoboldOS v\(KoboldVersion.current)
          Lokaler KI-Agent für macOS
          /help für Befehle, /quit zum Beenden
 

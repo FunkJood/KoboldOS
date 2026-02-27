@@ -4167,7 +4167,7 @@ struct SettingsView: View {
                     )
                 VStack(alignment: .leading, spacing: 4) {
                     Text("KoboldOS").font(.title.bold())
-                    Text("Alpha v0.3.4").font(.title3).foregroundColor(.koboldGold)
+                    Text(KoboldVersion.label).font(.title3).foregroundColor(.koboldGold)
                     Text("Dein lokaler KI-Assistent für macOS")
                         .font(.subheadline).foregroundColor(.secondary)
                 }
@@ -4177,7 +4177,7 @@ struct SettingsView: View {
         }
 
         FuturisticBox(icon: "info.circle", title: "Build-Info", accent: .koboldGold) {
-                infoRow("Version", "Alpha v0.3.4")
+                infoRow("Version", KoboldVersion.label)
                 infoRow("Build", "2026-02-27")
                 infoRow("Swift", "6.0")
                 infoRow("Plattform", "macOS 14+ (Sonoma)")
@@ -4255,7 +4255,7 @@ struct SettingsView: View {
         panel.allowedContentTypes = [.plainText]
         panel.nameFieldStringValue = "koboldos-logs.txt"
         if panel.runModal() == .OK, let url = panel.url {
-            let logs = "KoboldOS Alpha v0.3.4 — Logs\nPID: \(ProcessInfo.processInfo.processIdentifier)\nUptime: \(Date())\n"
+            let logs = "KoboldOS \(KoboldVersion.label) — Logs\nPID: \(ProcessInfo.processInfo.processIdentifier)\nUptime: \(Date())\n"
             try? logs.write(to: url, atomically: true, encoding: .utf8)
         }
     }

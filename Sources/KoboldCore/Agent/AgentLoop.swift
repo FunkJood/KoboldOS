@@ -1982,7 +1982,7 @@ public actor AgentLoop {
         // Current model + identity info for self-awareness
         let currentModel = UserDefaults.standard.string(forKey: "kobold.ollamaModel") ?? "unbekannt"
         let koboldName = UserDefaults.standard.string(forKey: "kobold.koboldName") ?? "KoboldOS"
-        let koboldVersion = "v0.3.4"
+        let koboldVersion = "v\(KoboldVersion.current)"
 
         let userGreeting = userName.isEmpty ? "" : "\nDer Nutzer heißt \(userName)."
 

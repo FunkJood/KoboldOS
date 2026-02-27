@@ -127,7 +127,7 @@ public actor SkillLoader {
 
     // MARK: - Default Skills
 
-    private let currentSkillsVersion = "v0.3.4"
+    private let currentSkillsVersion = "v\(KoboldVersion.current)"
 
     private func createDefaultSkillsIfNeeded() {
         let marker = skillsDir.appendingPathComponent(".defaults_installed")

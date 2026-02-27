@@ -1,4 +1,5 @@
 import SwiftUI
+import KoboldCore
 
 struct StatusIndicatorView: View {
     let status: String
@@ -72,7 +73,7 @@ struct StatusIndicatorView: View {
 
             // Alpha version badge
             HStack(spacing: 4) {
-                Text("Alpha v0.3.4")
+                Text(KoboldVersion.label)
                     .font(.system(size: 9.5, weight: .bold))
                     .foregroundColor(.koboldGold)
                     .padding(.horizontal, 5)

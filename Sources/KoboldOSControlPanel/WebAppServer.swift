@@ -1,5 +1,6 @@
 import Foundation
 import Network
+import KoboldCore
 
 // MARK: - WebAppServer — Local HTTP server serving a full mirror of the native UI
 
@@ -1262,7 +1263,7 @@ final class WebAppServer: @unchecked Sendable {
               '<div class="settings-row"><span class="settings-label">PID</span><span class="settings-value">'+(health.pid||'?')+'</span></div>'+
               '<div class="settings-row"><span class="settings-label">Status</span><span class="settings-value" style="color:var(--green)">Online</span></div>'+
               '<div class="settings-row"><span class="settings-label">Modell</span><span class="settings-value">'+(metrics.model||'?')+'</span></div>';
-            document.getElementById('aboutVersion').textContent='Alpha '+(health.version||'v0.3.4');
+            document.getElementById('aboutVersion').textContent='Alpha '+(health.version||'v\(KoboldVersion.current)');
 
             const modelList=document.getElementById('modelList');
             const available=models.models||[];

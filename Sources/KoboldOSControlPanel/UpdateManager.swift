@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import KoboldCore
 
 // MARK: - UpdateManager
 // GitHub-based auto-update system.
@@ -9,7 +10,7 @@ import AppKit
 final class UpdateManager: ObservableObject {
     static let shared = UpdateManager()
 
-    static let currentVersion = "0.3.4"
+    static let currentVersion = KoboldVersion.current
 
     @Published var state: UpdateState = .idle
     @Published var latestVersion: String?
