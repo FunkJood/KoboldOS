@@ -2,30 +2,52 @@
 
 ## Alpha v0.3.3 — 2026-02-27
 
+### File-Upload für YouTube, SoundCloud & Telegram
+- **YouTube Resumable Upload**: 2-Phasen-Protokoll (POST Metadata → PUT Binary an Location-Header), 600s Timeout, GoogleApiTool mit `file_path` Parameter
+- **SoundCloud Upload**: Multipart/form-data mit `track[asset_data]`, Titel/Genre/Tags/Sharing, 500MB Limit, 300s Timeout
+- **Telegram File-Sending**: `send_file`, `send_photo`, `send_audio` Aktionen via Multipart, 50MB Bot-API Limit
+- **Google Drive Upload**: Multipart/related Upload (JSON Metadata + Binary in einem POST)
+- **MIME-Type-Erkennung**: 30+ Formate (Video, Audio, Dokumente, Archive, Code)
+
+### Neue Verbindungen
+- **Suno AI (Musik-Generierung)**: generate/status/get_track/list_tracks, Bearer-Auth via sunoapi.org, 2 Versionen pro Generierung, Connection Card in Einstellungen
+- **Reddit OAuth**: search/hot/new/read_post/comment/user_info/subreddit_info, OAuth mit Basic Auth Token-Exchange, permanente Tokens
+- **OAuthTokenHelper**: Generischer Token-Refresh-Helper in KoboldCore für alle OAuth-Services
+
+### OAuth Token Refresh & 401-Detection
+- **Microsoft + Uber**: Automatischer Token-Refresh via OAuthTokenHelper
+- **GitHub/Slack/Notion/WhatsApp**: 401-Detection mit klarer "Bitte neu anmelden" Fehlermeldung
+- **Connection Verification**: Echte Token-Prüfung via API-Call beim Öffnen der Einstellungen (statt gespeicherter Bool), concurrent via TaskGroup
+
+### Tool-Call Recovery (Agent-Stabilität)
+- **Embedded Tool-Call Detection**: `extractEmbeddedToolCall()` findet Tool-Calls die in Response-Text eingebettet sind (lokale Modelle wrappen manchmal Tool-Calls in "response")
+- **String-aware Brace-Parsing**: `extractBalancedJSONBlocks` ignoriert jetzt Braces innerhalb von JSON-Strings
+- **Recovery in beiden Paths**: `runStreaming` + `runInner` (vorher hatte runInner keine Recovery)
+
+### Telegram Bot Fix
+- **Doppel-Nachricht verhindert**: Agent nutzte `telegram_send` für Text-Antworten UND TelegramBot relayed Response → Doppel-Nachricht
+- **Source-Tag Handling**: Bei `source="telegram"` bekommt Agent Instruktion, `response`-Tool zu nutzen (TelegramBot relayed automatisch)
+- **System-Prompt**: `telegram_send` jetzt nur für Dateien/Fotos/Audio und proaktive Benachrichtigungen
+
 ### Task-Chat-System
 - **Eigene Chats pro Task**: Jede geplante und Idle-Task bekommt einen isolierten Chat
 - **ChatSession.taskId**: Neues Feld unterscheidet Task-Sessions von normalen Chats
 - **executeTask()**: Zentraler Entry-Point für Cron- und Idle-Task-Ausführung
 - **Sidebar-Sektion "Task-Chats"**: Eigene Sektion mit blauem Checklist-Icon über den normalen Chats
-- **Background-Execution**: Idle-Tasks laufen im Hintergrund ohne UI-Disruption
 
 ### Cron-Task Routing
-- **DaemonListener → NotificationCenter**: Cron-Tasks posten jetzt Notification statt `handleAgent()` direkt (Output ging vorher verloren)
-- **MainView.onReceive**: Empfängt Task-Notification auf MainActor, öffnet Task-Chat
+- **DaemonListener → NotificationCenter**: Cron-Tasks posten jetzt Notification statt `handleAgent()` direkt
 - **ProactiveEngine**: Idle-Tasks nutzen `executeTask()` statt `sendMessage()` auf dem aktuellen Chat
 
-### Notification-System
-- **UNUserNotificationCenter**: Ersetzt deprecated `NSUserNotification` für macOS System-Notifications
-- **Click-to-Navigate**: Klick auf In-App-Notification navigiert zum Task-Chat
-- **System-Notifications**: Bei Task-Abschluss erscheint macOS-Notification mit Ergebnis-Preview
-
-### Bug Fixes
-- **SoundCloud OAuth Token Mismatch**: API-Tool las aus SecretStore statt UserDefaults — Token-Keys synchronisiert
-- **Sidebar-Filter**: Task-Sessions erscheinen nicht mehr in der normalen Chat-Liste
-- **sendMessage(targetSessionId:)**: Messages landen in der richtigen Session statt immer im aktuellen Chat
+### Weitere Fixes
+- **FileTool Path-Erweiterung**: Zugriff auf gesamtes Home-Verzeichnis + `/tmp` (mit Blocklist für `.ssh`, Keychains, GPG, Cookies)
+- **SoundCloud OAuth Token Mismatch**: API-Tool las aus SecretStore statt UserDefaults — synchronisiert
+- **Google OAuth Credential-Felder**: Client-ID + Secret Eingabefelder in Verbindungen
+- **iMessage-Integration entfernt** (Telegram ist stabil)
+- **UNUserNotificationCenter**: Ersetzt deprecated `NSUserNotification`
 
 ### Statistik
-- ~49.500 Lines of Code
+- ~51.840 Lines of Code
 
 ---
 

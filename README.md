@@ -25,7 +25,7 @@ Or just open `~/Desktop/KoboldOS-0.3.3.dmg`, drag to Applications, and launch.
 ## Features
 
 - **Autonomous Agent**: Full agent loop with tool execution, memory, and multi-step reasoning
-- **25+ Built-in Tools**: Shell, File, Browser, Playwright, Screen Control, Calculator, Calendar, Contacts, Telegram, Google APIs, and more
+- **35+ Built-in Tools**: Shell, File, Browser, Playwright, Screen Control, Calculator, Calendar, Contacts, Telegram, Google/YouTube/Drive, SoundCloud, Suno AI, Reddit, Microsoft, GitHub, Slack, Notion, Uber, WhatsApp, and more
 - **Teams (AI-Beratungsgremium)**: Parallele AI-Agenten diskutieren in 3 Runden (Analyse → Diskussion → Synthese)
 - **Playwright Browser Automation**: Chrome navigieren, klicken, ausfüllen, Screenshots, JavaScript ausführen
 - **Screen Control**: Maus/Tastatur-Steuerung, Screenshots, OCR via Vision.framework
@@ -34,7 +34,7 @@ Or just open `~/Desktop/KoboldOS-0.3.3.dmg`, drag to Applications, and launch.
 - **Speech**: Text-to-Speech (AVSpeechSynthesizer) + Speech-to-Text (whisper.cpp via SwiftWhisper)
 - **Image Generation**: Local Stable Diffusion via Apple ml-stable-diffusion (CoreML) mit Modell-Auswahl
 - **Persistent Memory**: Three-tier memory system (Kurzzeit/Langzeit/Wissen) with vector search
-- **Connections**: Google OAuth, SoundCloud, Telegram Bot, WebApp Server, Cloudflare Tunnel, A2A Protocol
+- **Connections**: Google OAuth (YouTube/Drive Upload), SoundCloud (Upload), Telegram Bot (File/Photo/Audio), Suno AI (Musik), Reddit, Microsoft, GitHub, Slack, Notion, Uber, WhatsApp, A2A Protocol
 - **Proactive Agent**: Heartbeat-System, Idle-Tasks, Goals, System-Health-Alerts
 - **Scheduled Tasks**: Cron-based task scheduler with auto-execution + Team-Integration
 - **Workflows**: Visual workflow editor with multi-step automations + Team-Nodes
@@ -98,8 +98,11 @@ Sources/
 │   ├── Agent/               AgentLoop  ToolCallParser  ToolRuleEngine
 │   ├── Tools/               FileTool  ShellTool  BrowserTool  TTSTool  GenerateImageTool
 │   │                        PlaywrightTool  ScreenControlTool  CalendarTool  ContactsTool
-│   │                        TelegramSendTool  GoogleAPITool  DelegateTaskTool
-│   │                        WorkflowManageTool  SkillWriteTool
+│   │                        TelegramTool  GoogleApiTool  SoundCloudApiTool
+│   │                        SunoApiTool  RedditApiTool  MicrosoftApiTool
+│   │                        GitHubApiTool  SlackApiTool  NotionApiTool
+│   │                        UberApiTool  WhatsAppApiTool  OAuthTokenHelper
+│   │                        DelegateTaskTool  WorkflowManageTool  SkillWriteTool
 │   ├── Memory/              CoreMemory (actor, Letta-style labeled blocks)
 │   ├── Native/              LLMRunner (Ollama + llama-server)
 │   ├── Headless/            DaemonListener (TCP HTTP server, raw Darwin sockets)
@@ -163,9 +166,17 @@ Final answers go through the `response` tool: `{"tool_name": "response", "tool_a
 | `generate_image` | Stable Diffusion image generation |
 | `calendar` | Apple Calendar events & reminders |
 | `contacts` | Apple Contacts search |
-| `telegram_send` | Send Telegram messages |
-| `google_api` | Google Drive, Gmail, YouTube, Calendar |
-| `soundcloud_api` | SoundCloud API access |
+| `telegram_send` | Send Telegram messages, files, photos, audio |
+| `google_api` | Google Drive, Gmail, YouTube (incl. video upload), Calendar |
+| `soundcloud_api` | SoundCloud: tracks, playlists, audio upload |
+| `suno_api` | Suno AI music generation (generate, status, get_track) |
+| `reddit_api` | Reddit: search, browse, post, comment |
+| `microsoft_api` | Microsoft Graph API (OneDrive, Outlook, Teams) |
+| `github_api` | GitHub API (repos, issues, PRs) |
+| `slack_api` | Slack messaging and channels |
+| `notion_api` | Notion pages and databases |
+| `uber_api` | Uber ride management |
+| `whatsapp_api` | WhatsApp Business messaging |
 | `playwright` | Chrome browser automation (navigate, click, fill, screenshot, evaluate) |
 | `screen_control` | Mouse/keyboard control, screenshots, OCR (Vision.framework) |
 | `core_memory_append/replace` | Memory management |
@@ -243,7 +254,7 @@ Accessible via **Einstellungen** tab (14 sections):
 - **Gedächtnis**: Memory limits, recall, auto-memorization, export/import
 - **Berechtigungen**: Autonomy level (1=safe/2=normal/3=full), individual permission toggles, Playwright + Screen Control
 - **Datenschutz & Sicherheit**: Safe mode, API keys, secrets (Keychain)
-- **Verbindungen**: Google, SoundCloud, Telegram, WebApp, Cloudflare Tunnel, A2A Protocol
+- **Verbindungen**: Google (YouTube/Drive Upload), SoundCloud (Upload), Telegram (Files), Suno AI, Reddit, Microsoft, GitHub, Slack, Notion, Uber, WhatsApp, WebApp, Cloudflare Tunnel, A2A Protocol
 - **Sprache & Audio**: TTS (voice, rate, volume), STT (model, language), Stable Diffusion (model selection, prompts, steps, guidance)
 - **Fähigkeiten**: Skill management with enable/disable toggles
 - **Benachrichtigungen**: Notification settings
@@ -291,4 +302,4 @@ bash scripts/build.sh
 - Playwright requires `npm install -g playwright` and Chrome installed
 - Screen Control requires macOS Accessibility permissions (System Preferences → Security → Accessibility)
 - Teams marketplace items are mock/placeholder data
-- MCP (Model Context Protocol) infrastructure exists but is not fully wired to AgentLoop yet
+- OAuth tokens for some services may expire — reconnect in Settings → Connections if needed

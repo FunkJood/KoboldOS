@@ -4,33 +4,44 @@ KOBOLDOS — CHANGELOG
 
 VERSION 0.3.3 ALPHA (2026-02-27)
 ─────────────────────────────────
+File-Upload fuer YouTube, SoundCloud & Telegram:
+• YouTube Resumable Upload (2-Phasen: Metadata POST → Binary PUT), 600s Timeout
+• SoundCloud Upload: Multipart mit track[asset_data], Titel/Genre/Tags, 500MB Limit
+• Telegram File-Sending: send_file, send_photo, send_audio via Multipart, 50MB Limit
+• Google Drive Upload: Multipart/related (JSON Metadata + Binary)
+• MIME-Type-Erkennung fuer 30+ Formate (Video, Audio, Dokumente, Archive, Code)
+
+Neue Verbindungen:
+• Suno AI (Musik-Generierung): generate/status/get_track/list_tracks, sunoapi.org
+• Reddit OAuth: search/hot/new/read_post/comment, permanente Tokens
+• OAuthTokenHelper: Generischer Token-Refresh fuer alle OAuth-Services
+
+OAuth Token Refresh & 401-Detection:
+• Microsoft + Uber: Automatischer Token-Refresh
+• GitHub/Slack/Notion/WhatsApp: 401-Detection mit "Bitte neu anmelden" Meldung
+• Connection Verification: Echte Token-Pruefung via API-Call (statt gespeicherter Bool)
+
+Tool-Call Recovery (Agent-Stabilitaet):
+• extractEmbeddedToolCall() findet Tool-Calls in Response-Text eingebettet
+• String-aware Brace-Parsing in ToolCallParser (Braces in Strings ignoriert)
+• Recovery in beiden Paths: runStreaming + runInner
+
+Telegram Bot Fix:
+• Doppel-Nachricht verhindert: Agent nutzt jetzt response-Tool statt telegram_send
+• telegram_send nur noch fuer Dateien/Fotos/Audio und proaktive Benachrichtigungen
+
 Task-Chat-System:
-• Eigene Chats pro Task — jede geplante/idle Task bekommt isolierten Chat
-• Sidebar-Sektion "Task-Chats" mit blauem Checklist-Icon
-• Background-Execution fuer Idle-Tasks ohne UI-Disruption
-• executeTask() als zentraler Entry-Point fuer alle Task-Ausfuehrungen
-
-Cron-Task Routing:
-• DaemonListener postet NotificationCenter-Notification statt handleAgent()
-• MainView.onReceive empfaengt Task-Notification auf MainActor
-• ProactiveEngine nutzt executeTask() statt sendMessage()
-
-Notification-System:
-• UNUserNotificationCenter ersetzt deprecated NSUserNotification
-• Click-to-Navigate: In-App-Notification navigiert zum Task-Chat
-• System-Notifications bei Task-Abschluss mit Ergebnis-Preview
-
-Google OAuth Fix:
-• Credential-Eingabefelder (Client-ID + Secret) in Verbindungen
-• Schritt-fuer-Schritt Anleitung zur Google Cloud Console
-• API-Tool liest Tokens aus UserDefaults (war: SecretStore mit falschen Keys)
+• Eigene Chats pro Task mit isoliertem Kontext
+• Sidebar-Sektion "Task-Chats" mit Checklist-Icon
+• Cron-Tasks via NotificationCenter statt handleAgent() direkt
 
 Weitere Fixes:
+• FileTool: Zugriff auf gesamtes Home-Verzeichnis + /tmp (Blocklist fuer Secrets)
+• Google OAuth: Credential-Eingabefelder in Verbindungen
 • SoundCloud OAuth Token-Mismatch behoben
-• Sidebar-Filter: Task-Sessions nicht mehr in normaler Chat-Liste
-• iMessage-Integration komplett entfernt (Telegram ist stabil)
-• Alle Versionsnummern auf 0.3.3 synchronisiert
-• ~49.972 Lines of Code
+• iMessage-Integration entfernt (Telegram ist stabil)
+• UNUserNotificationCenter ersetzt deprecated NSUserNotification
+• ~51.840 Lines of Code
 
 VERSION 0.3.2 UPDATE (2026-02-27)
 ─────────────────────────────────
