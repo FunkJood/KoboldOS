@@ -60,72 +60,38 @@ struct DaemonClient: Sendable {
         return json
     }
 
-    // MARK: - SSE Stream
+    // MARK: - SSE Stream (Delegate-based)
+    // URLSession.bytes(for:) buffers entire responses from raw HTTP servers on macOS.
+    // Using URLSessionDataDelegate guarantees real-time incremental delivery of SSE events.
 
     func stream(_ path: String, body: [String: Any]) -> AsyncStream<[String: String]> {
-        // Serialize body upfront to avoid sending [String: Any] across isolation
         let bodyData = try? JSONSerialization.data(withJSONObject: body)
         let urlStr = "\(baseURL)\(path)"
         let authToken = token
 
         return AsyncStream { continuation in
-            Task {
-                do {
-                    guard let url = URL(string: urlStr) else { continuation.finish(); return }
-                    var req = URLRequest(url: url)
-                    req.httpMethod = "POST"
-                    req.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
-                    req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                    req.httpBody = bodyData
-                    req.timeoutInterval = 300
+            guard let url = URL(string: urlStr) else { continuation.finish(); return }
 
-                    let (bytes, resp) = try await URLSession.shared.bytes(for: req)
-                    guard let http = resp as? HTTPURLResponse else {
-                        continuation.yield(["type": "error", "content": "Keine Antwort vom Daemon"])
-                        continuation.finish()
-                        return
-                    }
-                    guard http.statusCode == 200 else {
-                        // Versuche Body zu lesen für bessere Fehlermeldung
-                        var bodyChunks: [UInt8] = []
-                        for try await byte in bytes { bodyChunks.append(byte); if bodyChunks.count > 500 { break } }
-                        let errBody = String(bytes: bodyChunks, encoding: .utf8) ?? ""
-                        continuation.yield(["type": "error", "content": "HTTP \(http.statusCode): \(errBody)"])
-                        continuation.finish()
-                        return
-                    }
+            let delegate = CLISSEDelegate(continuation: continuation)
+            let config = URLSessionConfiguration.ephemeral
+            config.requestCachePolicy = .reloadIgnoringLocalCacheData
+            config.timeoutIntervalForRequest = 300
+            config.timeoutIntervalForResource = 600
+            let session = URLSession(configuration: config, delegate: delegate, delegateQueue: nil)
 
-                    for try await line in bytes.lines {
-                        if line.hasPrefix("event: done") {
-                            continuation.finish()
-                            return
-                        }
-                        if line.hasPrefix("event: error") {
-                            // Nächste data:-Zeile enthält den Fehler
-                            continue
-                        }
-                        if line.hasPrefix("data: ") {
-                            let jsonStr = String(line.dropFirst(6))
-                            // Parse JSON to [String: String] for Sendable safety
-                            if let data = jsonStr.data(using: .utf8),
-                               let rawJson = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                                var safe: [String: String] = [:]
-                                for (k, v) in rawJson {
-                                    if let s = v as? String { safe[k] = s }
-                                    else if let b = v as? Bool { safe[k] = b ? "true" : "false" }
-                                    else if let n = v as? NSNumber { safe[k] = "\(n)" }
-                                    else { safe[k] = "\(v)" }
-                                }
-                                continuation.yield(safe)
-                            }
-                        }
-                    }
-                    continuation.finish()
-                } catch {
-                    continuation.yield(["type": "error", "content": "Verbindungsfehler: \(error.localizedDescription)"])
-                    continuation.finish()
-                }
+            var req = URLRequest(url: url)
+            req.httpMethod = "POST"
+            req.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            req.httpBody = bodyData
+            req.timeoutInterval = 300
+
+            let task = session.dataTask(with: req)
+            continuation.onTermination = { @Sendable _ in
+                task.cancel()
+                session.invalidateAndCancel()
             }
+            task.resume()
         }
     }
 
@@ -138,6 +104,72 @@ struct DaemonClient: Sendable {
         } catch {
             return false
         }
+    }
+}
+
+// MARK: - SSE Delegate (real-time event delivery)
+
+private final class CLISSEDelegate: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+    private let continuation: AsyncStream<[String: String]>.Continuation
+    private var buffer = ""
+    private var finished = false
+
+    init(continuation: AsyncStream<[String: String]>.Continuation) {
+        self.continuation = continuation
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse,
+                    completionHandler: @escaping @Sendable (URLSession.ResponseDisposition) -> Void) {
+        if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+            continuation.yield(["type": "error", "content": "HTTP \(http.statusCode)"])
+            continuation.finish()
+            finished = true
+            completionHandler(.cancel)
+            return
+        }
+        completionHandler(.allow)
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        guard !finished, let chunk = String(data: data, encoding: .utf8) else { return }
+        buffer += chunk
+
+        // Parse complete SSE event blocks (delimited by \n\n)
+        while let range = buffer.range(of: "\n\n") {
+            let eventBlock = String(buffer[..<range.lowerBound])
+            buffer = String(buffer[range.upperBound...])
+
+            for line in eventBlock.components(separatedBy: "\n") {
+                if line.hasPrefix("event: done") {
+                    continuation.finish()
+                    finished = true
+                    return
+                }
+                if line.hasPrefix("data: ") {
+                    let jsonStr = String(line.dropFirst(6))
+                    if let jsonData = jsonStr.data(using: .utf8),
+                       let rawJson = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] {
+                        var safe: [String: String] = [:]
+                        for (k, v) in rawJson {
+                            if let s = v as? String { safe[k] = s }
+                            else if let b = v as? Bool { safe[k] = b ? "true" : "false" }
+                            else if let n = v as? NSNumber { safe[k] = "\(n)" }
+                            else { safe[k] = "\(v)" }
+                        }
+                        continuation.yield(safe)
+                    }
+                }
+            }
+        }
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        guard !finished else { return }
+        if let error = error, (error as NSError).code != NSURLErrorCancelled {
+            continuation.yield(["type": "error", "content": "Verbindungsfehler: \(error.localizedDescription)"])
+        }
+        continuation.finish()
+        finished = true
     }
 }
 

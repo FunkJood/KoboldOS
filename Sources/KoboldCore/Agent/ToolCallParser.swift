@@ -264,21 +264,29 @@ public struct ToolCallParser: Sendable {
         return nil
     }
 
-    /// Extract all balanced top-level {...} JSON blocks from text
+    /// Extract all balanced top-level {...} JSON blocks from text.
+    /// Uses string-aware parsing to correctly handle braces inside JSON string values.
     private func extractBalancedJSONBlocks(from text: String) -> [String] {
         var blocks: [String] = []
         var depth = 0
         var startIndex: String.Index?
+        var inString = false
+        var escaped = false
 
-        for (idx, char) in text.enumerated() {
-            let strIdx = text.index(text.startIndex, offsetBy: idx)
+        for idx in text.indices {
+            let char = text[idx]
+            if escaped { escaped = false; continue }
+            if char == "\\" && inString { escaped = true; continue }
+            if char == "\"" && !escaped { inString.toggle(); continue }
+            if inString { continue }
+
             if char == "{" {
-                if depth == 0 { startIndex = strIdx }
+                if depth == 0 { startIndex = idx }
                 depth += 1
             } else if char == "}" {
                 depth -= 1
                 if depth == 0, let start = startIndex {
-                    let block = String(text[start...strIdx])
+                    let block = String(text[start...idx])
                     // Only collect blocks that look like they might have tool_name
                     if block.contains("tool_name") || block.contains("\"name\"") ||
                        block.contains("\"tool\"") || block.contains("\"function\"") ||

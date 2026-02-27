@@ -31,24 +31,25 @@ public struct FileTool: Tool, Sendable {
         )
     }
 
-    // Allowed base directories
+    // Allowed base directories: entire home dir + /tmp + NSTemporaryDirectory
     private static let allowedBases: [String] = {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         return [
-            home + "/Desktop",
-            home + "/Documents",
-            home + "/Downloads",
-            home + "/Library/Application Support/KoboldOS",
-            NSTemporaryDirectory()
+            home,                       // Full home directory access
+            "/tmp",                     // System temp
+            NSTemporaryDirectory()      // App-specific temp (/var/folders/...)
         ]
     }()
 
-    // Blocked path patterns (extra protection within allowed dirs)
-    // Note: /var/ is NOT blocked here because NSTemporaryDirectory() lives in /var/folders/
-    // Security is enforced by allowedBases whitelist, not blocked prefixes
+    // Blocked paths — sensitive system and user data that should never be accessed
     private let blockedPatterns = [
         "/etc/", "/usr/", "/bin/", "/sbin/", "/sys/",
-        "/proc/", "/dev/", "/root/", ".ssh", "shadow", "sudoers"
+        "/proc/", "/dev/", "/root/",
+        ".ssh/", "id_rsa", "id_ed25519",       // SSH keys
+        "shadow", "sudoers",                     // System auth
+        "/Keychains/", "login.keychain",         // macOS Keychain
+        "/.gnupg/",                              // GPG keys
+        "/Cookies/", "Cookies.binarycookies"     // Browser cookies
     ]
 
     public init() {}

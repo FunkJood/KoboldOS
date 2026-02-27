@@ -1767,9 +1767,10 @@ struct ThinkingPlaceholderBubble: View {
         "Entschlüsselt...", "Hexenwerk...", "Alchemie...",
         "Betet zum Modell...", "Orakelt...", "Prophezeit...",
     ]
-    private var verb: String {
-        Self.thinkingVerbs[abs(Int(Date().timeIntervalSince1970 * 3).hashValue) % Self.thinkingVerbs.count]
-    }
+    // P9: Fixed verb index — Date() in computed property broke SwiftUI equality checks,
+    // causing view to re-render on EVERY frame. Now uses stable random index per instance.
+    private let verbIndex = Int.random(in: 0..<thinkingVerbs.count)
+    private var verb: String { Self.thinkingVerbs[verbIndex] }
 
     var body: some View {
         HStack(alignment: .top) {

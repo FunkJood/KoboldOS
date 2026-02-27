@@ -157,8 +157,6 @@ struct SidebarView: View {
                             Rectangle().fill(LinearGradient(colors: [.clear, Color.koboldEmerald.opacity(0.12), Color.koboldGold.opacity(0.08), .clear], startPoint: .leading, endPoint: .trailing)).frame(height: 0.5).padding(.horizontal, 10).padding(.vertical, 4)
                             collapsibleChatsList
                         } else if selectedTab == .tasks {
-                            tasksSidebarList
-                            Rectangle().fill(LinearGradient(colors: [.clear, Color.koboldEmerald.opacity(0.12), Color.koboldGold.opacity(0.08), .clear], startPoint: .leading, endPoint: .trailing)).frame(height: 0.5).padding(.horizontal, 10).padding(.vertical, 4)
                             collapsibleChatsList
                         } else {
                             sessionsList
@@ -223,46 +221,7 @@ struct SidebarView: View {
         .clipped()
     }
 
-    // MARK: - Tasks Sidebar List
-    private var tasksSidebarList: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text("Task-Chats")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundColor(.secondary)
-                    .padding(.leading, 16)
-                Spacer()
-            }
-            .padding(.vertical, 6)
-
-            if viewModel.taskSessions.isEmpty {
-                HStack(spacing: 6) {
-                    Image(systemName: "checklist")
-                        .font(.system(size: 12.5))
-                        .foregroundColor(.secondary)
-                    Text("Noch keine Task-Chats")
-                        .font(.system(size: 12.5))
-                        .foregroundColor(.secondary)
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 4)
-            } else {
-                ForEach(viewModel.taskSessions) { session in
-                    SidebarSessionRow(
-                        session: session,
-                        isCurrent: session.id == viewModel.currentSessionId,
-                        icon: "checklist",
-                        accentColor: .blue
-                    ) {
-                        viewModel.switchToSession(session)
-                        selectedTab = .chat
-                    } onDelete: {
-                        viewModel.deleteSession(session)
-                    }
-                }
-            }
-        }
-    }
+    // tasksSidebarList removed — tasks appear in normal chat list now
 
     // MARK: - Collapsible Normal Chats (shown in Tasks/Workflows tabs)
     @State private var showNormalChatsInSubTab: Bool = false
@@ -296,8 +255,7 @@ struct SidebarView: View {
             .buttonStyle(.plain)
 
             if showNormalChatsInSubTab {
-                let normalOnly = viewModel.sessions.filter { $0.taskId == nil }
-                ForEach(normalOnly.prefix(100)) { session in
+                ForEach(viewModel.sessions.prefix(100)) { session in
                     SidebarSessionRow(
                         session: session,
                         isCurrent: session.id == viewModel.currentSessionId,
@@ -310,8 +268,8 @@ struct SidebarView: View {
                         viewModel.deleteSession(session)
                     }
                 }
-                if normalOnly.count > 20 {
-                    Text("+ \(normalOnly.count - 20) weitere...")
+                if viewModel.sessions.count > 20 {
+                    Text("+ \(viewModel.sessions.count - 20) weitere...")
                         .font(.system(size: 11.5))
                         .foregroundColor(.secondary)
                         .padding(.horizontal, 16)
@@ -528,40 +486,7 @@ struct SidebarView: View {
                 .padding(.bottom, 6)
             }
 
-            // Task-Chats (wenn vorhanden) — immer oben, klar getrennt
-            if !viewModel.taskSessions.isEmpty {
-                HStack(spacing: 6) {
-                    Image(systemName: "checklist")
-                        .font(.system(size: 11))
-                        .foregroundColor(.blue)
-                    Text("Task-Chats")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundColor(.secondary)
-                    Spacer()
-                    Text("\(viewModel.taskSessions.count)")
-                        .font(.system(size: 10, weight: .medium, design: .rounded))
-                        .foregroundColor(.secondary.opacity(0.5))
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 4)
-
-                ForEach(viewModel.taskSessions) { session in
-                    SidebarSessionRow(
-                        session: session,
-                        isCurrent: session.id == viewModel.currentSessionId,
-                        icon: "checklist",
-                        accentColor: .blue,
-                        isStreaming: viewModel.streamingSessions.contains(session.id)
-                    ) {
-                        viewModel.switchToSession(session)
-                        selectedTab = .chat
-                    } onDelete: {
-                        withAnimation(.easeOut(duration: 0.25)) { viewModel.deleteSession(session) }
-                    }
-                }
-
-                Rectangle().fill(LinearGradient(colors: [.clear, Color.blue.opacity(0.12), .clear], startPoint: .leading, endPoint: .trailing)).frame(height: 0.5).padding(.horizontal, 10).padding(.vertical, 4)
-            }
+            // Task sidebar section removed — tasks appear in normal chat list
 
             // Topic folders
             ForEach(viewModel.topics) { topic in
@@ -724,8 +649,8 @@ struct SidebarView: View {
 
     /// Sessions + DateGroups neu berechnen (nur aufrufen wenn sessions/searchText sich ändern)
     private func rebuildSessionCache() {
-        // Task-Sessions aus normaler Chat-Liste ausschließen (werden in tasksSidebarList angezeigt)
-        let normalSessions = viewModel.sessions.filter { $0.taskId == nil }
+        // All sessions in one list (tasks included — no separate task sidebar)
+        let normalSessions = viewModel.sessions
         let sorted: [ChatSession]
         if sessionSearchText.isEmpty {
             sorted = normalSessions.sorted { $0.createdAt > $1.createdAt }
@@ -1513,9 +1438,8 @@ struct GlobalHeaderBar: View {
         return f
     }()
 
-    // Timer-driven tick for 1-minute updates instead of relying on random re-renders
+    // P9: Task-based tick — Timer.publish leaked to main runloop even when header not visible
     @State private var tick = Date()
-    private let updateTimer = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
 
     var body: some View {
         HStack {
@@ -1591,9 +1515,14 @@ struct GlobalHeaderBar: View {
         .onAppear {
             weatherManager.fetchWeatherIfNeeded()
         }
-        .onReceive(updateTimer) { now in
-            tick = now
-            weatherManager.fetchWeatherIfNeeded()
+        .task {
+            // P9: Replaces Timer.publish(every:60, on:.main) — auto-cancelled when view disappears
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 60_000_000_000)
+                guard !Task.isCancelled else { break }
+                tick = Date()
+                weatherManager.fetchWeatherIfNeeded()
+            }
         }
         .padding(.vertical, 10).padding(.horizontal, 14)
         .background(

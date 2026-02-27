@@ -54,12 +54,18 @@ public struct SlackApiTool: Tool {
             let (data, response) = try await URLSession.shared.data(for: request)
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             let responseStr = String(data: data.prefix(8192), encoding: .utf8) ?? "(empty)"
+            if status == 401 {
+                return "Error: Slack-Token ungültig oder abgelaufen. Bitte unter Einstellungen → Verbindungen → Slack neu anmelden."
+            }
             if status >= 400 { return "Error: HTTP \(status): \(responseStr)" }
 
             // Check Slack's own error response
             if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                let ok = json["ok"] as? Bool, !ok {
                 let error = json["error"] as? String ?? "unknown"
+                if error == "invalid_auth" || error == "token_expired" || error == "token_revoked" {
+                    return "Error: Slack-Token ungültig (\(error)). Bitte unter Einstellungen → Verbindungen → Slack neu anmelden."
+                }
                 return "Error: Slack API Fehler: \(error)"
             }
             return responseStr

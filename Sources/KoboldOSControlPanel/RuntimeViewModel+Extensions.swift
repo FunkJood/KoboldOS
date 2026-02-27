@@ -28,10 +28,10 @@ extension RuntimeViewModel {
             task.cancel()
             timeoutTask.cancel()
             if error is CancellationError {
-                print("[RuntimeViewModel] Task timed out after \(timeout) seconds")
+                DaemonLog.shared.add("Task timed out after \(timeout)s", category: .system)
                 return .failure(RuntimeError.timeout)
             } else {
-                print("[RuntimeViewModel] Task failed with error: \(error)")
+                DaemonLog.shared.add("Task failed: \(error)", category: .system)
                 return .failure(error)
             }
         }
@@ -61,20 +61,14 @@ extension RuntimeViewModel {
                     let data = try encoder.encode(deduped)
                     try data.write(to: url, options: .atomic)
 
-                    print("[RuntimeViewModel] Successfully saved \(deduped.count) sessions")
                     return
                 } catch {
                     retryCount += 1
-                    print("[RuntimeViewModel] Error saving sessions (attempt \(retryCount)): \(error)")
-
                     if retryCount < maxRetries {
-                        // Wait before retrying
-                        try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
+                        try? await Task.sleep(nanoseconds: 1_000_000_000)
                     }
                 }
             }
-
-            print("[RuntimeViewModel] Failed to save sessions after \(maxRetries) attempts")
         }
     }
 

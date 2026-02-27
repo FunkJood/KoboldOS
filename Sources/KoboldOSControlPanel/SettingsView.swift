@@ -46,6 +46,9 @@ struct SettingsView: View {
     @AppStorage("kobold.perm.calendar")      private var permCalendar: Bool = true
     @AppStorage("kobold.perm.contacts")      private var permContacts: Bool = false
     @AppStorage("kobold.perm.mail")          private var permMail: Bool = false
+    @AppStorage("kobold.perm.secrets")       private var permSecrets: Bool = true
+    @AppStorage("kobold.perm.systemKeychain") private var permSystemKeychain: Bool = false
+    @AppStorage("kobold.perm.settings")       private var permSettings: Bool = true
     // kobold.shell.customBlacklist used via direct UserDefaults binding in permissions section
 
     // Sounds
@@ -111,6 +114,7 @@ struct SettingsView: View {
     @AppStorage("kobold.google.connected") private var googleConnected: Bool = false
     @State private var googleEmail: String = ""
     @State private var showSecretsManager: Bool = false
+    @State private var connectionsVerified: Bool = false
 
     private let sections = ["Allgemein", "Agenten", "Persönlichkeit", "Gedächtnis", "Fähigkeiten", "Berechtigungen", "Sprache & Audio", "Verbindungen", "Benachrichtigungen", "Datenschutz", "Sicherheit", "Über"]
 
@@ -898,6 +902,21 @@ struct SettingsView: View {
                            detail: "Erlaubt den PC zu steuern: Maus, Tastatur, Screenshots, Text-Erkennung",
                            icon: "display", color: .orange,
                            binding: $permScreenControl)
+                Divider()
+                permToggle("Secrets & Passwörter",
+                           detail: "Agent darf gespeicherte API-Keys und Passwörter lesen/schreiben",
+                           icon: "key.fill", color: .orange,
+                           binding: $permSecrets)
+                Divider()
+                permToggle("System-Schlüsselbund durchsuchen",
+                           detail: "Agent darf den macOS-Schlüsselbund nach Passwörtern durchsuchen (Safari, Mail etc.)",
+                           icon: "lock.shield.fill", color: .red,
+                           binding: $permSystemKeychain)
+                Divider()
+                permToggle("Einstellungen lesen/ändern",
+                           detail: "Agent darf seine eigenen KoboldOS-Einstellungen lesen und ändern",
+                           icon: "gearshape.fill", color: .gray,
+                           binding: $permSettings)
         }
 
         // Apple System Permissions — Request macOS access
@@ -1653,7 +1672,7 @@ struct SettingsView: View {
 
         private func startFetching() {
             fetchDaemonLogs()
-            logFetchTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { _ in
+            logFetchTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { _ in
                 MainActor.assumeIsolated {
                     fetchDaemonLogs()
                 }
@@ -1735,9 +1754,46 @@ struct SettingsView: View {
 
     // weatherMgr removed — weather uses auto-location now
 
+    // MARK: - Connection Verification (async, off-MainActor)
+
+    private func verifyAllConnections() async {
+        await withTaskGroup(of: Void.self) { group in
+            // OAuth-based services (have userInfoURL for verification)
+            group.addTask { await GoogleOAuth.shared.verifyToken() }
+            group.addTask { await SoundCloudOAuth.shared.verifyToken() }
+            group.addTask { await GitHubOAuth.shared.verifyToken() }
+            group.addTask { await MicrosoftOAuth.shared.verifyToken() }
+            group.addTask { await SlackOAuth.shared.verifyToken() }
+            group.addTask { await NotionOAuth.shared.verifyToken() }
+            group.addTask { await WhatsAppOAuth.shared.verifyToken() }
+            group.addTask { await RedditOAuth.shared.verifyToken() }
+
+            // Telegram: verify bot token with getMe
+            group.addTask {
+                let token = UserDefaults.standard.string(forKey: "kobold.telegram.token") ?? ""
+                guard !token.isEmpty,
+                      let url = URL(string: "https://api.telegram.org/bot\(token)/getMe") else { return }
+                var req = URLRequest(url: url)
+                req.timeoutInterval = 10
+                do {
+                    let (data, _) = try await URLSession.shared.data(for: req)
+                    if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                       let ok = json["ok"] as? Bool, !ok {
+                        UserDefaults.standard.removeObject(forKey: "kobold.telegram.token")
+                    }
+                } catch { /* network error, keep state */ }
+            }
+        }
+    }
+
     @ViewBuilder
     private func connectionsSection() -> some View {
         sectionTitle("Verbindungen")
+            .task {
+                guard !connectionsVerified else { return }
+                await verifyAllConnections()
+                connectionsVerified = true
+            }
 
         // Row 1: Google + SoundCloud
         HStack(alignment: .top, spacing: 12) {
@@ -1794,6 +1850,12 @@ struct SettingsView: View {
         HStack(alignment: .top, spacing: 12) {
             lieferandoConnectionSection()
             uberConnectionSection()
+        }
+
+        // Row 11: Suno AI + Reddit
+        HStack(alignment: .top, spacing: 12) {
+            sunoConnectionSection()
+            redditConnectionSection()
         }
 
         // Weitere Integrationen (Phase 2+)
@@ -2065,18 +2127,28 @@ struct SettingsView: View {
     // MARK: - Brand Logos (SwiftUI drawn)
 
     private var brandLogoGoogle: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color.white)
-            // Google multi-color "G"
-            Text("G")
-                .font(.system(size: 21, weight: .bold, design: .rounded))
-                .foregroundStyle(
-                    .linearGradient(
-                        colors: [Color(red: 0.918, green: 0.259, blue: 0.208), Color(red: 0.984, green: 0.737, blue: 0.02), Color(red: 0.204, green: 0.659, blue: 0.325), Color(red: 0.259, green: 0.522, blue: 0.957)],
-                        startPoint: .topLeading, endPoint: .bottomTrailing
+        HStack(spacing: 3) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(Color.white)
+                    .frame(width: 28, height: 28)
+                Text("G")
+                    .font(.system(size: 17, weight: .bold, design: .rounded))
+                    .foregroundStyle(
+                        .linearGradient(
+                            colors: [Color(red: 0.918, green: 0.259, blue: 0.208), Color(red: 0.984, green: 0.737, blue: 0.02), Color(red: 0.204, green: 0.659, blue: 0.325), Color(red: 0.259, green: 0.522, blue: 0.957)],
+                            startPoint: .topLeading, endPoint: .bottomTrailing
+                        )
                     )
-                )
+            }
+            ZStack {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(Color(red: 1.0, green: 0.0, blue: 0.0))
+                    .frame(width: 28, height: 28)
+                Image(systemName: "play.fill")
+                    .font(.system(size: 13))
+                    .foregroundColor(.white)
+            }
         }
     }
 
@@ -2928,8 +3000,8 @@ struct SettingsView: View {
     private func googleOAuthSection() -> some View {
         connectionCard(
             logo: AnyView(brandLogoGoogle),
-            name: "Google",
-            subtitle: "Drive, Gmail, YouTube, Kalender",
+            name: "Google + YouTube",
+            subtitle: "Drive, Gmail, YouTube, Kalender & mehr",
             isConnected: googleConnected,
             connectedDetail: {
                 AnyView(VStack(alignment: .leading, spacing: 8) {
@@ -2953,14 +3025,21 @@ struct SettingsView: View {
                             }
                         }
                     }
-                    Button("Abmelden") {
-                        Task {
-                            await GoogleOAuth.shared.signOut()
-                            googleConnected = false
-                            googleEmail = ""
+                    scopeSelectionView
+                    HStack(spacing: 8) {
+                        Button("Neu anmelden (Berechtigungen aktualisieren)") {
+                            GoogleOAuth.shared.signIn()
                         }
+                        .buttonStyle(.bordered).controlSize(.small)
+                        Button("Abmelden") {
+                            Task {
+                                await GoogleOAuth.shared.signOut()
+                                googleConnected = false
+                                googleEmail = ""
+                            }
+                        }
+                        .buttonStyle(.bordered).foregroundColor(.red).controlSize(.small)
                     }
-                    .buttonStyle(.bordered).foregroundColor(.red).controlSize(.small)
                 })
             },
             signInButton: {
@@ -3028,9 +3107,16 @@ struct SettingsView: View {
             googleEmail = GoogleOAuth.shared.userEmail
             if googleClientId.isEmpty { googleSetupExpanded = true }
         }
-        .onReceive(Timer.publish(every: 5, on: .main, in: .common).autoconnect()) { _ in
-            googleConnected = GoogleOAuth.shared.isConnected
-            googleEmail = GoogleOAuth.shared.userEmail
+        .task {
+            // P9: Replaces Timer.publish(every:5, on:.main) which fired even when view was offscreen
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                guard !Task.isCancelled else { break }
+                let connected = GoogleOAuth.shared.isConnected
+                let email = GoogleOAuth.shared.userEmail
+                if connected != googleConnected { googleConnected = connected }
+                if email != googleEmail { googleEmail = email }
+            }
         }
     }
 
@@ -3039,6 +3125,10 @@ struct SettingsView: View {
     @ViewBuilder
     private var scopeSelectionView: some View {
         DisclosureGroup("Berechtigungen wählen") {
+            Text("Wähle die Berechtigungen, die KoboldOS bei Google nutzen darf. Du kannst dich jederzeit neu anmelden, um Berechtigungen anzupassen.")
+                .font(.system(size: 12)).foregroundColor(.secondary)
+                .padding(.bottom, 4)
+
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 6) {
                 ForEach(GoogleScope.allCases, id: \.self) { scope in
                     let isEnabled = GoogleOAuth.shared.enabledScopes.contains(scope)
@@ -3051,9 +3141,15 @@ struct SettingsView: View {
                             Image(systemName: isEnabled ? "checkmark.circle.fill" : "circle")
                                 .font(.system(size: 13.5))
                                 .foregroundColor(isEnabled ? .koboldEmerald : .secondary)
-                            Text(scope.label)
-                                .font(.system(size: 13.5))
-                                .foregroundColor(.primary)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(scope.label)
+                                    .font(.system(size: 13.5))
+                                    .foregroundColor(.primary)
+                                Text(scope.scopeDescription)
+                                    .font(.system(size: 10.5))
+                                    .foregroundColor(.secondary)
+                                    .lineLimit(1)
+                            }
                             Spacer()
                         }
                     }
@@ -3126,9 +3222,16 @@ struct SettingsView: View {
             soundCloudConnected = SoundCloudOAuth.shared.isConnected
             soundCloudUser = SoundCloudOAuth.shared.userName
         }
-        .onReceive(Timer.publish(every: 10, on: .main, in: .common).autoconnect()) { _ in
-            soundCloudConnected = SoundCloudOAuth.shared.isConnected
-            soundCloudUser = SoundCloudOAuth.shared.userName
+        .task {
+            // P9: Replaces Timer.publish(every:10, on:.main)
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 10_000_000_000)
+                guard !Task.isCancelled else { break }
+                let connected = SoundCloudOAuth.shared.isConnected
+                let user = SoundCloudOAuth.shared.userName
+                if connected != soundCloudConnected { soundCloudConnected = connected }
+                if user != soundCloudUser { soundCloudUser = user }
+            }
         }
     }
 
@@ -3176,10 +3279,15 @@ struct SettingsView: View {
                         telegramBotName = ""
                     }
                     .buttonStyle(.bordered).foregroundColor(.red).controlSize(.small)
-                    .onReceive(Timer.publish(every: 10, on: .main, in: .common).autoconnect()) { _ in
-                        telegramStats = TelegramBot.shared.stats
-                        if telegramBotName.isEmpty {
-                            telegramBotName = TelegramBot.shared.botUsername
+                    .task {
+                        // P9: Replaces Timer.publish(every:10, on:.main)
+                        while !Task.isCancelled {
+                            try? await Task.sleep(nanoseconds: 10_000_000_000)
+                            guard !Task.isCancelled else { break }
+                            telegramStats = TelegramBot.shared.stats
+                            if telegramBotName.isEmpty {
+                                telegramBotName = TelegramBot.shared.botUsername
+                            }
                         }
                     }
                 })

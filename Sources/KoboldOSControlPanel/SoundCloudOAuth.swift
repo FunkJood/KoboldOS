@@ -56,7 +56,7 @@ final class SoundCloudOAuth: NSObject, @unchecked Sendable {
             if let name = d.string(forKey: "kobold.soundcloud.username") {
                 setUserName(name)
             }
-            print("[SoundCloud] Restored session for \(userName)")
+            // P12: print entfernt // [SoundCloud] Restored session for \(userName)")
         }
     }
 
@@ -90,7 +90,7 @@ final class SoundCloudOAuth: NSObject, @unchecked Sendable {
 
     func signIn() {
         guard startCallbackServer() else {
-            print("[SoundCloud] Failed to start callback server")
+            // P12: print entfernt // [SoundCloud] Failed to start callback server")
             return
         }
 
@@ -104,7 +104,7 @@ final class SoundCloudOAuth: NSObject, @unchecked Sendable {
 
         let redirectUri = "http://127.0.0.1:\(callbackPort)/callback"
 
-        var components = URLComponents(string: "https://api.soundcloud.com/connect")!
+        var components = URLComponents(string: "https://secure.soundcloud.com/authorize")!
         components.queryItems = [
             URLQueryItem(name: "client_id", value: clientId),
             URLQueryItem(name: "redirect_uri", value: redirectUri),
@@ -117,7 +117,7 @@ final class SoundCloudOAuth: NSObject, @unchecked Sendable {
 
         guard let authURL = components.url else { return }
         NSWorkspace.shared.open(authURL)
-        print("[SoundCloud] Opened browser for sign-in (callback on port \(callbackPort))")
+        // P12: print entfernt // [SoundCloud] Opened browser for sign-in (callback on port \(callbackPort))")
     }
 
     // MARK: - Callback Server
@@ -132,14 +132,14 @@ final class SoundCloudOAuth: NSObject, @unchecked Sendable {
             }
             listener.stateUpdateHandler = { state in
                 if case .failed(let err) = state {
-                    print("[SoundCloud] Listener failed: \(err)")
+                    // P12: print entfernt // [SoundCloud] Listener failed: \(err)")
                 }
             }
             listener.start(queue: .global(qos: .userInitiated))
             self.callbackListener = listener
             return true
         } catch {
-            print("[SoundCloud] Failed to create listener: \(error)")
+            // P12: print entfernt // [SoundCloud] Failed to create listener: \(error)")
             return false
         }
     }
@@ -229,7 +229,7 @@ final class SoundCloudOAuth: NSObject, @unchecked Sendable {
             guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let accessToken = json["access_token"] as? String else {
                 let errBody = String(data: data, encoding: .utf8) ?? ""
-                print("[SoundCloud] Token exchange failed: \(errBody)")
+                // P12: print entfernt // [SoundCloud] Token exchange failed: \(errBody)")
                 return
             }
 
@@ -251,9 +251,9 @@ final class SoundCloudOAuth: NSObject, @unchecked Sendable {
             d.set(true, forKey: "kobold.soundcloud.connected")
 
             await fetchUserInfo(accessToken: accessToken)
-            print("[SoundCloud] Sign-in successful")
+            // P12: print entfernt // [SoundCloud] Sign-in successful")
         } catch {
-            print("[SoundCloud] Token exchange error: \(error)")
+            // P12: print entfernt // [SoundCloud] Token exchange error: \(error)")
         }
     }
 
@@ -296,8 +296,35 @@ final class SoundCloudOAuth: NSObject, @unchecked Sendable {
             }
             return true
         } catch {
-            print("[SoundCloud] Refresh error: \(error)")
+            // P12: print entfernt // [SoundCloud] Refresh error: \(error)")
             return false
+        }
+    }
+
+    // MARK: - Verify Token (lightweight check)
+
+    func verifyToken() async {
+        let token = getAccessTokenRaw()
+        guard !token.isEmpty else {
+            setConnected(false)
+            return
+        }
+
+        guard let url = URL(string: "https://api.soundcloud.com/me") else { return }
+        var req = URLRequest(url: url)
+        req.setValue("OAuth \(token)", forHTTPHeaderField: "Authorization")
+        req.timeoutInterval = 10
+
+        do {
+            let (_, response) = try await URLSession.shared.data(for: req)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            if status == 401 {
+                if !(await refreshAccessToken()) {
+                    setConnected(false)
+                }
+            }
+        } catch {
+            // Network error → don't disconnect
         }
     }
 
@@ -327,7 +354,7 @@ final class SoundCloudOAuth: NSObject, @unchecked Sendable {
         d.removeObject(forKey: "kobold.soundcloud.tokenExpiry")
         d.removeObject(forKey: "kobold.soundcloud.username")
         d.set(false, forKey: "kobold.soundcloud.connected")
-        print("[SoundCloud] Signed out")
+        // P12: print entfernt // [SoundCloud] Signed out")
     }
 
     // MARK: - User Info
@@ -342,10 +369,10 @@ final class SoundCloudOAuth: NSObject, @unchecked Sendable {
                let username = json["username"] as? String {
                 setUserName(username)
                 UserDefaults.standard.set(username, forKey: "kobold.soundcloud.username")
-                print("[SoundCloud] User: \(username)")
+                // P12: print entfernt // [SoundCloud] User: \(username)")
             }
         } catch {
-            print("[SoundCloud] User info error: \(error)")
+            // P12: print entfernt // [SoundCloud] User info error: \(error)")
         }
     }
 }

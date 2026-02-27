@@ -42,7 +42,7 @@ public actor AgentWorkerPool {
             let worker = AgentLoop(agentID: "worker-\(i)", llmRunner: runner)
             idleWorkers.append(worker)
         }
-        print("[AgentWorkerPool] initialized: \(self.maxWorkers) worker(s) ready (max 16)")
+        // P12: print entfernt (blocking I/O)
     }
 
     // MARK: - Acquire / Release
@@ -52,11 +52,11 @@ public actor AgentWorkerPool {
     public func acquire() async -> AgentLoop {
         if let worker = idleWorkers.popLast() {
             activeCount += 1
-            print("[AgentWorkerPool] worker acquired (\(activeCount)/\(maxWorkers) active)")
+            // P12: print entfernt
             return worker
         }
         // All workers busy — suspend until release() gives us one
-        print("[AgentWorkerPool] all \(maxWorkers) worker(s) busy — request queued (\(waiters.count + 1) waiting)")
+        // P12: print entfernt
         return await withCheckedContinuation { continuation in
             waiters.append(continuation)
         }
@@ -70,11 +70,11 @@ public actor AgentWorkerPool {
             waiters.removeFirst()
             activeCount += 1
             // Reuse existing worker (LLMRunner instance stays warm, avoids allocation overhead)
-            print("[AgentWorkerPool] queued request unblocked with reused worker")
+            // P12: print entfernt
             waiter.resume(returning: worker)
         } else {
             idleWorkers.append(worker)
-            print("[AgentWorkerPool] worker returned to pool (\(activeCount)/\(maxWorkers) active)")
+            // P12: print entfernt
         }
     }
 
@@ -104,6 +104,6 @@ public actor AgentWorkerPool {
             let runner = LLMRunner()
             idleWorkers.append(AgentLoop(agentID: "worker-\(idx)", llmRunner: runner))
         }
-        print("[AgentWorkerPool] resized to \(clamped) workers")
+        // P12: print entfernt
     }
 }

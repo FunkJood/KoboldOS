@@ -1248,10 +1248,11 @@ final class RawTerminalNSView: NSView {
                                                name: NSView.boundsDidChangeNotification,
                                                object: scrollView.contentView)
 
-        // Cursor blink timer (600ms — slightly slower to reduce CPU, only redraws if window visible)
-        cursorBlinkTimer = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: true) { [weak self] _ in
+        // P9: Cursor blink 1.0s (was 0.6s) — reduces redraws from 100/min to 60/min
+        // Only redraws if window is visible AND key (focused)
+        cursorBlinkTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self = self, self.window != nil, !(self.window?.isVisible == false) else { return }
+                guard let self = self, let window = self.window, window.isVisible, window.isKeyWindow else { return }
                 self.cursorVisible.toggle()
                 self.renderScreen(autoScroll: false)
             }

@@ -60,6 +60,9 @@ public struct NotionApiTool: Tool {
             let (data, response) = try await URLSession.shared.data(for: request)
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             let responseStr = String(data: data.prefix(8192), encoding: .utf8) ?? "(empty)"
+            if status == 401 {
+                return "Error: Notion-Token ungültig. Bitte unter Einstellungen → Verbindungen → Notion neu anmelden."
+            }
             if status >= 400 { return "Error: HTTP \(status): \(responseStr)" }
             return responseStr
         } catch {

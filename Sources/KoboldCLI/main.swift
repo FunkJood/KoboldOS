@@ -25,7 +25,7 @@ struct KoboldCLI: AsyncParsableCommand {
             SecretCommand.self,
             ConfigCommand.self,
             CheckpointCommand.self,
-            CardCommand.self,
+            CardCommand.self
         ],
         defaultSubcommand: InteractiveChatCommand.self
     )

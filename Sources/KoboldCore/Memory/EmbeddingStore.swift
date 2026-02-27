@@ -121,17 +121,16 @@ public actor EmbeddingStore {
         guard let data = try? Data(contentsOf: storeURL),
               let decoded = try? JSONDecoder().decode([String: EmbeddedEntry].self, from: data) else { return }
         entries = decoded
-        print("[EmbeddingStore] loaded \(entries.count) embeddings from disk")
     }
 
+    /// P12: Encoding auf Actor-Thread, Disk-Write via Task.detached (große Float-Arrays = CPU-intensiv)
     private func saveToDisk() {
-        do {
-            let dir = storeURL.deletingLastPathComponent()
-            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            let data = try JSONEncoder().encode(entries)
-            try data.write(to: storeURL)
-        } catch {
-            print("[EmbeddingStore] save error: \(error)")
+        guard let data = try? JSONEncoder().encode(entries) else { return }
+        let url = storeURL
+        Task.detached(priority: .utility) {
+            let dir = url.deletingLastPathComponent()
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try? data.write(to: url)
         }
     }
 

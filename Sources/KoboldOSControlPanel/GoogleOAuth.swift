@@ -12,12 +12,13 @@ import CryptoKit
 // MARK: - GoogleScope
 
 enum GoogleScope: String, CaseIterable, Codable, Sendable {
-    case youtube_readonly, drive, docs, sheets
+    case youtube_readonly, youtube_upload, drive, docs, sheets
     case gmail, calendar, contacts, tasks
 
     var scopeString: String {
         switch self {
         case .youtube_readonly: return "https://www.googleapis.com/auth/youtube.readonly"
+        case .youtube_upload:   return "https://www.googleapis.com/auth/youtube.upload"
         case .drive:            return "https://www.googleapis.com/auth/drive"
         case .docs:             return "https://www.googleapis.com/auth/documents"
         case .sheets:           return "https://www.googleapis.com/auth/spreadsheets"
@@ -30,7 +31,8 @@ enum GoogleScope: String, CaseIterable, Codable, Sendable {
 
     var label: String {
         switch self {
-        case .youtube_readonly: return "YouTube"
+        case .youtube_readonly: return "YouTube (Lesen)"
+        case .youtube_upload:   return "YouTube (Upload)"
         case .drive:            return "Drive"
         case .docs:             return "Docs"
         case .sheets:           return "Sheets"
@@ -38,6 +40,20 @@ enum GoogleScope: String, CaseIterable, Codable, Sendable {
         case .calendar:         return "Kalender"
         case .contacts:         return "Kontakte"
         case .tasks:            return "Tasks"
+        }
+    }
+
+    var scopeDescription: String {
+        switch self {
+        case .youtube_readonly: return "Videos, Playlists & Kanäle ansehen"
+        case .youtube_upload:   return "Videos auf YouTube hochladen"
+        case .drive:            return "Dateien in Google Drive verwalten"
+        case .docs:             return "Google Docs lesen & bearbeiten"
+        case .sheets:           return "Google Sheets lesen & bearbeiten"
+        case .gmail:            return "E-Mails lesen & senden"
+        case .calendar:         return "Termine erstellen & verwalten"
+        case .contacts:         return "Kontakte lesen"
+        case .tasks:            return "Aufgaben verwalten"
         }
     }
 }
@@ -95,7 +111,7 @@ final class GoogleOAuth: NSObject, @unchecked Sendable {
             if let email = d.string(forKey: "kobold.google.email") {
                 setUserEmail(email)
             }
-            print("[GoogleOAuth] Restored session for \(userEmail)")
+            // P12: print entfernt
         }
     }
 
@@ -147,7 +163,7 @@ final class GoogleOAuth: NSObject, @unchecked Sendable {
     func signIn() {
         // Start local callback server
         guard startCallbackServer() else {
-            print("[GoogleOAuth] Failed to start callback server")
+            // P12: print entfernt
             return
         }
 
@@ -395,6 +411,33 @@ final class GoogleOAuth: NSObject, @unchecked Sendable {
         }
     }
 
+    // MARK: - Verify Token (lightweight check)
+
+    func verifyToken() async {
+        let token = getAccessTokenRaw()
+        guard !token.isEmpty else {
+            setConnected(false)
+            return
+        }
+
+        guard let url = URL(string: "https://www.googleapis.com/oauth2/v2/userinfo") else { return }
+        var req = URLRequest(url: url)
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.timeoutInterval = 10
+
+        do {
+            let (_, response) = try await URLSession.shared.data(for: req)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            if status == 401 {
+                if !(await refreshAccessToken()) {
+                    setConnected(false)
+                }
+            }
+        } catch {
+            // Network error → don't disconnect
+        }
+    }
+
     // MARK: - Get Valid Access Token
 
     func getAccessToken() async -> String? {
@@ -432,7 +475,7 @@ final class GoogleOAuth: NSObject, @unchecked Sendable {
         d.removeObject(forKey: "kobold.google.tokenExpiry")
         d.removeObject(forKey: "kobold.google.email")
         d.set(false, forKey: "kobold.google.connected")
-        print("[GoogleOAuth] Signed out")
+        // P12: print entfernt
     }
 
     func revokeToken() async { await signOut() }
@@ -450,10 +493,9 @@ final class GoogleOAuth: NSObject, @unchecked Sendable {
                let email = json["email"] as? String {
                 setUserEmail(email)
                 UserDefaults.standard.set(email, forKey: "kobold.google.email")
-                print("[GoogleOAuth] User: \(email)")
             }
         } catch {
-            print("[GoogleOAuth] Failed to fetch user info: \(error)")
+            // P12: print entfernt
         }
     }
 }

@@ -33,8 +33,13 @@ public actor DaemonListener {
         }
     }
 
-    // Connection limits
-    private var activeConnections = 0
+    // P12: Connection limits — Thread-safe via NSLock (activeConnections wird von Background-Threads modifiziert)
+    private let connectionLock = NSLock()
+    private var _activeConnections = 0
+    private var activeConnections: Int {
+        get { connectionLock.lock(); defer { connectionLock.unlock() }; return _activeConnections }
+        set { connectionLock.lock(); _activeConnections = newValue; connectionLock.unlock() }
+    }
     private let maxConcurrentConnections = 1000
 
     // Request log
@@ -66,8 +71,13 @@ public actor DaemonListener {
     private let rateLimitMax = 6000       // effectively unlimited — no artificial throttling
     private let bodyLimitBytes = 10_485_760 // 10 MB
 
-    /// B1: Shutdown-Flag für graceful termination
-    private var isRunning = true
+    /// B1: Shutdown-Flag für graceful termination — P12: Thread-safe via lock
+    private let runningLock = NSLock()
+    private var _isRunning = true
+    private var isRunning: Bool {
+        get { runningLock.lock(); defer { runningLock.unlock() }; return _isRunning }
+        set { runningLock.lock(); _isRunning = newValue; runningLock.unlock() }
+    }
 
     public init(port: Int, authToken: String) {
         self.port = port
@@ -76,7 +86,7 @@ public actor DaemonListener {
     }
 
     public func start() async {
-        print("🌐 DaemonListener starting on :\(port)")
+        addTrace(event: "Start", detail: "DaemonListener on :\(port)")
         isRunning = true
         startTaskScheduler()
         await runServer()
@@ -507,7 +517,7 @@ public actor DaemonListener {
         // (requires OLLAMA_NUM_PARALLEL ≥ pool size on the Ollama side).
         let pool = AgentWorkerPool.shared
         let poolStatus = await pool.statusDescription
-        print("[Daemon] SSE: acquiring worker (pool: \(poolStatus))")
+        addTrace(event: "SSE", detail: "Acquiring worker (pool: \(poolStatus))")
         let agent = await pool.acquire()
         // Release worker back to pool when SSE is done (whether success, error, or disconnect)
         // Using a detached task avoids holding the DaemonListener actor during the async release
@@ -528,8 +538,6 @@ public actor DaemonListener {
         }
 
         let modelDisplay = model.isEmpty ? (UserDefaults.standard.string(forKey: "kobold.ollamaModel") ?? "default") : model
-        print("[Daemon] SSE START: \"\(String(message.prefix(60)))\" type=\(agentTypeStr) provider=\(provider) model=\(modelDisplay) history=\(conversationHistory.count) msgs pool=\(await pool.statusDescription)")
-
         addTrace(event: "SSE Start", detail: "[\(agentTypeStr)] \(modelDisplay) — \(String(message.prefix(60)))")
         addTrace(event: "Model", detail: "\(provider)/\(modelDisplay) (Kontext: \(conversationHistory.count) Msgs)")
 
@@ -555,9 +563,7 @@ public actor DaemonListener {
 
         // Stream steps with provider config
         let providerConfig = LLMProviderConfig(provider: provider, model: model, apiKey: apiKey, temperature: temperature)
-        print("[Daemon] SSE → runStreaming starting...")
         let stream = await agent.runStreaming(userMessage: message, agentType: type, providerConfig: providerConfig)
-        print("[Daemon] SSE → stream created, iterating steps...")
         var stepCount = 0
         for await step in stream {
             if step.type == .toolCall {
@@ -570,7 +576,6 @@ public actor DaemonListener {
             let eventData = "event: step\ndata: \(safeJSON)\n\n"
             // Detect client disconnect — stop streaming if write fails
             if !client.tryWrite(eventData) {
-                print("[Daemon] SSE CLIENT DISCONNECTED after \(stepCount) steps — aborting stream")
                 addTrace(event: "SSE aborted", detail: "Client disconnected after \(stepCount) steps")
                 return
             }
@@ -581,7 +586,7 @@ public actor DaemonListener {
             await Task.yield()
         }
 
-        print("[Daemon] SSE DONE: \(stepCount) steps streamed")
+        // SSE fertig — wird bereits via addTrace geloggt
         addTrace(event: "SSE Fertig", detail: "\(stepCount) Schritte gestreamt [\(agentTypeStr)/\(modelDisplay)]")
 
         // End event
@@ -773,7 +778,7 @@ public actor DaemonListener {
                 await self.checkScheduledTasks()
             }
         }
-        print("[TaskScheduler] Started — checking every 60s")
+        addTrace(event: "TaskScheduler", detail: "Started — checking every 60s")
     }
 
     private func checkScheduledTasks() async {
@@ -795,11 +800,15 @@ public actor DaemonListener {
                 let taskName = task["name"] as? String ?? taskId
                 addTrace(event: "TaskScheduler", detail: "Starte: \(taskName)")
                 // Notify UI to execute task in dedicated task session
-                NotificationCenter.default.post(
-                    name: Notification.Name("koboldScheduledTaskFired"),
-                    object: nil,
-                    userInfo: ["taskId": taskId, "taskName": taskName, "prompt": prompt]
-                )
+                // Dispatch on main thread — DaemonListener runs on background thread,
+                // but SwiftUI .onReceive expects main-thread delivery for immediate processing
+                DispatchQueue.main.async {
+                    NotificationCenter.default.post(
+                        name: Notification.Name("koboldScheduledTaskFired"),
+                        object: nil,
+                        userInfo: ["taskId": taskId, "taskName": taskName, "prompt": prompt]
+                    )
+                }
                 // Update last_run timestamp
                 var allTasks = loadTasks()
                 if let idx = allTasks.firstIndex(where: { $0["id"] as? String == taskId }) {

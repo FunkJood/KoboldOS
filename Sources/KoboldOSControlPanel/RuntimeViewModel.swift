@@ -11,7 +11,7 @@ public enum ModelRole: String, Codable, CaseIterable, Sendable {
 }
 
 public enum ChatMode: String, Codable, Sendable {
-    case normal, task, workflow
+    case normal, workflow
 }
 
 public struct ThinkingEntry: Equatable, Sendable, Identifiable {
@@ -110,8 +110,11 @@ public class RuntimeViewModel: ObservableObject {
     // G4: Perf-Logging Flag (Default: false, via Einstellungen aktivierbar)
     private lazy var perfLogEnabled: Bool = UserDefaults.standard.bool(forKey: "kobold.debug.perfLog")
 
+    /// suppressMessageDidSet: During streaming flush, we batch-append and manually send objectWillChange once.
+    private var suppressMessageDidSet = false
     var messages: [ChatMessage] = [] {
         didSet {
+            guard !suppressMessageDidSet else { return }
             if currentViewTab == "chat" {
                 if perfLogEnabled { kperf("objectWillChange: messages count=\(messages.count)") }
                 objectWillChange.send()
@@ -120,6 +123,7 @@ public class RuntimeViewModel: ObservableObject {
     }
     public var agentLoading: Bool = false {
         didSet {
+            guard oldValue != agentLoading else { return }
             if currentViewTab == "chat" {
                 if perfLogEnabled { kperf("objectWillChange: agentLoading=\(agentLoading)") }
                 objectWillChange.send()
@@ -138,6 +142,7 @@ public class RuntimeViewModel: ObservableObject {
     // F1: notifications — append/clear ändert immer → bleibt funktional @Published-like
     public var notifications: [KoboldNotification] = [] {
         didSet {
+            guard oldValue.count != notifications.count else { return }
             if perfLogEnabled { kperf("objectWillChange: notifications count=\(notifications.count)") }
             objectWillChange.send()
         }
@@ -158,7 +163,7 @@ public class RuntimeViewModel: ObservableObject {
     // Teams & Workflow
     @Published public var teams: [AgentTeam] = AgentTeam.defaults
     @Published public var chatMode: ChatMode = .normal
-    @Published public var taskChatLabel: String = ""
+    // taskChatLabel removed — tasks use normal chat sessions now
     @Published public var workflowChatLabel: String = ""
     @Published public var workflowLastResponse: String? = nil
     @Published public var activeSessions: [ActiveAgentSession] = []
@@ -281,11 +286,25 @@ public class RuntimeViewModel: ObservableObject {
         sessionLastAccess[currentSessionId] = Date()
         // A2/A4: Bei App-Beendigung: speichern → sofort auf Disk → cleanup
         // queue: .main garantiert Main-Thread → MainActor.assumeIsolated ist sicher
+        // P12: Shutdown-Save — Snapshot auf MainActor, Disk-Write auf Background
         shutdownObserver = NotificationCenter.default.addObserver(forName: .koboldShutdownSave, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.upsertCurrentSession()
-                self.saveSessionsWithRetry()  // Sofort speichern (nicht debounced)
+                // Sofort-Snapshot für synchronen Disk-Write (nicht debounced — App beendet sich gleich)
+                var snapshot = self.sessions
+                for (sid, pending) in self.pendingMessages where !pending.isEmpty {
+                    if let idx = snapshot.firstIndex(where: { $0.id == sid }) {
+                        snapshot[idx].messages = pending.map { $0.toCodable() }
+                    }
+                }
+                let url = self.sessionsURL
+                // Synchroner Write ist OK bei Shutdown — App wartet sowieso
+                var seen = Set<UUID>()
+                let deduped = snapshot.filter { seen.insert($0.id).inserted }
+                if let data = try? JSONEncoder().encode(deduped) {
+                    try? data.write(to: url, options: .atomic)
+                }
                 self.cleanup()
             }
         }
@@ -305,26 +324,26 @@ public class RuntimeViewModel: ObservableObject {
                !generalModel.isEmpty {
                 await LLMRunner.shared.setModel(generalModel)
                 UserDefaults.standard.set(generalModel, forKey: "kobold.ollamaModel")
-                print("[RuntimeViewModel] Set default Ollama model to general agent: \(generalModel)")
+                DaemonLog.shared.add("Default model: \(generalModel)", category: .system)
             }
         }
     }
 
     /// Sessions von Disk laden (~/Library/Application Support/KoboldOS/sessions.json)
+    /// P12: Async — Data(contentsOf:) + JSONDecoder laufen off-MainActor.
     /// Startet immer mit leerem Chat für Stabilität — alte Sessions bleiben in der Sidebar verfügbar.
     private func loadSessions() {
         let url = sessionsURL
-        guard FileManager.default.fileExists(atPath: url.path),
-              let data = try? Data(contentsOf: url),
-              let loaded = try? JSONDecoder().decode([ChatSession].self, from: data) else {
-            print("[RuntimeViewModel] No saved sessions found — starting fresh")
-            return
+        Task.detached(priority: .userInitiated) {
+            guard FileManager.default.fileExists(atPath: url.path),
+                  let data = try? Data(contentsOf: url),
+                  let loaded = try? JSONDecoder().decode([ChatSession].self, from: data) else {
+                return
+            }
+            await MainActor.run { [weak self] in
+                self?.sessions = loaded
+            }
         }
-        sessions = loaded
-        // Fresh start: Neuer leerer Chat statt letzte Session laden
-        // Alte Sessions bleiben in der Sidebar und können jederzeit gewechselt werden
-        // Das verhindert, dass ein langer Chat-Verlauf beim Start die UI belastet
-        print("[RuntimeViewModel] Loaded \(loaded.count) sessions from disk — starting fresh chat")
     }
     
     // MARK: - API Helpers
@@ -428,7 +447,7 @@ public class RuntimeViewModel: ObservableObject {
 
             // Use delegate-based SSE stream for guaranteed real-time delivery.
             // URLSession.bytes(for:) can buffer data with raw HTTP servers on macOS.
-            print("[SSE-Client] Connecting to \(url) (delegate mode)...")
+            DaemonLog.shared.add("SSE connecting to \(url)", category: .network)
             let lines = self.sseLines(for: req)
 
             // Start 1.5s flush timer for UI updates (user-requested: stability over responsiveness)
@@ -480,7 +499,6 @@ public class RuntimeViewModel: ObservableObject {
                 // First line from delegate: HTTP status
                 if line.hasPrefix("__HTTP_STATUS__:") {
                     let code = Int(line.dropFirst(16)) ?? 0
-                    print("[SSE-Client] HTTP \(code)")
                     DaemonLog.shared.add("SSE HTTP \(code)", category: .network)
                     if code != 200 {
                         await MainActor.run {
@@ -497,10 +515,6 @@ public class RuntimeViewModel: ObservableObject {
                 guard httpOK else { continue }
 
                 lineCount += 1
-                if lineCount <= 5 || lineCount % 50 == 0 {
-                    let preview = line.count > 80 ? String(line.prefix(77)) + "..." : line
-                    print("[SSE-Client] Line \(lineCount): \(preview)")
-                }
 
                 if line.hasPrefix("data: ") {
                     currentEvent = String(line.dropFirst(6))
@@ -513,8 +527,7 @@ public class RuntimeViewModel: ObservableObject {
                 }
             }
 
-            print("[SSE-Client] Stream ended: \(lineCount) lines, \(eventCount) events")
-            DaemonLog.shared.add("SSE fertig: \(eventCount) Events", category: .network)
+            DaemonLog.shared.add("SSE fertig: \(lineCount) lines, \(eventCount) events", category: .network)
             flushTask.cancel()
 
             guard httpOK else {
@@ -530,10 +543,12 @@ public class RuntimeViewModel: ObservableObject {
             await accumulator.markDone()
             let finalResult = await accumulator.takeFinalResult()
 
-            // P8: SINGLE MainActor.run block statt 5 separate Chunks mit 50ms Pausen.
-            // Vorher: 5 objectWillChange-Trigger in 150ms → 5 Full Re-Renders.
-            // Jetzt: 1 Block → 1 Re-Render am Ende.
+            // P8+P9: SINGLE MainActor.run block + suppressMessageDidSet for ZERO intermediate re-renders.
+            // All appendMessage calls are batched — only ONE objectWillChange.send() at the end.
             await MainActor.run {
+                // Suppress didSet during batch append — we'll send ONE objectWillChange at the end
+                self.suppressMessageDidSet = true
+
                 // 1. Agent state
                 var state = self.sessionAgentStates[sessionId] ?? SessionAgentState()
                 state.thinkingSteps = finalResult.thinkingSteps
@@ -558,6 +573,12 @@ public class RuntimeViewModel: ObservableObject {
                 }
                 for embed in finalResult.embedMessages {
                     self.appendMessage(ChatMessage(kind: .image(path: embed.path, caption: embed.caption)), for: sessionId)
+                }
+
+                // Re-enable didSet and fire ONE objectWillChange for all batched messages
+                self.suppressMessageDidSet = false
+                if sessionId == self.currentSessionId && self.currentViewTab == "chat" {
+                    self.objectWillChange.send()
                 }
 
                 // 5. Notifications + finalize
@@ -714,16 +735,26 @@ public class RuntimeViewModel: ObservableObject {
 
     private func debouncedSave() {
         saveDebounceTask?.cancel()
-        saveDebounceTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 3_000_000_000) // 3s debounce
-            guard !Task.isCancelled, let self else { return }
-            // P8: toCodable-Konvertierung nur hier (alle 3s) statt bei jedem appendMessage
-            for (sid, pending) in self.pendingMessages where !pending.isEmpty {
-                if let idx = self.sessions.firstIndex(where: { $0.id == sid }) {
-                    self.sessions[idx].messages = pending.map { $0.toCodable() }
-                }
+        // P12: Snapshot auf MainActor bauen (schnelle Array-Copy), dann ALLES off-MainActor.
+        // Vorher: Task { } lief implizit auf MainActor → 3s sleep + self.sessions-Zugriff blockierten MainActor.
+        // Jetzt: Snapshot sofort, dann Task.detached → MainActor ist frei für UI-Rendering.
+        var snapshot = self.sessions
+        for (sid, pending) in self.pendingMessages where !pending.isEmpty {
+            if let idx = snapshot.firstIndex(where: { $0.id == sid }) {
+                snapshot[idx].messages = pending.map { $0.toCodable() }
             }
-            self.saveSessionsWithRetry()
+        }
+        let url = self.sessionsURL
+        saveDebounceTask = Task.detached(priority: .utility) {
+            try? await Task.sleep(nanoseconds: 3_000_000_000) // 3s debounce — auf Background-Thread!
+            guard !Task.isCancelled else { return }
+            var seen = Set<UUID>()
+            let deduped = snapshot.filter { seen.insert($0.id).inserted }
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            if let data = try? encoder.encode(deduped) {
+                try? data.write(to: url, options: .atomic)
+            }
         }
     }
 
@@ -759,14 +790,8 @@ public class RuntimeViewModel: ObservableObject {
             pendingMessages[sessionId] = []
         }
 
-        // 5. ChatMode basierend auf Session-Typ setzen
-        if let session = sessions.first(where: { $0.id == sessionId }), session.taskId != nil {
-            chatMode = .task
-            taskChatLabel = session.title.hasPrefix("Task: ") ? String(session.title.dropFirst(6)) : session.title
-        } else if chatMode == .task {
-            chatMode = .normal
-            taskChatLabel = ""
-        }
+        // 5. ChatMode zurücksetzen (Tasks nutzen jetzt normale Sessions)
+        if chatMode != .normal { chatMode = .normal }
 
         // 6. Agent Loading State für neue Session setzen
         agentLoading = streamingSessions.contains(sessionId)
@@ -825,10 +850,7 @@ public class RuntimeViewModel: ObservableObject {
         switchToSession(session.id)
     }
 
-    // Task Sessions: Alle Sessions mit taskId (gefiltert aus sessions)
-    public var taskSessions: [ChatSession] {
-        sessions.filter { $0.taskId != nil }.sorted { $0.createdAt > $1.createdAt }
-    }
+    // taskSessions removed — tasks appear in normal chat list now
     @Published public var workflowSessions: [ChatSession] = []
 
     @Published public var workflowDefinitions: [WorkflowDef] = []
@@ -892,22 +914,13 @@ public class RuntimeViewModel: ObservableObject {
         messages = []
     }
 
+    /// Task-Chat öffnen: Findet existierende Task-Session oder erstellt neue, navigiert dorthin.
     public func openTaskChat(taskId: String, taskName: String) {
-        // 1. Aktuelle Session speichern
         upsertCurrentSession()
-
-        // 2. Existierende Task-Session suchen oder neue erstellen
         if let existing = sessions.first(where: { $0.taskId == taskId }) {
-            // Task-Session existiert → dahin wechseln
             switchToSession(existing.id)
         } else {
-            // Neue Task-Session erstellen
-            let session = ChatSession(
-                id: UUID(),
-                title: "Task: \(taskName)",
-                messages: [],
-                taskId: taskId
-            )
+            let session = ChatSession(id: UUID(), title: "Task: \(taskName)", messages: [], taskId: taskId)
             sessions.insert(session, at: 0)
             currentSessionId = session.id
             sessionAgentStates[currentSessionId] = SessionAgentState()
@@ -915,12 +928,6 @@ public class RuntimeViewModel: ObservableObject {
             sessionLastAccess[currentSessionId] = Date()
             messages = []
         }
-
-        // 3. Chat-Mode setzen
-        chatMode = .task
-        taskChatLabel = taskName
-
-        // 4. Zum Chat-Tab navigieren
         NotificationCenter.default.post(name: .koboldNavigate, object: SidebarTab.chat)
     }
 
@@ -1089,16 +1096,33 @@ public class RuntimeViewModel: ObservableObject {
         pendingMessages.removeValue(forKey: s.id)
         streamingSessions.remove(s.id)
         sessionLastAccess.removeValue(forKey: s.id)
-        // If we deleted the currently displayed session → create fresh session
+        // P11: If we deleted the currently displayed session → switch to next or create fresh
+        // Bug fix: UUID() ohne sessions-Eintrag führte zu Phantom-Sessions bei jedem sendMessage()
         if s.id == currentSessionId {
-            currentSessionId = UUID()
-            sessionAgentStates[currentSessionId] = SessionAgentState()
-            pendingMessages[currentSessionId] = []
-            messages = []
-            chatMode = .normal
-            topics = []
-            activeTopicId = nil
-            agentLoading = false
+            if let next = sessions.first {
+                // Switch to next session (skip upsertCurrentSession — deleted session is gone)
+                currentSessionId = next.id
+                sessionLastAccess[next.id] = Date()
+                if sessionAgentStates[next.id] == nil {
+                    sessionAgentStates[next.id] = SessionAgentState()
+                }
+                loadMessages(for: next.id)
+                chatMode = .normal
+                agentLoading = streamingSessions.contains(next.id)
+                syncAgentStateToUI()
+            } else {
+                // No sessions left — create proper new session (appears in sidebar immediately)
+                let fresh = ChatSession(id: UUID(), title: "Neuer Chat", messages: [])
+                sessions.insert(fresh, at: 0)
+                currentSessionId = fresh.id
+                sessionAgentStates[currentSessionId] = SessionAgentState()
+                pendingMessages[currentSessionId] = []
+                messages = []
+                chatMode = .normal
+                topics = []
+                activeTopicId = nil
+                agentLoading = false
+            }
         }
         // Persist deletion to disk
         saveSessionsWithRetry()
@@ -1110,11 +1134,9 @@ public class RuntimeViewModel: ObservableObject {
         sessionAgentStates[currentSessionId]?.wasStopped = true
         streamingSessions.remove(currentSessionId)
         agentLoading = false
-        print("Agent cancellation requested for session \(currentSessionId)")
     }
 
     public func killSession(_ sessionId: UUID) {
-        print("Session termination requested for \(sessionId)")
         activeSessions.removeAll { $0.id == sessionId }
         sessionAgentStates.removeValue(forKey: sessionId)
         pendingMessages.removeValue(forKey: sessionId)
@@ -1168,7 +1190,7 @@ public class RuntimeViewModel: ObservableObject {
             sessionAgentStates[sessionId]?.thinkingSteps = []
 
             offloadedCount += 1
-            print("[MemoryManager] Offloaded session \(sessionId.uuidString.prefix(8)) — freed \(count) messages from RAM")
+            DaemonLog.shared.add("Offloaded session \(sessionId.uuidString.prefix(8)) — \(count) msgs freed", category: .system)
         }
 
         if offloadedCount > 0 {
@@ -1188,12 +1210,12 @@ public class RuntimeViewModel: ObservableObject {
         }
         source.resume()
         memoryPressureSource = source
-        print("[MemoryManager] Memory pressure handler registered")
+        DaemonLog.shared.add("Memory pressure handler registered", category: .system)
     }
 
     /// Emergency offload: clears ALL background session data from RAM immediately.
     private func handleMemoryPressure() {
-        print("[MemoryManager] Memory pressure detected — emergency offload of background sessions")
+        DaemonLog.shared.add("Memory pressure — emergency offload", category: .system)
         var freed = 0
 
         for sessionId in pendingMessages.keys {
@@ -1221,7 +1243,7 @@ public class RuntimeViewModel: ObservableObject {
 
         if freed > 0 {
             saveSessionsWithRetry()
-            print("[MemoryManager] Emergency offloaded \(freed) background sessions")
+            DaemonLog.shared.add("Offloaded \(freed) background sessions", category: .system)
         }
     }
 
@@ -1229,14 +1251,14 @@ public class RuntimeViewModel: ObservableObject {
 
     public func clearMessageQueue() {
         sessionAgentStates[currentSessionId]?.messageQueue = []
-        print("Message queue cleared for session \(currentSessionId)")
+        // Cleared message queue for current session
     }
 
     public func sendNextQueued() {
         guard let next = sessionAgentStates[currentSessionId]?.messageQueue.first else { return }
         sessionAgentStates[currentSessionId]?.messageQueue.removeFirst()
         sendMessage(next)
-        print("Sent next queued message: \(next)")
+        // Sent next queued message
     }
 
     // MARK: - Agent Control (Per-Session)
@@ -1245,7 +1267,7 @@ public class RuntimeViewModel: ObservableObject {
         guard let prompt = sessionAgentStates[currentSessionId]?.lastPrompt else { return }
         sessionAgentStates[currentSessionId]?.wasStopped = false
         sendMessage(prompt)
-        print("Agent resumed with last prompt")
+        // Agent resumed with last prompt
     }
 
     public func clearNotifications() {
@@ -1280,6 +1302,11 @@ public class RuntimeViewModel: ObservableObject {
         let sessionId: UUID
         if let existing = sessions.first(where: { $0.taskId == taskId }) {
             sessionId = existing.id
+            // Ensure agent state exists (may have been cleared by offloadInactiveSessions)
+            if sessionAgentStates[sessionId] == nil {
+                sessionAgentStates[sessionId] = SessionAgentState()
+            }
+            sessionLastAccess[sessionId] = Date()
         } else {
             let session = ChatSession(id: UUID(), title: "Task: \(taskName)", messages: [], taskId: taskId)
             sessions.insert(session, at: 0)
@@ -1290,16 +1317,12 @@ public class RuntimeViewModel: ObservableObject {
         }
 
         if navigate {
-            // Aktuelle Session speichern, zur Task-Session wechseln
+            // Zur Task-Session wechseln (Tasks sind jetzt normale Chat-Sessions)
             upsertCurrentSession()
             currentSessionId = sessionId
             messages = pendingMessages[sessionId] ?? []
-            chatMode = .task
-            taskChatLabel = taskName
             objectWillChange.send()
-            // Zum Chat-Tab navigieren
             NotificationCenter.default.post(name: .koboldNavigate, object: SidebarTab.chat)
-            // Nachricht in aktuelle (= Task) Session senden
             sendMessage(prompt)
         } else {
             // Hintergrund: Nachricht in Task-Session senden ohne UI zu stören
@@ -1341,11 +1364,13 @@ public class RuntimeViewModel: ObservableObject {
     // MARK: - Agent State Sync (für UI Updates)
 
     /// Synchronisiert Agent State zur UI (liest IMMER aus sessionAgentStates[currentSessionId])
+    /// P12: Nur objectWillChange senden wenn sich tatsächlich etwas ändert.
+    /// Vorher: Wurde alle 2s vom SSE Flush Timer aufgerufen → unnötige UI-Rebuilds.
     public func syncAgentStateToUI() {
         let state = sessionAgentStates[currentSessionId] ?? SessionAgentState()
-        agentLoading = state.isLoading
-        // Published properties werden automatisch aktualisiert durch computed properties
-        print("Synced agent state for session \(currentSessionId): loading=\(state.isLoading), steps=\(state.thinkingSteps.count)")
+        let newLoading = state.isLoading
+        // agentLoading hat didSet Guard (oldValue != newValue) → nur bei echtem Wechsel
+        agentLoading = newLoading
     }
 
     // MARK: - Conversation History (Per-Session Isolation)
@@ -1425,7 +1450,7 @@ public class RuntimeViewModel: ObservableObject {
             NotificationCenter.default.removeObserver(obs)
             shutdownObserver = nil
         }
-        print("[RuntimeViewModel] Cleanup complete — all background tasks cancelled")
+        DaemonLog.shared.add("RuntimeViewModel cleanup complete", category: .system)
     }
 
     deinit {
@@ -1712,7 +1737,7 @@ private final class SSEStreamDelegate: NSObject, URLSessionDataDelegate, @unchec
                     didReceive response: URLResponse,
                     completionHandler: @escaping @Sendable (URLSession.ResponseDisposition) -> Void) {
         let code = (response as? HTTPURLResponse)?.statusCode ?? 0
-        print("[SSE-Delegate] HTTP \(code)")
+        // SSE delegate HTTP status — no print to avoid console I/O on hot path
         continuation.yield("__HTTP_STATUS__:\(code)")
         completionHandler(.allow)
     }
@@ -1737,7 +1762,7 @@ private final class SSEStreamDelegate: NSObject, URLSessionDataDelegate, @unchec
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         if let error = error {
-            print("[SSE-Delegate] Connection error: \(error.localizedDescription)")
+            DaemonLog.shared.add("SSE error: \(error.localizedDescription)", category: .network)
         }
         // Flush remaining buffer
         if !buffer.isEmpty, let line = String(data: buffer, encoding: .utf8), !line.isEmpty {

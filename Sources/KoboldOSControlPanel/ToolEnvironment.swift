@@ -103,9 +103,25 @@ final class ToolEnvironment: ObservableObject {
     }
 
     private nonisolated func probeToolNonisolated(binary: String, versionFlag: String) async -> (String?, String?) {
+        // P12: 5s Timeout — verhindert ewig blockierende Prozesse (z.B. docker --version wenn DockerD hängt)
         return await withCheckedContinuation { continuation in
+            let hasResumed = NSLock()
+            var resumed = false
+
+            func safeResume(_ value: (String?, String?)) {
+                hasResumed.lock()
+                defer { hasResumed.unlock() }
+                guard !resumed else { return }
+                resumed = true
+                continuation.resume(returning: value)
+            }
+
+            // Timeout nach 5 Sekunden
+            DispatchQueue.global().asyncAfter(deadline: .now() + 5.0) {
+                safeResume((nil, nil))
+            }
+
             DispatchQueue.global().async {
-                // Find binary
                 let which = Process()
                 which.executableURL = URL(fileURLWithPath: "/usr/bin/which")
                 which.arguments = [binary]
@@ -121,12 +137,12 @@ final class ToolEnvironment: ObservableObject {
                     try which.run()
                     which.waitUntilExit()
                 } catch {
-                    continuation.resume(returning: (nil, nil))
+                    safeResume((nil, nil))
                     return
                 }
 
                 guard which.terminationStatus == 0 else {
-                    continuation.resume(returning: (nil, nil))
+                    safeResume((nil, nil))
                     return
                 }
 
@@ -134,11 +150,10 @@ final class ToolEnvironment: ObservableObject {
                 let path = String(data: pathData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
 
                 guard let toolPath = path, !toolPath.isEmpty else {
-                    continuation.resume(returning: (nil, nil))
+                    safeResume((nil, nil))
                     return
                 }
 
-                // Get version
                 let ver = Process()
                 ver.executableURL = URL(fileURLWithPath: toolPath)
                 ver.arguments = [versionFlag]
@@ -150,7 +165,7 @@ final class ToolEnvironment: ObservableObject {
                     try ver.run()
                     ver.waitUntilExit()
                 } catch {
-                    continuation.resume(returning: (toolPath, nil))
+                    safeResume((toolPath, nil))
                     return
                 }
 
@@ -159,7 +174,7 @@ final class ToolEnvironment: ObservableObject {
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                     .components(separatedBy: "\n").first
 
-                continuation.resume(returning: (toolPath, verStr))
+                safeResume((toolPath, verStr))
             }
         }
     }
@@ -185,7 +200,12 @@ final class ToolEnvironment: ObservableObject {
         try FileManager.default.createDirectory(at: pythonSupportDir.deletingLastPathComponent(),
                                                   withIntermediateDirectories: true)
 
+        // P12: Throttle auf 10 Updates/s — verhindert MainActor-Queue-Overflow bei tausenden Progress-Events
+        var lastUpdate = Date.distantPast
         let delegate = DownloadDelegate { [weak self] progress in
+            let now = Date()
+            guard now.timeIntervalSince(lastUpdate) > 0.1 || progress >= 1.0 else { return }
+            lastUpdate = now
             Task { @MainActor in
                 self?.pythonDownloadProgress = progress
             }

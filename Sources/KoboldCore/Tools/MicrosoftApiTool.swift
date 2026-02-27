@@ -31,23 +31,18 @@ public struct MicrosoftApiTool: Tool {
         }
     }
 
-    private func getToken() async -> String? {
-        let d = UserDefaults.standard
-        let token = d.string(forKey: "kobold.microsoft.accessToken") ?? ""
-        if token.isEmpty { return nil }
+    private let oauth = OAuthTokenHelper(
+        prefix: "kobold.microsoft",
+        tokenURL: "https://login.microsoftonline.com/common/oauth2/v2.0/token"
+    )
 
-        // Check expiry
-        let expiry = d.double(forKey: "kobold.microsoft.tokenExpiry")
-        if expiry > 0 && Date(timeIntervalSince1970: expiry) < Date() {
-            // Token expired — try to hint user to re-auth
-            return nil
-        }
-        return token
+    private func getToken() async -> String? {
+        await oauth.getValidToken()
     }
 
     private func graphRequest(endpoint: String, method: String = "GET", body: String? = nil) async -> String {
-        guard let token = await getToken() else {
-            return "Error: Nicht bei Microsoft angemeldet. Bitte unter Einstellungen → Verbindungen → Microsoft anmelden."
+        guard var token = await getToken() else {
+            return "Error: Nicht bei Microsoft angemeldet oder Token abgelaufen. Bitte unter Einstellungen → Verbindungen → Microsoft anmelden."
         }
 
         let urlStr = endpoint.hasPrefix("http") ? endpoint : "https://graph.microsoft.com/v1.0\(endpoint)"
@@ -66,6 +61,22 @@ public struct MicrosoftApiTool: Tool {
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+
+            // Auto-refresh on 401
+            if status == 401 {
+                if let newToken = await oauth.refreshToken() {
+                    token = newToken
+                    request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+                    let (retryData, retryResponse) = try await URLSession.shared.data(for: request)
+                    let retryStatus = (retryResponse as? HTTPURLResponse)?.statusCode ?? 0
+                    let retryBody = String(data: retryData.prefix(8192), encoding: .utf8) ?? "(empty)"
+                    if retryStatus >= 400 { return "Error: HTTP \(retryStatus): \(retryBody)" }
+                    return retryBody
+                } else {
+                    return "Error: Microsoft-Token abgelaufen und Refresh fehlgeschlagen. Bitte erneut anmelden unter Einstellungen → Verbindungen → Microsoft."
+                }
+            }
+
             let responseStr = String(data: data.prefix(8192), encoding: .utf8) ?? "(empty)"
             if status >= 400 { return "Error: HTTP \(status): \(responseStr)" }
             return responseStr

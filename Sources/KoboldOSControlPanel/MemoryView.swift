@@ -197,12 +197,12 @@ struct MemoryView: View {
         }
         .background(ZStack { Color.koboldBackground; LinearGradient(colors: [Color.koboldEmerald.opacity(0.015), .clear, Color.koboldGold.opacity(0.01)], startPoint: .topLeading, endPoint: .bottomTrailing) })
         .task { await loadAll() }
-        .onReceive(Timer.publish(every: 15, on: .main, in: .common).autoconnect()) { _ in
-            // Nur refreshen wenn nicht gerade lädt (kein Aufstauen)
-            guard !isLoading else { return }
-            Task.detached(priority: .utility) { [weak l10n] in
-                _ = l10n // keep reference alive
-                _ = await MainActor.run { Task { await loadEntries() } }
+        .task {
+            // P9: Replaces Timer.publish(every:15, on:.main) — auto-cancelled when view disappears
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 15_000_000_000)
+                guard !Task.isCancelled, !isLoading else { continue }
+                await loadEntries()
             }
         }
         .sheet(isPresented: $showAddEntry) { addEntrySheet }

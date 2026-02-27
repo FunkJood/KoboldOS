@@ -60,6 +60,9 @@ public struct WhatsAppApiTool: Tool {
             let (data, response) = try await URLSession.shared.data(for: request)
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             let responseStr = String(data: data.prefix(8192), encoding: .utf8) ?? "(empty)"
+            if status == 401 {
+                return "Error: WhatsApp-Token ungültig oder abgelaufen. Bitte unter Einstellungen → Verbindungen → WhatsApp neu anmelden."
+            }
             if status >= 400 { return "Error: HTTP \(status): \(responseStr)" }
             return responseStr
         } catch {

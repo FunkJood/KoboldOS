@@ -731,4 +731,114 @@ extension SettingsView {
             }
         )
     }
+
+    // MARK: - Suno AI (API-Key basiert)
+
+    internal var brandLogoSuno: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(LinearGradient(colors: [Color.purple, Color.pink], startPoint: .topLeading, endPoint: .bottomTrailing))
+                .frame(width: 32, height: 32)
+            Image(systemName: "music.note")
+                .font(.system(size: 16, weight: .bold))
+                .foregroundColor(.white)
+        }
+    }
+
+    @ViewBuilder
+    func sunoConnectionSection() -> some View {
+        let hasApiKey = !(UserDefaults.standard.string(forKey: "kobold.suno.apiKey") ?? "").isEmpty
+        connectionCard(
+            logo: AnyView(brandLogoSuno),
+            name: "Suno AI",
+            subtitle: "Musik generieren",
+            isConnected: hasApiKey,
+            connectedDetail: {
+                AnyView(VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark.circle.fill").foregroundColor(.koboldEmerald)
+                        Text("API-Key konfiguriert").font(.system(size: 13))
+                    }
+                    Text("Der Agent kann Songs aus Textbeschreibungen generieren.")
+                        .font(.system(size: 11)).foregroundColor(.secondary)
+                    Button("API-Key entfernen") {
+                        UserDefaults.standard.removeObject(forKey: "kobold.suno.apiKey")
+                    }
+                    .font(.system(size: 12)).foregroundColor(.red)
+                })
+            },
+            signInButton: {
+                AnyView(VStack(alignment: .leading, spacing: 8) {
+                    Text("API-Key von sunoapi.org").font(.system(size: 11)).foregroundColor(.secondary)
+                    SecureField("Suno API Key", text: Binding(
+                        get: { UserDefaults.standard.string(forKey: "kobold.suno.apiKey") ?? "" },
+                        set: { UserDefaults.standard.set($0, forKey: "kobold.suno.apiKey") }
+                    )).textFieldStyle(.roundedBorder).font(.system(size: 12))
+
+                    Text("Erstelle einen Account auf sunoapi.org und kopiere deinen API-Key hierher. Der Agent kann dann Musik generieren.")
+                        .font(.system(size: 10)).foregroundColor(.secondary).italic()
+                })
+            }
+        )
+    }
+
+    // MARK: - Reddit
+
+    internal var brandLogoReddit: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.orange)
+                .frame(width: 32, height: 32)
+            Image(systemName: "bubble.left.and.text.bubble.right.fill")
+                .font(.system(size: 14, weight: .bold))
+                .foregroundColor(.white)
+        }
+    }
+
+    @ViewBuilder
+    func redditConnectionSection() -> some View {
+        connectionCard(
+            logo: AnyView(brandLogoReddit),
+            name: "Reddit",
+            subtitle: "Posts, Subreddits, Kommentare",
+            isConnected: RedditOAuth.shared.isConnected,
+            connectedDetail: {
+                AnyView(VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Image(systemName: "person.fill").foregroundColor(.secondary)
+                        Text(RedditOAuth.shared.userName).font(.system(size: 13))
+                    }
+                    Button("Abmelden") { Task { await RedditOAuth.shared.signOut() } }
+                        .font(.system(size: 12)).foregroundColor(.red)
+                })
+            },
+            signInButton: {
+                AnyView(VStack(alignment: .leading, spacing: 10) {
+                    DisclosureGroup("Reddit App-Konfiguration") {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Client ID (unter reddit.com/prefs/apps)").font(.system(size: 11)).foregroundColor(.secondary)
+                            TextField("Reddit App Client ID", text: Binding(
+                                get: { UserDefaults.standard.string(forKey: "kobold.reddit.clientId") ?? "" },
+                                set: { UserDefaults.standard.set($0, forKey: "kobold.reddit.clientId") }
+                            )).textFieldStyle(.roundedBorder).font(.system(size: 12))
+
+                            Text("Client Secret").font(.system(size: 11)).foregroundColor(.secondary)
+                            SecureField("Reddit App Secret", text: Binding(
+                                get: { UserDefaults.standard.string(forKey: "kobold.reddit.clientSecret") ?? "" },
+                                set: { UserDefaults.standard.set($0, forKey: "kobold.reddit.clientSecret") }
+                            )).textFieldStyle(.roundedBorder).font(.system(size: 12))
+                        }
+                    }.font(.system(size: 12.5))
+
+                    Button(action: { RedditOAuth.shared.signIn() }) {
+                        Label("Mit Reddit anmelden", systemImage: "arrow.right.circle.fill")
+                    }
+                    .buttonStyle(.borderedProminent).tint(.orange)
+
+                    Text("Erstelle eine App unter reddit.com/prefs/apps (Typ: web app, Redirect: http://127.0.0.1:7778/callback).")
+                        .font(.system(size: 10)).foregroundColor(.secondary).italic()
+                })
+            }
+        )
+    }
 }

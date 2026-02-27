@@ -98,7 +98,6 @@ public actor MemoryStore {
                 }
             }
             try? fm.removeItem(at: legacyEntriesURL)
-            print("[MemoryStore] migrated \(legacy.count) entries to individual files")
         }
 
         // Load all individual entry files
@@ -112,7 +111,6 @@ public actor MemoryStore {
             }
             .sorted { $0.timestamp < $1.timestamp }
         hasLoaded = true
-        print("[MemoryStore] Loaded \(localEntries.count) entries from disk")
     }
 
     // MARK: - Add

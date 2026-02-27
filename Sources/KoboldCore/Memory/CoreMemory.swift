@@ -259,11 +259,15 @@ public actor CoreMemory {
     }
 
     private func save() {
+        // P12: Encoding auf Actor-Thread (schnell), Disk-Write off-Thread
         let data = blocks.values
         guard let encoded = try? JSONEncoder().encode(Array(data)) else { return }
-        let dir = persistenceURL.deletingLastPathComponent()
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        try? encoded.write(to: persistenceURL)
+        let url = persistenceURL
+        Task.detached(priority: .utility) {
+            let dir = url.deletingLastPathComponent()
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try? encoded.write(to: url)
+        }
     }
 
     private func load() {

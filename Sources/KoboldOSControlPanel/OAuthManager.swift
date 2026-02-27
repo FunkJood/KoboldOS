@@ -117,7 +117,7 @@ class OAuthManager: NSObject, @unchecked Sendable {
             if let name = d.string(forKey: "\(prefix).username") {
                 setUserName(name)
             }
-            print("[\(config.serviceName)] Restored session for \(userName)")
+            // P12: print entfernt Restored session for \(userName)")
         }
     }
 
@@ -172,11 +172,11 @@ class OAuthManager: NSObject, @unchecked Sendable {
     func signIn() {
         let id = clientId
         guard !id.isEmpty else {
-            print("[\(config.serviceName)] Client ID not configured")
+            // P12: print entfernt Client ID not configured")
             return
         }
         guard startCallbackServer() else {
-            print("[\(config.serviceName)] Failed to start callback server")
+            // P12: print entfernt Failed to start callback server")
             return
         }
 
@@ -213,7 +213,7 @@ class OAuthManager: NSObject, @unchecked Sendable {
 
         guard let authURL = components.url else { return }
         NSWorkspace.shared.open(authURL)
-        print("[\(config.serviceName)] Opened browser for sign-in (callback on port \(callbackPort))")
+        // P12: print entfernt Opened browser for sign-in (callback on port \(callbackPort))")
     }
 
     // MARK: - Callback Server
@@ -231,7 +231,7 @@ class OAuthManager: NSObject, @unchecked Sendable {
                 }
                 listener.stateUpdateHandler = { state in
                     if case .failed(let err) = state {
-                        print("[OAuth] Listener failed: \(err)")
+                        // P12: print entfernt
                     }
                 }
                 listener.start(queue: .global(qos: .userInitiated))
@@ -348,7 +348,7 @@ class OAuthManager: NSObject, @unchecked Sendable {
         do {
             let (data, _) = try await URLSession.shared.data(for: request)
             guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                print("[\(config.serviceName)] Token exchange: invalid JSON")
+                // P12: print entfernt Token exchange: invalid JSON")
                 return
             }
 
@@ -362,7 +362,7 @@ class OAuthManager: NSObject, @unchecked Sendable {
 
             guard let token = accessToken, !token.isEmpty else {
                 let errBody = String(data: data, encoding: .utf8) ?? ""
-                print("[\(config.serviceName)] Token exchange failed: \(errBody)")
+                // P12: print entfernt Token exchange failed: \(errBody)")
                 return
             }
 
@@ -380,9 +380,9 @@ class OAuthManager: NSObject, @unchecked Sendable {
             if let userInfoURL = config.userInfoURL {
                 await fetchUserInfo(accessToken: token, url: userInfoURL)
             }
-            print("[\(config.serviceName)] Sign-in successful")
+            // P12: print entfernt Sign-in successful")
         } catch {
-            print("[\(config.serviceName)] Token exchange error: \(error)")
+            // P12: print entfernt Token exchange error: \(error)")
         }
     }
 
@@ -438,7 +438,7 @@ class OAuthManager: NSObject, @unchecked Sendable {
             }
             return true
         } catch {
-            print("[\(config.serviceName)] Refresh error: \(error)")
+            // P12: print entfernt Refresh error: \(error)")
             return false
         }
     }
@@ -463,7 +463,7 @@ class OAuthManager: NSObject, @unchecked Sendable {
         setUserName("")
         setConnected(false)
         clearDefaults()
-        print("[\(config.serviceName)] Signed out")
+        // P12: print entfernt Signed out")
     }
 
     // MARK: - User Info
@@ -481,11 +481,50 @@ class OAuthManager: NSObject, @unchecked Sendable {
                 if let name = resolveJsonPath(json, path: config.userNameJsonPath) as? String {
                     setUserName(name)
                     UserDefaults.standard.set(name, forKey: "\(prefix).username")
-                    print("[\(config.serviceName)] User: \(name)")
+                    // P12: print entfernt User: \(name)")
                 }
             }
         } catch {
-            print("[\(config.serviceName)] User info error: \(error)")
+            // P12: print entfernt User info error: \(error)")
+        }
+    }
+
+    // MARK: - Verify Token (lightweight API check)
+
+    func verifyToken() async {
+        let token = getAccessTokenRaw()
+        guard !token.isEmpty else {
+            setConnected(false)
+            return
+        }
+
+        // Use userInfoURL if available, otherwise just check token non-empty
+        guard let urlStr = config.userInfoURL, let url = URL(string: urlStr) else {
+            // No verification endpoint — trust stored state
+            return
+        }
+
+        var req = URLRequest(url: url)
+        req.setValue("\(config.authHeaderPrefix) \(token)", forHTTPHeaderField: "Authorization")
+        if config.acceptJSON {
+            req.setValue("application/json", forHTTPHeaderField: "Accept")
+        }
+        req.timeoutInterval = 10
+
+        do {
+            let (_, response) = try await URLSession.shared.data(for: req)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            if status == 401 || status == 403 {
+                // Try refresh first
+                if await refreshAccessToken() {
+                    return // Refresh succeeded → still connected
+                }
+                setConnected(false)
+                clearDefaults()
+            }
+            // Any other status (200, 429, 500) → keep as-is
+        } catch {
+            // Network error → don't disconnect, might be temporary
         }
     }
 
@@ -593,6 +632,23 @@ final class WhatsAppOAuth: OAuthManager, @unchecked Sendable {
             userInfoURL: "https://graph.facebook.com/v18.0/me",
             scopes: "whatsapp_business_management whatsapp_business_messaging",
             usePKCE: false,
+            userNameJsonPath: "name"
+        ))
+    }
+}
+
+final class RedditOAuth: OAuthManager, @unchecked Sendable {
+    static let shared = RedditOAuth()
+    private init() {
+        super.init(config: OAuthConfig(
+            serviceName: "reddit",
+            authorizeURL: "https://www.reddit.com/api/v1/authorize",
+            tokenURL: "https://www.reddit.com/api/v1/access_token",
+            userInfoURL: "https://oauth.reddit.com/api/v1/me",
+            scopes: "identity read submit mysubreddits history",
+            usePKCE: false,
+            tokenExchangeAuth: .basicAuth,
+            extraAuthorizeParams: ["response_type": "code", "duration": "permanent"],
             userNameJsonPath: "name"
         ))
     }

@@ -98,20 +98,20 @@ public actor LLMRunner {
         if await isOllamaAvailable() {
             state = .ready
             activeBackend = .ollama
-            print("[LLMRunner] Backend: Ollama (\(ollamaModel))")
+            // P12: print entfernt
             return
         }
         // 2. Try llama-server (llama.cpp HTTP server)
         if await isLlamaServerAvailable() {
             state = .ready
             activeBackend = .llamaServer
-            print("[LLMRunner] Backend: llama-server at \(llamaServerURL)")
+            // P12: print entfernt
             return
         }
         // 3. Nothing available
         state = .unloaded
         activeBackend = .none
-        print("[LLMRunner] No LLM backend available")
+        // P12: print entfernt
     }
 
     private func isOllamaAvailable() async -> Bool {
@@ -141,7 +141,7 @@ public actor LLMRunner {
         }
         ollamaModel = chosen
         if !chosen.isEmpty { UserDefaults.standard.set(chosen, forKey: "kobold.ollamaModel") }
-        print("[LLMRunner] Ollama model: \(ollamaModel) (available: \(names.count), source: \(chosen == names.first ? "first-available" : "agent-config"))")
+        // P12: print entfernt
         return !ollamaModel.isEmpty
     }
 
@@ -227,7 +227,7 @@ public actor LLMRunner {
             if attempt > 0 {
                 let baseDelay: UInt64 = UInt64(attempt) * 2_000_000_000 // 2s, 4s
                 let jitter = UInt64.random(in: 0...500_000_000) // 0-500ms Jitter
-                print("[LLMRunner] Ollama Retry \(attempt)/2 nach \(attempt * 2)s + Jitter...")
+                // P12: print entfernt
                 try await Task.sleep(nanoseconds: baseDelay + jitter)
             }
 
@@ -239,15 +239,15 @@ public actor LLMRunner {
 
             do {
                 let startTime = Date()
-                print("[LLMRunner] Ollama POST attempt=\(attempt) model=\(ollamaModel) msgCount=\(messages.count) bodySize=\(httpBody.count)bytes")
+                // P12: print entfernt
                 let (data, resp) = try await httpSession.data(for: req)
                 let elapsed = Date().timeIntervalSince(startTime)
-                print("[LLMRunner] Ollama response in \(String(format: "%.1f", elapsed))s dataSize=\(data.count)bytes")
+                // P12: print entfernt
 
                 // Check HTTP status first
                 if let httpResp = resp as? HTTPURLResponse, httpResp.statusCode != 200 {
                     let bodyStr = String(data: data, encoding: .utf8) ?? "no body"
-                    print("[LLMRunner] Ollama HTTP \(httpResp.statusCode): \(bodyStr)")
+                    // P12: print entfernt — Error wird als Exception propagiert
 
                     // Bei 500er-Fehler: Retry
                     if httpResp.statusCode >= 500 && attempt < 2 {
@@ -267,13 +267,13 @@ public actor LLMRunner {
 
                 guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
                     let raw = String(data: data, encoding: .utf8) ?? "binary"
-                    print("[LLMRunner] Ollama non-JSON response: \(raw.prefix(300))")
+                    // P12: print entfernt
                     throw LLMError.generationFailed("Ollama returned non-JSON response")
                 }
 
                 // Check for Ollama error field
                 if let errorMsg = json["error"] as? String {
-                    print("[LLMRunner] Ollama error: \(errorMsg)")
+                    // P12: print entfernt
                     // Bei "model not found" kein Retry
                     if errorMsg.contains("not found") {
                         throw LLMError.generationFailed("Ollama: Modell '\(ollamaModel)' nicht gefunden. Installiere mit: ollama pull \(ollamaModel)")
@@ -288,7 +288,7 @@ public actor LLMRunner {
 
                 guard let msg = json["message"] as? [String: Any],
                       let content = msg["content"] as? String else {
-                    print("[LLMRunner] Unexpected Ollama response structure: \(json.keys)")
+                    // P12: print entfernt
                     throw LLMError.generationFailed("Invalid Ollama response (missing message.content)")
                 }
                 // Extract Ollama token usage: prompt_eval_count, eval_count
@@ -373,7 +373,7 @@ public actor LLMRunner {
 
     /// Generate with tokens from explicit provider
     public func generateWithTokens(messages: [[String: String]], provider: String, model: String, apiKey: String) async throws -> LLMResponse {
-        print("[LLMRunner] Cloud provider=\(provider) model=\(model) msgCount=\(messages.count) keyLen=\(apiKey.count)")
+        // P12: print entfernt
         switch provider.lowercased() {
         case "openai":
             return try await generateWithOpenAI(messages: messages, model: model, apiKey: apiKey)

@@ -23,12 +23,16 @@ public struct UberApiTool: Tool {
 
     public init() {}
 
+    private let oauth = OAuthTokenHelper(
+        prefix: "kobold.uber",
+        tokenURL: "https://login.uber.com/oauth/v2/token"
+    )
+
     public func execute(arguments: [String: String]) async throws -> String {
         let action = arguments["action"] ?? ""
 
-        let accessToken = UserDefaults.standard.string(forKey: "kobold.uber.accessToken") ?? ""
-        guard !accessToken.isEmpty else {
-            return "Error: Nicht mit Uber verbunden. Bitte unter Einstellungen → Verbindungen → Uber authentifizieren."
+        guard let accessToken = await oauth.getValidToken() else {
+            return "Error: Nicht mit Uber verbunden oder Token abgelaufen. Bitte unter Einstellungen → Verbindungen → Uber authentifizieren."
         }
 
         switch action {
@@ -148,6 +152,21 @@ public struct UberApiTool: Tool {
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+
+            // Auto-refresh on 401
+            if status == 401 {
+                if let newToken = await oauth.refreshToken() {
+                    request.setValue("Bearer \(newToken)", forHTTPHeaderField: "Authorization")
+                    let (retryData, retryResponse) = try await URLSession.shared.data(for: request)
+                    let retryStatus = (retryResponse as? HTTPURLResponse)?.statusCode ?? 0
+                    let retryText = String(data: retryData.prefix(6000), encoding: .utf8) ?? "(leer)"
+                    if retryStatus >= 400 { return "Error: HTTP \(retryStatus): \(retryText)" }
+                    return retryText
+                } else {
+                    return "Error: Uber-Token abgelaufen und Refresh fehlgeschlagen. Bitte erneut anmelden unter Einstellungen → Verbindungen → Uber."
+                }
+            }
+
             let text = String(data: data.prefix(6000), encoding: .utf8) ?? "(leer)"
             if status >= 400 { return "Error: HTTP \(status): \(text)" }
             return text

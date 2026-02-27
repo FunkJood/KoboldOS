@@ -267,8 +267,6 @@ struct ChatView: View {
                     switch viewModel.chatMode {
                     case .workflow:
                         Text("⚡ \(viewModel.workflowChatLabel)").font(.system(size: 14.5, weight: .semibold))
-                    case .task:
-                        Text("📋 \(viewModel.taskChatLabel)").font(.system(size: 14.5, weight: .semibold))
                     case .normal:
                         Text(koboldName.isEmpty ? "KoboldOS" : koboldName).font(.system(size: 14.5, weight: .semibold))
                     }
@@ -279,8 +277,6 @@ struct ChatView: View {
                     switch viewModel.chatMode {
                     case .workflow:
                         GlassStatusBadge(label: "Workflow", color: .koboldGold, icon: "point.3.connected.trianglepath.dotted")
-                    case .task:
-                        GlassStatusBadge(label: "Task", color: .koboldEmerald, icon: "checklist")
                     case .normal:
                         GlassStatusBadge(label: agentDisplayName, color: .koboldGold, icon: "brain")
                     }
@@ -327,23 +323,6 @@ struct ChatView: View {
                 .padding(.horizontal, 14).padding(.vertical, 6)
                 .background(
                     LinearGradient(colors: [Color.koboldEmerald.opacity(0.12), Color.koboldGold.opacity(0.06)], startPoint: .leading, endPoint: .trailing)
-                )
-            } else if viewModel.chatMode == .task {
-                HStack(spacing: 6) {
-                    Image(systemName: "checklist")
-                        .font(.caption)
-                        .foregroundColor(.koboldEmerald)
-                    Text("Task-Chat — gespeichert unter Aufgaben")
-                        .font(.caption)
-                        .foregroundColor(.koboldEmerald)
-                    Spacer()
-                    Button(action: { viewModel.newSession() }) {
-                        Text("Zurück zum Chat").font(.caption2).foregroundColor(.koboldEmerald)
-                    }.buttonStyle(.plain)
-                }
-                .padding(.horizontal, 14).padding(.vertical, 6)
-                .background(
-                    LinearGradient(colors: [Color.koboldEmerald.opacity(0.10), Color.koboldGold.opacity(0.05)], startPoint: .leading, endPoint: .trailing)
                 )
             }
         }

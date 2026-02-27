@@ -240,6 +240,8 @@ public actor AgentLoop {
         await registry.register(HuggingFaceApiTool())
         await registry.register(LieferandoApiTool())
         await registry.register(UberApiTool())
+        await registry.register(SunoApiTool())
+        await registry.register(RedditApiTool())
         await registry.register(TwilioSmsTool())
         await registry.register(EmailTool())
         await registry.register(CalDAVTool())
@@ -259,6 +261,10 @@ public actor AgentLoop {
         await registry.register(TelegramTool())
         // Text-to-Speech
         await registry.register(TTSTool())
+        // Secrets & Keychain access
+        await registry.register(SecretsTool())
+        // Settings read/write
+        await registry.register(SettingsReadTool())
 
     }
 
@@ -410,6 +416,7 @@ public actor AgentLoop {
     public func run(userMessage: String, agentType: AgentType = .general, providerConfig: LLMProviderConfig? = nil) async throws -> AgentResult {
         // Wrap with timeout
         return try await withThrowingTaskGroup(of: AgentResult.self) { group in
+            defer { group.cancelAll() } // P12: IMMER canceln — auch bei Exception (verhindert Worker-Leak)
             group.addTask {
                 try await self.runInner(userMessage: userMessage, agentType: agentType, providerConfig: providerConfig)
             }
@@ -420,7 +427,6 @@ public actor AgentLoop {
             guard let result = try await group.next() else {
                 throw LLMError.generationFailed("Agent lieferte kein Ergebnis")
             }
-            group.cancelAll()
             return result
         }
     }
@@ -555,7 +561,34 @@ public actor AgentLoop {
 
             // Check if this is the "response" tool (terminal — delivers answer to user)
             if parsed.name == "response" {
-                let answer = parsed.arguments["text"] ?? llmResponse
+                let rawAnswer = parsed.arguments["text"] ?? llmResponse
+
+                // Recovery: Check if the LLM embedded an actual tool call inside the "response" text.
+                // Local models sometimes wrap tool calls in response text instead of proper JSON format.
+                if let recovered = extractEmbeddedToolCall(from: rawAnswer) {
+                    // Execute the recovered tool call instead of treating as final answer
+                    steps.append(AgentStep(
+                        stepNumber: stepCount, type: .toolCall, content: rawAnswer,
+                        toolCallName: recovered.name, toolResultSuccess: nil, timestamp: Date()
+                    ))
+                    messages.append(["role": "assistant", "content": llmResponse])
+                    let call = recovered.toToolCall()
+                    let result = await registry.execute(call: call)
+                    ruleEngine.record(toolName: call.name)
+                    let resultText = parser.formatToolResult(result, callId: recovered.callId, toolName: call.name)
+                    steps.append(AgentStep(
+                        stepNumber: stepCount, type: .toolResult,
+                        content: result.outputOrError, toolCallName: call.name,
+                        toolResultSuccess: result.isSuccess, timestamp: Date()
+                    ))
+                    let truncatedResult = resultText.count > maxToolResultChars
+                        ? String(resultText.prefix(maxToolResultChars)) + "\n... (gekürzt)"
+                        : resultText
+                    messages.append(["role": "user", "content": truncatedResult + "\nAntworte jetzt als JSON."])
+                    continue // Continue agent loop — don't treat as final answer
+                }
+
+                let answer = rawAnswer
                 conversationHistory.append("Assistant: \(answer)")
                 // Store proper message pair for next conversation turn
                 conversationMessages.append(["role": "user", "content": userMessage])
@@ -820,11 +853,62 @@ public actor AgentLoop {
         }
     }
 
+    // MARK: - Embedded Tool Call Recovery
+
+    /// Scans response text for an embedded tool call JSON that the LLM wrapped inside a "response".
+    /// Local models sometimes output: {"tool_name":"response","tool_args":{"text":"Blah {\"tool_name\":\"suno_api\",...}"}}
+    /// This helper finds the actual tool call within the text.
+    private func extractEmbeddedToolCall(from text: String) -> ParsedToolCall? {
+        // Quick check — only scan if there's a tool_name indicator
+        guard text.contains("\"tool_name\"") || text.contains("\"tool_name\\\"") else { return nil }
+
+        // String-aware balanced brace extraction (handles braces inside JSON strings correctly)
+        var depth = 0
+        var startIdx: String.Index?
+        var inString = false
+        var escaped = false
+
+        for idx in text.indices {
+            let char = text[idx]
+            if escaped { escaped = false; continue }
+            if char == "\\" && inString { escaped = true; continue }
+            if char == "\"" && !escaped { inString.toggle(); continue }
+            if inString { continue }
+
+            if char == "{" {
+                if depth == 0 { startIdx = idx }
+                depth += 1
+            } else if char == "}" {
+                depth -= 1
+                if depth == 0, let start = startIdx {
+                    let block = String(text[start...idx])
+                    // Try to parse as tool call (skip "response" — that's what we're escaping FROM)
+                    if let data = block.data(using: .utf8),
+                       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                       let toolName = json["tool_name"] as? String,
+                       toolName != "response" {
+                        let argsObj = json["tool_args"] as? [String: Any] ?? [:]
+                        var strArgs: [String: String] = [:]
+                        for (key, value) in argsObj {
+                            if let s = value as? String { strArgs[key] = s }
+                            else if let n = value as? NSNumber { strArgs[key] = n.stringValue }
+                            else if let data = try? JSONSerialization.data(withJSONObject: value),
+                                    let s = String(data: data, encoding: .utf8) { strArgs[key] = s }
+                        }
+                        let thoughts = (json["thoughts"] as? [String]) ?? []
+                        return ParsedToolCall(name: toolName, arguments: strArgs, thoughts: thoughts)
+                    }
+                }
+            }
+        }
+        return nil
+    }
+
     // MARK: - Streaming Run (SSE-compatible)
 
     /// Runs the agent loop and yields each step as it happens, for real-time SSE streaming.
     public func runStreaming(userMessage: String, agentType: AgentType = .general, providerConfig: LLMProviderConfig? = nil) -> AsyncStream<AgentStep> {
-        print("[AgentLoop] runStreaming START: \"\(String(userMessage.prefix(60)))\" type=\(agentType) provider=\(providerConfig?.provider ?? "nil")")
+        // P12: print() entfernt — blockierte I/O auf Hot Path
         return AsyncStream { continuation in
             Task {
               do {
@@ -841,7 +925,7 @@ public actor AgentLoop {
                 // Set Ollama model on the runner if specified (fixes model mismatch from Settings → Agenten)
                 if let pc = providerConfig, !pc.model.isEmpty, pc.provider == "ollama" {
                     await llmRunner.setModel(pc.model)
-                    print("[AgentLoop] Set Ollama model to: \(pc.model)")
+                    // P12: print entfernt
                 }
                 conversationHistory.append("User: \(userMessage)")
                 trimConversationHistory()
@@ -916,7 +1000,7 @@ public actor AgentLoop {
                     let llmResponse: String
                     do {
                         let msgChars = messages.reduce(0) { $0 + ($1["content"]?.count ?? 0) }
-                        print("[AgentLoop] Step \(stepCount)/\(agentType.stepLimit): LLM call with \(messages.count) msgs, ~\(msgChars) chars total")
+                        // P12: print entfernt — war auf Hot Path (pro LLM-Step)
 
                         // LLM call with per-step timeout (prevents hanging on unresponsive providers)
                         let llmTimeoutSecs: UInt64 = 180 // 3 minutes per step
@@ -924,6 +1008,7 @@ public actor AgentLoop {
                         let llmPC = providerConfig
                         let capturedRunner = llmRunner // Capture for sendable closure
                         let resp: LLMResponse = try await withThrowingTaskGroup(of: LLMResponse.self) { group in
+                            defer { group.cancelAll() } // P12: verhindert hängende LLM-Calls
                             group.addTask {
                                 if let pc = llmPC, pc.isCloudProvider, !pc.apiKey.isEmpty {
                                     return try await capturedRunner.generateWithTokens(messages: llmMessages, config: pc)
@@ -938,12 +1023,11 @@ public actor AgentLoop {
                             guard let first = try await group.next() else {
                                 throw LLMError.generationFailed("LLM lieferte kein Ergebnis")
                             }
-                            group.cancelAll()
                             return first
                         }
 
                         llmResponse = resp.content
-                        print("[AgentLoop] Step \(stepCount): LLM response len=\(llmResponse.count) promptTokens=\(resp.promptTokens ?? -1)")
+                        // P12: print entfernt
                         // Update token tracking from API response
                         if let pt = resp.promptTokens { self.lastKnownPromptTokens = pt }
                         if let ct = resp.completionTokens { self.lastKnownCompletionTokens = ct }
@@ -964,7 +1048,7 @@ public actor AgentLoop {
                         }
                     } catch {
                         consecutiveLLMErrors += 1
-                        print("[AgentLoop] Step \(stepCount) LLM ERROR (\(consecutiveLLMErrors)/3): \(error)")
+                        // Error-Logging bleibt — selten, aber diagnostisch wichtig
                         let errorStep = AgentStep(
                             stepNumber: stepCount, type: .error,
                             content: "LLM-Fehler (Versuch \(consecutiveLLMErrors)/3): \(error.localizedDescription)",
@@ -1011,6 +1095,41 @@ public actor AgentLoop {
                         // Strip raw JSON if the parser returned the unprocessed LLM output as text.
                         // This happens when the LLM wraps its answer in JSON but the parser used the fallback.
                         var rawAnswer = parsed.arguments["text"] ?? llmResponse
+
+                        // Recovery: Check for embedded tool call ANYWHERE in the text.
+                        // Local models sometimes wrap tool calls in response text:
+                        // {"tool_name":"response","tool_args":{"text":"Blah {\"tool_name\":\"suno_api\",...}"}}
+                        if let recovered = self.extractEmbeddedToolCall(from: rawAnswer) {
+                            let toolCallStep = AgentStep(
+                                stepNumber: stepCount, type: .toolCall,
+                                content: rawAnswer, toolCallName: recovered.name
+                            )
+                            continuation.yield(toolCallStep)
+                            let call = ToolCall(name: recovered.name, arguments: recovered.arguments)
+                            let recoveredResult: ToolResult
+                            do {
+                                recoveredResult = try await withThrowingTaskGroup(of: ToolResult.self) { group in
+                                    defer { group.cancelAll() }
+                                    group.addTask { await self.registry.execute(call: call) }
+                                    group.addTask { try await Task.sleep(nanoseconds: 300 * 1_000_000_000); throw CancellationError() }
+                                    guard let first = try await group.next() else { return .failure(error: "Tool-Timeout") }
+                                    return first
+                                }
+                            } catch {
+                                recoveredResult = .failure(error: "Tool '\(call.name)' Timeout nach 300s")
+                            }
+                            let toolResultStep = AgentStep(
+                                stepNumber: stepCount, type: .toolResult,
+                                content: recoveredResult.outputOrError, toolCallName: call.name,
+                                toolResultSuccess: recoveredResult.isSuccess
+                            )
+                            continuation.yield(toolResultStep)
+                            messages.append(["role": "assistant", "content": llmResponse])
+                            let resultText = self.parser.formatToolResult(recoveredResult, callId: "recovered", toolName: call.name)
+                            messages.append(["role": "user", "content": resultText + "\nAntworte jetzt als JSON."])
+                            continue // Continue agent loop — don't treat as final answer
+                        }
+
                         if rawAnswer.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("{") {
                             if let data = rawAnswer.data(using: .utf8),
                                let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
@@ -1027,7 +1146,7 @@ public actor AgentLoop {
                                     }
                                     let recoveredCall = ParsedToolCall(name: toolName, arguments: strArgs, thoughts: parsed.thoughts)
                                     // Execute this tool call instead of treating it as response
-                                    print("[AgentLoop] RECOVERED tool call from response fallback: \(toolName)")
+                                    // P12: print entfernt
                                     let toolCallStep = AgentStep(
                                         stepNumber: stepCount, type: .toolCall,
                                         content: rawAnswer, toolCallName: toolName
@@ -1038,10 +1157,10 @@ public actor AgentLoop {
                                     let recoveredResult: ToolResult
                                     do {
                                         recoveredResult = try await withThrowingTaskGroup(of: ToolResult.self) { group in
+                                            defer { group.cancelAll() }
                                             group.addTask { await self.registry.execute(call: call) }
                                             group.addTask { try await Task.sleep(nanoseconds: 300 * 1_000_000_000); throw CancellationError() }
                                             guard let first = try await group.next() else { return .failure(error: "Tool-Timeout") }
-                                            group.cancelAll()
                                             return first
                                         }
                                     } catch {
@@ -1154,6 +1273,7 @@ public actor AgentLoop {
                     let result: ToolResult
                     do {
                         result = try await withThrowingTaskGroup(of: ToolResult.self) { group in
+                            defer { group.cancelAll() } // P12: verhindert hängende Tool-Prozesse
                             group.addTask {
                                 await self.registry.execute(call: call)
                             }
@@ -1164,7 +1284,6 @@ public actor AgentLoop {
                             guard let first = try await group.next() else {
                                 return .failure(error: "Tool-Timeout")
                             }
-                            group.cancelAll()
                             return first
                         }
                     } catch {
@@ -1272,7 +1391,7 @@ public actor AgentLoop {
                 continuation.finish()
               } catch {
                 // CRITICAL: Always finish the continuation to prevent AsyncStream from hanging forever
-                print("[AgentLoop] runStreaming CAUGHT ERROR: \(error)")
+                // P12: print entfernt — error wird als AgentStep an UI gesendet
                 continuation.yield(AgentStep(
                     stepNumber: 0, type: .error,
                     content: "Interner Fehler: \(error.localizedDescription)",
@@ -1322,7 +1441,7 @@ public actor AgentLoop {
         let telegramToken = UserDefaults.standard.string(forKey: "kobold.telegram.token") ?? ""
         let telegramChatId = UserDefaults.standard.string(forKey: "kobold.telegram.chatId") ?? ""
         if !telegramToken.isEmpty && !telegramChatId.isEmpty {
-            lines.append("- Telegram: VERBUNDEN (Chat-ID: \(telegramChatId)). Der Bot empfängt Nachrichten automatisch und leitet sie an dich weiter. Nutze telegram_send um dem Nutzer per Telegram zu antworten. Wenn der Nutzer über Telegram schreibt, antworte auch über Telegram.")
+            lines.append("- Telegram: VERBUNDEN (Chat-ID: \(telegramChatId)). Der Bot empfängt Nachrichten automatisch. Nutze telegram_send um Text, Dateien, Fotos und Audio per Telegram zu senden. Wenn der Nutzer über Telegram schreibt, antworte auch über Telegram.")
         } else if !telegramToken.isEmpty {
             lines.append("- Telegram: Bot-Token konfiguriert, aber keine Chat-ID gesetzt. telegram_send ist eingeschränkt.")
         }
@@ -1332,10 +1451,12 @@ public actor AgentLoop {
         if googleConnected {
             let email = UserDefaults.standard.string(forKey: "kobold.google.email") ?? "unbekannt"
             // Read enabled scopes from UserDefaults
-            var scopeNames: [String] = ["youtube_readonly", "youtube_upload", "drive", "docs", "sheets", "gmail", "calendar", "contacts", "tasks"]
+            var scopeNames: [String] = []
             if let scopeData = UserDefaults.standard.data(forKey: "kobold.google.scopes"),
-               let scopeStrings = try? JSONDecoder().decode([String].self, from: scopeData) {
-                scopeNames = scopeStrings
+               let rawScopes = try? JSONDecoder().decode(Set<String>.self, from: scopeData) {
+                scopeNames = rawScopes.sorted()
+            } else {
+                scopeNames = ["youtube_readonly", "youtube_upload", "drive", "docs", "sheets", "gmail", "calendar", "contacts", "tasks"]
             }
             let scopeList = scopeNames.joined(separator: ", ")
             lines.append("- Google: VERBUNDEN als \(email). Aktive Scopes: \(scopeList). Nutze google_api Tool für authentifizierte API-Anfragen.")
@@ -1345,7 +1466,20 @@ public actor AgentLoop {
         let scConnected = UserDefaults.standard.bool(forKey: "kobold.soundcloud.connected")
         if scConnected {
             let scUser = UserDefaults.standard.string(forKey: "kobold.soundcloud.username") ?? "unbekannt"
-            lines.append("- SoundCloud: VERBUNDEN als \(scUser). Nutze soundcloud_api Tool für Tracks, Playlists, Likes, Suche.")
+            lines.append("- SoundCloud: VERBUNDEN als \(scUser). Nutze soundcloud_api Tool für Tracks, Playlists, Likes, Suche und Uploads (file_path Parameter).")
+        }
+
+        // Suno
+        let sunoKey = UserDefaults.standard.string(forKey: "kobold.suno.apiKey") ?? ""
+        if !sunoKey.isEmpty {
+            lines.append("- Suno AI: VERBUNDEN. Nutze suno_api Tool um Musik zu generieren. WICHTIG: Jede Generierung erzeugt 2 Versionen! Workflow: generate → status prüfen → get_track → BEIDE Audio-URLs herunterladen (z.B. nach ~/Desktop/).")
+        }
+
+        // Reddit
+        let redditToken = UserDefaults.standard.string(forKey: "kobold.reddit.accessToken") ?? ""
+        if !redditToken.isEmpty {
+            let redditUser = UserDefaults.standard.string(forKey: "kobold.reddit.username") ?? "unbekannt"
+            lines.append("- Reddit: VERBUNDEN als \(redditUser). Nutze reddit_api Tool für Posts, Suche, Kommentare.")
         }
 
         if lines.isEmpty {
@@ -1591,33 +1725,60 @@ public actor AgentLoop {
 
         ### google_api
         Authentifizierte Google-API-Anfragen (YouTube, Drive, Gmail, Calendar, Sheets, Docs, Contacts, Tasks).
-        Token wird automatisch aus dem Keychain geladen und bei Bedarf erneuert.
+        Token wird automatisch geladen und bei Bedarf erneuert.
         Base-URL: https://www.googleapis.com/ — gib nur den Pfad danach an.
+        WICHTIG: Für Datei-Uploads (YouTube-Video, Drive) nutze den file_path Parameter mit absolutem Pfad.
         ```json
         {"tool_name": "google_api", "tool_args": {"endpoint": "youtube/v3/search", "method": "GET", "params": "{\\"part\\": \\"snippet\\", \\"q\\": \\"Swift Tutorial\\", \\"maxResults\\": \\"5\\"}"}}
+        {"tool_name": "google_api", "tool_args": {"endpoint": "upload/youtube/v3/videos", "method": "POST", "params": "{\\"part\\": \\"snippet,status\\"}", "body": "{\\"snippet\\":{\\"title\\":\\"Mein Video\\",\\"description\\":\\"Beschreibung\\",\\"tags\\":[\\"tag1\\"]},\\"status\\":{\\"privacyStatus\\":\\"private\\"}}", "file_path": "/Users/tim/Desktop/video.mp4"}}
+        {"tool_name": "google_api", "tool_args": {"endpoint": "upload/drive/v3/files", "method": "POST", "body": "{\\"name\\":\\"dokument.pdf\\"}", "file_path": "/Users/tim/Documents/dokument.pdf"}}
         {"tool_name": "google_api", "tool_args": {"endpoint": "drive/v3/files", "method": "GET", "params": "{\\"pageSize\\": \\"10\\", \\"fields\\": \\"files(id,name,mimeType)\\"}"}}
         {"tool_name": "google_api", "tool_args": {"endpoint": "gmail/v1/users/me/messages", "method": "GET", "params": "{\\"maxResults\\": \\"5\\"}"}}
         {"tool_name": "google_api", "tool_args": {"endpoint": "calendar/v3/calendars/primary/events", "method": "GET", "params": "{\\"maxResults\\": \\"10\\", \\"orderBy\\": \\"startTime\\", \\"singleEvents\\": \\"true\\", \\"timeMin\\": \\"2026-02-22T00:00:00Z\\"}"}}
-        {"tool_name": "google_api", "tool_args": {"endpoint": "tasks/v1/users/@me/lists", "method": "GET"}}
         ```
 
         ### soundcloud_api
-        Authentifizierte SoundCloud-API-Anfragen (Tracks, Playlists, User, Likes, Suche).
+        SoundCloud: Tracks lesen/suchen/hochladen, Playlists, Likes, User-Info.
         Base-URL: https://api.soundcloud.com/ — gib nur den Pfad danach an.
+        WICHTIG: Für Uploads nutze file_path + title Parameter. Unterstützt mp3, wav, flac, ogg, aac.
         ```json
         {"tool_name": "soundcloud_api", "tool_args": {"endpoint": "me", "method": "GET"}}
         {"tool_name": "soundcloud_api", "tool_args": {"endpoint": "me/tracks", "method": "GET"}}
-        {"tool_name": "soundcloud_api", "tool_args": {"endpoint": "me/likes/tracks", "method": "GET", "params": "{\\"limit\\": \\"10\\"}"}}
         {"tool_name": "soundcloud_api", "tool_args": {"endpoint": "tracks", "method": "GET", "params": "{\\"q\\": \\"psytrance\\", \\"limit\\": \\"10\\"}"}}
-        {"tool_name": "soundcloud_api", "tool_args": {"endpoint": "me/playlists", "method": "GET"}}
+        {"tool_name": "soundcloud_api", "tool_args": {"endpoint": "tracks", "method": "POST", "file_path": "/Users/tim/Desktop/track.mp3", "title": "Mein Track", "genre": "Psytrance", "tags": "electronic, dark", "sharing": "private"}}
         ```
 
         ### telegram_send
-        Sende eine Nachricht über den konfigurierten Telegram-Bot an den Nutzer.
-        Nutze dieses Tool wenn der Nutzer sagt "schreib mir auf Telegram", "sag mir per Telegram Bescheid", "Telegram-Nachricht senden" oder ähnliches.
+        Sende Nachrichten, Dateien, Fotos und Audio über den Telegram-Bot.
+        Nutze dieses Tool wenn der Nutzer sagt "schreib mir auf Telegram", "schick mir die Datei", "sag mir per Telegram Bescheid" etc.
+        Aktionen: send_text (Text), send_file (beliebige Datei), send_photo (Bild), send_audio (Audio/Musik).
+        Für Dateien: file_path = absoluter Pfad. Caption optional über message Parameter.
         ```json
-        {"tool_name": "telegram_send", "tool_args": {"message": "Hallo! Deine Aufgabe ist erledigt."}}
-        {"tool_name": "telegram_send", "tool_args": {"message": "Die Datei wurde erfolgreich erstellt und auf dem Desktop gespeichert."}}
+        {"tool_name": "telegram_send", "tool_args": {"action": "send_text", "message": "Hallo! Deine Aufgabe ist erledigt."}}
+        {"tool_name": "telegram_send", "tool_args": {"action": "send_file", "file_path": "/Users/tim/Desktop/dokument.pdf", "message": "Hier ist dein Dokument"}}
+        {"tool_name": "telegram_send", "tool_args": {"action": "send_photo", "file_path": "/Users/tim/Desktop/screenshot.png"}}
+        {"tool_name": "telegram_send", "tool_args": {"action": "send_audio", "file_path": "/Users/tim/Desktop/song.mp3", "message": "Dein generiertes Lied"}}
+        ```
+
+        ### suno_api
+        Musik generieren mit Suno AI. WICHTIG: Jede Generierung erzeugt 2 Versionen!
+        Workflow: 1) generate → taskId, 2) status prüfen (PENDING → SUCCESS), 3) get_track → BEIDE audio_url Werte per shell/curl herunterladen.
+        Lade IMMER beide Versionen herunter, z.B. nach ~/Desktop/songname_v1.mp3 und ~/Desktop/songname_v2.mp3.
+        ```json
+        {"tool_name": "suno_api", "tool_args": {"action": "generate", "prompt": "Ein fröhlicher Popsong über den Sommer"}}
+        {"tool_name": "suno_api", "tool_args": {"action": "generate", "style": "psytrance", "title": "Digital Dreams", "instrumental": "true", "model": "V4"}}
+        {"tool_name": "suno_api", "tool_args": {"action": "status", "task_id": "abc123"}}
+        {"tool_name": "suno_api", "tool_args": {"action": "get_track", "task_id": "abc123"}}
+        ```
+
+        ### reddit_api
+        Reddit: Posts suchen/lesen, kommentieren, Subreddit-Info.
+        ```json
+        {"tool_name": "reddit_api", "tool_args": {"action": "hot", "subreddit": "programming", "limit": "5"}}
+        {"tool_name": "reddit_api", "tool_args": {"action": "search", "query": "SwiftUI tutorial", "subreddit": "swift"}}
+        {"tool_name": "reddit_api", "tool_args": {"action": "read_post", "post_id": "1abc23"}}
+        {"tool_name": "reddit_api", "tool_args": {"action": "comment", "post_id": "1abc23", "text": "Guter Post!"}}
+        {"tool_name": "reddit_api", "tool_args": {"action": "user_info"}}
         ```
 
         ### speak
@@ -1652,7 +1813,7 @@ public actor AgentLoop {
         }
 
         // --- Fallback: TF-IDF ---
-        print("[RAG] fallback to TF-IDF")
+        // P12: print entfernt
         do {
             let results = try await memoryStore.smartSearch(query: query, limit: limit)
             guard !results.isEmpty else { return "" }
