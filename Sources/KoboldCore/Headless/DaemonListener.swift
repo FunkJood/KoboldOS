@@ -401,9 +401,16 @@ public actor DaemonListener {
 
     private func handleAgent(body: Data) async -> String {
         guard let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
-              let message = json["message"] as? String else {
+              var message = json["message"] as? String else {
             return agentError("Ungültige Anfrage — 'message' Feld fehlt")
         }
+
+        // Telegram source: instruct agent to use response tool (TelegramBot relays it back)
+        let source = json["source"] as? String ?? ""
+        if source == "telegram" {
+            message = "[TELEGRAM-NACHRICHT — Antworte mit dem response-Tool. Deine Antwort wird automatisch an Telegram weitergeleitet. Nutze telegram_send NUR für Datei-/Foto-/Audio-Versand, NICHT für Text-Antworten.]\n\n\(message)"
+        }
+
         let agentTypeStr = json["agent_type"] as? String ?? "general"
         let type: AgentType
         switch agentTypeStr {

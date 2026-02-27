@@ -1441,7 +1441,7 @@ public actor AgentLoop {
         let telegramToken = UserDefaults.standard.string(forKey: "kobold.telegram.token") ?? ""
         let telegramChatId = UserDefaults.standard.string(forKey: "kobold.telegram.chatId") ?? ""
         if !telegramToken.isEmpty && !telegramChatId.isEmpty {
-            lines.append("- Telegram: VERBUNDEN (Chat-ID: \(telegramChatId)). Der Bot empfängt Nachrichten automatisch. Nutze telegram_send um Text, Dateien, Fotos und Audio per Telegram zu senden. Wenn der Nutzer über Telegram schreibt, antworte auch über Telegram.")
+            lines.append("- Telegram: VERBUNDEN (Chat-ID: \(telegramChatId)). Der Bot empfängt Nachrichten automatisch. Nutze telegram_send NUR für Datei-/Foto-/Audio-Versand und proaktive Benachrichtigungen. Text-Antworten auf Telegram-Nachrichten werden automatisch weitergeleitet — nutze dafür das response-Tool.")
         } else if !telegramToken.isEmpty {
             lines.append("- Telegram: Bot-Token konfiguriert, aber keine Chat-ID gesetzt. telegram_send ist eingeschränkt.")
         }
@@ -1749,12 +1749,13 @@ public actor AgentLoop {
         ```
 
         ### telegram_send
-        Sende Nachrichten, Dateien, Fotos und Audio über den Telegram-Bot.
-        Nutze dieses Tool wenn der Nutzer sagt "schreib mir auf Telegram", "schick mir die Datei", "sag mir per Telegram Bescheid" etc.
-        Aktionen: send_text (Text), send_file (beliebige Datei), send_photo (Bild), send_audio (Audio/Musik).
+        Sende Dateien, Fotos und Audio über Telegram, oder proaktive Benachrichtigungen.
+        WICHTIG: Wenn der Nutzer ÜBER Telegram schreibt, antworte mit dem response-Tool — die Antwort wird automatisch weitergeleitet! Nutze telegram_send in diesem Fall NUR für Datei-/Foto-/Audio-Versand.
+        Nutze send_text NUR für proaktive Benachrichtigungen (Cron-Tasks, Erinnerungen) oder wenn der Nutzer explizit sagt "schick mir das auf Telegram".
+        Aktionen: send_text (proaktive Nachricht), send_file (beliebige Datei), send_photo (Bild), send_audio (Audio/Musik).
         Für Dateien: file_path = absoluter Pfad. Caption optional über message Parameter.
         ```json
-        {"tool_name": "telegram_send", "tool_args": {"action": "send_text", "message": "Hallo! Deine Aufgabe ist erledigt."}}
+        {"tool_name": "telegram_send", "tool_args": {"action": "send_text", "message": "Dein Cron-Task ist fertig: 3 neue Tech-News gefunden."}}
         {"tool_name": "telegram_send", "tool_args": {"action": "send_file", "file_path": "/Users/tim/Desktop/dokument.pdf", "message": "Hier ist dein Dokument"}}
         {"tool_name": "telegram_send", "tool_args": {"action": "send_photo", "file_path": "/Users/tim/Desktop/screenshot.png"}}
         {"tool_name": "telegram_send", "tool_args": {"action": "send_audio", "file_path": "/Users/tim/Desktop/song.mp3", "message": "Dein generiertes Lied"}}
