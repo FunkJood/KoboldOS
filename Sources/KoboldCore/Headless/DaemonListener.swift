@@ -226,7 +226,7 @@ public actor DaemonListener {
         case "/health":
             return jsonOK([
                 "status": "ok",
-                "version": "0.3.3",
+                "version": "0.3.4",
                 "pid": Int(ProcessInfo.processInfo.processIdentifier),
                 "uptime": Int(Date().timeIntervalSince(startTime))
             ])
@@ -468,10 +468,16 @@ public actor DaemonListener {
                     ] as [String: Any]
                 }
 
-            addTrace(event: "Antwort", detail: String(result.finalOutput.prefix(60)))
+            // For Telegram: strip any leaked JSON from the output (ultimate safety net)
+            var output = result.finalOutput
+            if source == "telegram" {
+                output = Self.stripJSONForTelegram(output)
+            }
+
+            addTrace(event: "Antwort", detail: String(output.prefix(60)))
 
             return jsonOK([
-                "output": result.finalOutput,
+                "output": output,
                 "steps": result.steps.count,
                 "success": result.success,
                 "tool_results": toolResultsForUI
@@ -919,7 +925,7 @@ public actor DaemonListener {
     private func buildAgentCard() -> [String: Any] {
         [
             "name": "KoboldOS",
-            "version": "0.3.3",
+            "version": "0.3.4",
             "description": "Native macOS AI Agent Runtime — local-first, privacy-focused",
             "capabilities": [
                 "streaming": true,
@@ -1182,6 +1188,99 @@ public actor DaemonListener {
             return (method, path, headers, body)
         }
         return (method, path, headers, nil)
+    }
+
+    /// Ultimate safety net: If output from agent still contains raw JSON tool call syntax,
+    /// extract the user-facing text via REGEX (works even with malformed JSON).
+    /// Telegram users should NEVER see raw JSON.
+    static func stripJSONForTelegram(_ text: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Not JSON-like → pass through immediately
+        guard trimmed.hasPrefix("{") || trimmed.contains("\"tool_name\"") || trimmed.contains("\"toolname\"") else {
+            return text
+        }
+
+        // Strategy 1: Valid JSON → deep extract
+        if let data = trimmed.data(using: .utf8),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let extracted = ToolCallParser.deepExtractText(json) {
+            return extracted
+        }
+
+        // Strategy 2: Regex — extract "text" value from tool_args even in BROKEN JSON
+        // Find "text" : "..." with proper escape handling (handles \" inside the string)
+        if let extracted = regexExtractText(from: trimmed) {
+            return extracted
+        }
+
+        // Strategy 3: Balanced-brace scan for tool_args sub-object, then parse just that
+        if let argsText = extractToolArgsText(from: trimmed) {
+            return argsText
+        }
+
+        // Not a tool-call JSON (just happens to start with {) → return as-is
+        return text
+    }
+
+    /// Extracts "text" value from JSON using regex (tolerates malformed outer JSON)
+    private static func regexExtractText(from text: String) -> String? {
+        // Pattern: "text" : "captured content with escaped quotes"
+        // Uses lazy match to find the FIRST "text" field value
+        let pattern = #""text"\s*:\s*"((?:[^"\\]|\\.)*)""#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: []),
+              let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+              let range = Range(match.range(at: 1), in: text) else { return nil }
+        let raw = String(text[range])
+        // Unescape JSON string escapes
+        let unescaped = raw
+            .replacingOccurrences(of: "\\\"", with: "\"")
+            .replacingOccurrences(of: "\\n", with: "\n")
+            .replacingOccurrences(of: "\\t", with: "\t")
+            .replacingOccurrences(of: "\\\\", with: "\\")
+        guard !unescaped.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return unescaped
+    }
+
+    /// Extracts "text" from tool_args sub-object using balanced brace scanning
+    private static func extractToolArgsText(from text: String) -> String? {
+        // Find "tool_args": { or "toolargs": {
+        let pattern = #""(?:tool_args|toolargs)"\s*:\s*\{"#
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+              let matchRange = Range(match.range, in: text),
+              let braceStart = text[matchRange].lastIndex(of: "{") else { return nil }
+
+        // Balanced brace scan (string-aware)
+        var depth = 0
+        var inStr = false
+        var esc = false
+        var pos = braceStart
+        while pos < text.endIndex {
+            let ch = text[pos]
+            if esc { esc = false }
+            else if ch == "\\" && inStr { esc = true }
+            else if ch == "\"" { inStr.toggle() }
+            else if !inStr {
+                if ch == "{" { depth += 1 }
+                else if ch == "}" {
+                    depth -= 1
+                    if depth == 0 {
+                        let argsJSON = String(text[braceStart...pos])
+                        // Try to parse the sub-object (much more likely to be valid)
+                        if let data = argsJSON.data(using: .utf8),
+                           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                           let t = json["text"] as? String, !t.isEmpty {
+                            return t
+                        }
+                        // Regex fallback on the sub-object
+                        return regexExtractText(from: argsJSON)
+                    }
+                }
+            }
+            pos = text.index(after: pos)
+        }
+        return nil
     }
 
     private func jsonOK(_ obj: [String: Any]) -> String {

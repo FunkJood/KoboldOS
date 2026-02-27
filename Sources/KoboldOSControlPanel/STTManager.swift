@@ -43,6 +43,8 @@ final class STTManager: ObservableObject {
 
     func loadModelIfAvailable() async {
         let size = modelSize
+        // Skip if already loaded with the same model
+        if isModelLoaded, whisper != nil, currentModelName == size { return }
         let url = modelURL(for: size)
         guard FileManager.default.fileExists(atPath: url.path) else {
             isModelLoaded = false
@@ -113,7 +115,11 @@ final class STTManager: ObservableObject {
         do {
             // Convert audio to PCM float array (16kHz mono)
             let audioData = try await convertToPCM(url: audioURL)
-            let segments = try await whisper.transcribe(audioFrames: audioData)
+            // Run Whisper inference off MainActor to prevent UI freeze
+            let capturedWhisper = whisper
+            let segments = try await Task.detached(priority: .userInitiated) {
+                try await capturedWhisper.transcribe(audioFrames: audioData)
+            }.value
             let text = segments.map(\.text).joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
             print("[STT] Transcribed: \(text.prefix(100))...")
             return text.isEmpty ? nil : text

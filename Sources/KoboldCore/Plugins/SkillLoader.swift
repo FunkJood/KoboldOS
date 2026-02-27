@@ -127,7 +127,7 @@ public actor SkillLoader {
 
     // MARK: - Default Skills
 
-    private let currentSkillsVersion = "v0.3.3"
+    private let currentSkillsVersion = "v0.3.4"
 
     private func createDefaultSkillsIfNeeded() {
         let marker = skillsDir.appendingPathComponent(".defaults_installed")
@@ -474,7 +474,8 @@ public actor SkillLoader {
         let enableByDefault = [
             "code_ausfuehren", "websuche", "dateiverwaltung", "delegation",
             "system_info", "aufgaben_planen", "dokument_analyse", "bild_analyse",
-            "antwort_tools", "memory_verwaltung", "api_skill_erstellen"
+            "antwort_tools", "memory_verwaltung", "api_skill_erstellen",
+            "image_generation"
         ]
         UserDefaults.standard.set(enableByDefault, forKey: enabledKey)
 

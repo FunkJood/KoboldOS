@@ -157,7 +157,7 @@ public class RuntimeViewModel: ObservableObject {
     // Sessions & Projects
     @Published public var sessions: [ChatSession] = []
     @Published public var currentSessionId: UUID = UUID()
-    @Published public var projects: [Project] = Project.defaultProjects()
+    @Published public var projects: [Project] = []
     @Published public var selectedProjectId: UUID? = nil
 
     // Teams & Workflow
@@ -213,10 +213,16 @@ public class RuntimeViewModel: ObservableObject {
 
     // Topics (für Topic-Badge im Chat-Header) — P1: only notify when chat visible
     public var topics: [ChatTopic] = [] {
-        didSet { if currentViewTab == "chat" { objectWillChange.send() } }
+        didSet {
+            guard oldValue.count != topics.count, currentViewTab == "chat" else { return }
+            objectWillChange.send()
+        }
     }
     public var activeTopicId: UUID? = nil {
-        didSet { if currentViewTab == "chat" { objectWillChange.send() } }
+        didSet {
+            guard oldValue != activeTopicId, currentViewTab == "chat" else { return }
+            objectWillChange.send()
+        }
     }
 
     @AppStorage("kobold.port") private var storedPort: Int = 8080
@@ -279,7 +285,8 @@ public class RuntimeViewModel: ObservableObject {
             "kobold.proactive.quietEnd": 7,
         ])
 
-        // Sessions von Disk laden (falls vorhanden)
+        // Projekte und Sessions von Disk laden
+        loadProjects()
         loadSessions()
         // Initiale Session anlegen
         sessionAgentStates[currentSessionId] = SessionAgentState()
@@ -654,14 +661,70 @@ public class RuntimeViewModel: ObservableObject {
 
     // MARK: - Session & Project Management
 
+    private var projectsURL: URL {
+        let docsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        return docsDir.appendingPathComponent("KoboldOS/workflows/projects.json")
+    }
+
     public func loadProjects() {
-        self.projects = Project.defaultProjects()
+        let url = projectsURL
+        guard FileManager.default.fileExists(atPath: url.path),
+              let data = try? Data(contentsOf: url) else {
+            // First launch — also check old App Support location
+            let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            let oldURL = appSupport.appendingPathComponent("KoboldOS/projects.json")
+            if let oldData = try? Data(contentsOf: oldURL),
+               let merged = mergeProjectsFromJSON(oldData) {
+                self.projects = merged
+                saveProjects()
+                return
+            }
+            let defaultProject = Project(id: UUID(), name: "Standard-Projekt")
+            self.projects = [defaultProject]
+            saveProjects()
+            return
+        }
+        // Try Codable format first (our format)
+        if let loaded = try? JSONDecoder().decode([Project].self, from: data), !loaded.isEmpty {
+            self.projects = loaded
+            return
+        }
+        // Fallback: WorkflowManageTool format (raw dicts with string UUID)
+        if let merged = mergeProjectsFromJSON(data) {
+            self.projects = merged
+            saveProjects()
+            return
+        }
+        let defaultProject = Project(id: UUID(), name: "Standard-Projekt")
+        self.projects = [defaultProject]
+        saveProjects()
+    }
+
+    /// Parse projects from WorkflowManageTool JSON format (array of dicts with "id" as string)
+    private func mergeProjectsFromJSON(_ data: Data) -> [Project]? {
+        guard let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return nil }
+        let parsed = arr.compactMap { dict -> Project? in
+            guard let idStr = dict["id"] as? String, let uuid = UUID(uuidString: idStr),
+                  let name = dict["name"] as? String else { return nil }
+            return Project(id: uuid, name: name)
+        }
+        return parsed.isEmpty ? nil : parsed
+    }
+
+    public func saveProjects() {
+        let url = projectsURL
+        let dir = url.deletingLastPathComponent()
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        if let data = try? JSONEncoder().encode(projects) {
+            try? data.write(to: url, options: .atomic)
+        }
     }
 
     public func newProject() {
         let p = Project(id: UUID(), name: "Neues Projekt")
         projects.append(p)
         selectedProjectId = p.id
+        saveProjects()
     }
 
     public var selectedProject: Project? {
@@ -669,8 +732,19 @@ public class RuntimeViewModel: ObservableObject {
     }
 
     public func workflowURL(for id: UUID) -> URL {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        return appSupport.appendingPathComponent("KoboldOS/workflows/\(id.uuidString).json")
+        let docsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        let newURL = docsDir.appendingPathComponent("KoboldOS/workflows/\(id.uuidString).json")
+        // Migration: if file exists at old location but not new, copy it
+        if !FileManager.default.fileExists(atPath: newURL.path) {
+            let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            let oldURL = appSupport.appendingPathComponent("KoboldOS/workflows/\(id.uuidString).json")
+            if FileManager.default.fileExists(atPath: oldURL.path) {
+                let dir = newURL.deletingLastPathComponent()
+                try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                try? FileManager.default.copyItem(at: oldURL, to: newURL)
+            }
+        }
+        return newURL
     }
 
     public var sessionsURL: URL {
@@ -851,12 +925,13 @@ public class RuntimeViewModel: ObservableObject {
     }
 
     // taskSessions removed — tasks appear in normal chat list now
-    @Published public var workflowSessions: [ChatSession] = []
-
-    @Published public var workflowDefinitions: [WorkflowDef] = []
+    // Not @Published: Diese Arrays werden nie befüllt (Project-System hat Workflows übernommen).
+    // @Published entfernt um unnötige Subscriber-Registrierungen zu vermeiden.
+    public var workflowSessions: [ChatSession] = []
+    public var workflowDefinitions: [WorkflowDef] = []
 
     public func loadWorkflowDefinitions() {
-        // Workflow-Definitionen laden (Stub)
+        // Stub — Workflows werden jetzt über das Project-System verwaltet
     }
 
     public func toggleTopicExpanded(_ topic: ChatTopic) {
@@ -905,6 +980,11 @@ public class RuntimeViewModel: ObservableObject {
 
     public func deleteProject(_ project: Project) {
         projects.removeAll { $0.id == project.id }
+        if selectedProjectId == project.id { selectedProjectId = nil }
+        saveProjects()
+        // Also remove workflow file
+        let url = workflowURL(for: project.id)
+        try? FileManager.default.removeItem(at: url)
     }
 
     public func openWorkflowChat(nodeName: String) {

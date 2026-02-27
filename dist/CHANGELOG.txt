@@ -2,6 +2,86 @@
 KOBOLDOS — CHANGELOG
 ══════════════════════════════════════════════
 
+VERSION 0.3.5 ALPHA (2026-02-27)
+─────────────────────────────────
+Prozess-Entlastung (Schwere Operationen ausgelagert):
+• PlaywrightTool: Von synchronem waitUntilExit auf AsyncProcess.run umgestellt
+  — blockiert den Agent Loop nicht mehr (war kritischer Bug!)
+• STTManager: Whisper-Inference via Task.detached vom MainActor geloest
+  — UI friert nicht mehr bei Sprachtranskription ein
+• VisionTool: OCR (VNImageRequestHandler) in Task.detached verschoben
+  — grosse Bilder blockieren den Agent nicht mehr
+• Analyse: Alle 50+ Tools auf Blocking-Verhalten geprueft
+  — ShellTool, AppleScriptTool, Network-Tools waren bereits async-safe
+
+Lokale Bildgenerierung (ComfyUI + SDXL):
+• ComfyUI Integration: Lokale Bildgenerierung via ComfyUI API (Port 8188)
+• 4 Modelle: Juggernaut XL v9, SDXL Base 1.0, SDXL Refiner, 4x-UltraSharp
+• Image-Generation-Skill: Automatischer Server-Start + Workflow + Polling
+• kobold_generate.py: CLI-Helper fuer direkte Bildgenerierung
+• Output: Bilder landen in ~/Documents/KoboldOS/Bilder/
+• Bilder werden automatisch im Chat UND per Telegram gezeigt
+
+Telegram Bot — JSON-Leak Fix:
+• Root Cause: Lokale Modelle gaben kaputtes JSON aus, JSONSerialization scheiterte
+• Loesung: Regex-basierte Text-Extraktion statt JSON-Parsing
+• 3-Schicht-Fallback: DaemonListener + TelegramBot + Leere-Antwort-Guard
+• Ergebnis: Keine rohen JSON-Strings mehr an Telegram-Nutzer
+
+Workflow-Ansicht (Alle Tools, Verbindungen & Skills):
+• 46 Tools verfuegbar: Tool-Auswahl von 16 auf 46 erweitert, 9 Kategorien
+  — Basis, Kommunikation, APIs & Verbindungen, Medien, Gedaechtnis,
+    macOS, IoT/Infra, System, Agenten
+• Suchfeld: Schnelles Finden von Tools per Name oder Label
+• Skill-Injection: Agent-Nodes koennen Faehigkeiten zugewiesen bekommen
+  — Skill-Inhalt wird automatisch in den Prompt injiziert
+• Speichern-Button: Expliziter Save mit visuellem Feedback
+• Neue Persistenz: Workflows unter ~/Documents/KoboldOS/workflows/
+  — sichtbar, exportierbar, Auto-Migration aus App Support
+
+Bildgenerierung — Spam-Fix:
+• ShellTool Timeout: Hard-Cap von 60s auf 300s erhoeht
+• Lock-Datei: kobold_generate.py nutzt .generating.lock
+• Queue-Check: Prueft ComfyUI Queue vor Submit
+• Exit Code 2: Dedizierter Code wenn bereits Generierung laeuft
+
+Skills-System:
+• image_generation Skill automatisch aktiviert bei Neuinstallation
+• SkillLoader: image_generation in Default-Enabled-Liste aufgenommen
+• ~53.000+ Lines of Code
+
+VERSION 0.3.4 ALPHA (2026-02-27)
+─────────────────────────────────
+Telegram Bot — Sprachnachrichten:
+• Voice Messages via Telegram Bot: OGG Download → ffmpeg → whisper.cpp STT
+• Audio-Nachrichten (MP3 etc.) werden ebenfalls transkribiert
+• Transkription wird als Bestaetigung zurueckgesendet, dann Agent-Antwort
+• Falls kein Whisper-Modell geladen: klare Fehlermeldung an User
+• STTManager Race-Condition gefixt: loadModelIfAvailable() vor Zugriff
+
+ToolCallParser — Robuster gegen LLM-Fehler:
+• Neue Strategy 6: Regex-Recovery fuer komplett kaputtes JSON
+  (z.B. fehlende [] bei thoughts — toolargs Sub-Objekt wird direkt extrahiert)
+• Parser erkennt BEIDE Varianten: tool_name + toolname, tool_args + toolargs
+• extractEmbeddedToolCall() in AgentLoop ebenfalls erweitert
+• Sicherheitsnetz in TelegramBot: cleanJSONResponse() mit Balanced-Brace Fallback
+
+GUI Performance:
+• topics/activeTopicId: objectWillChange nur bei echtem Wert-Wechsel
+• OnboardingView: 6 repeatForever Animationen auf 2 reduziert
+• Weniger unnoetige Re-Renders im Idle
+
+Settings UI:
+• Tab-Reihenfolge neu: Allgemein > Agenten > Benachrichtigungen > ... > Ueber
+• Persoenlichkeit in Agenten-Tab integriert (kein eigener Tab mehr)
+• DaemonLogView: Vollbild-Modus mit Filter, Clear-Button, Escape-Shortcut
+• Suno AI Verbindungskarte nach oben verschoben (neben Telegram)
+
+Dokumentation:
+• TUTORIAL.txt: Umfassendes 14-Kapitel Benutzerhandbuch fuer DMG
+• CHANGELOG.txt und README.md aktualisiert
+• ~52.200+ Lines of Code
+
 VERSION 0.3.3 ALPHA (2026-02-27)
 ─────────────────────────────────
 File-Upload fuer YouTube, SoundCloud & Telegram:

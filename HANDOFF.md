@@ -1,8 +1,8 @@
-# KoboldOS v0.3.3 — Handoff / Session-Übergabe
+# KoboldOS v0.3.4 — Handoff / Session-Übergabe
 
 ## Stand: 2026-02-27
 
-### Was wurde gemacht (v0.3.2 → v0.3.3)
+### Was wurde gemacht (v0.3.2 → v0.3.4)
 
 #### 1. Task-Chat-System — FERTIG
 Jede geplante/idle Task bekommt jetzt einen eigenen Chat:
@@ -41,7 +41,7 @@ Alle Blöcke A-F, P1-P8 aus der vorherigen Session:
 
 ### Build-Status
 - `swift build` erfolgreich ✓
-- Version: 0.3.3 in `scripts/build.sh`
+- Version: 0.3.4 in `scripts/build.sh`
 - README.md aktualisiert ✓
 - CHANGELOG.md aktualisiert ✓
 

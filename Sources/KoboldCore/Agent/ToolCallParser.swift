@@ -66,6 +66,12 @@ public struct ToolCallParser: Sendable {
             return [call]
         }
 
+        // Strategy 6: Regex recovery from malformed JSON (e.g. missing [] on thoughts)
+        // The outer JSON may be invalid, but toolname + toolargs sub-object are often valid.
+        if let call = recoverToolCallFromMalformedJSON(cleaned) {
+            return [call]
+        }
+
         // Fallback: treat as implicit "response"
         let text = extractReadableText(from: cleaned)
         print("[ToolCallParser] FALLBACK: No tool call found. Response starts with: \(String(cleaned.prefix(200)))")
@@ -90,26 +96,35 @@ public struct ToolCallParser: Sendable {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
 
         // If it looks like a JSON object, try to extract "text" or "content" field
-        if trimmed.hasPrefix("{"), let json = extractAndParseJSON(from: trimmed) {
-            // Try to find a user-facing text field
-            if let t = json["text"] as? String { return t }
-            if let t = json["content"] as? String { return t }
-            if let t = json["response"] as? String { return t }
-            if let t = json["message"] as? String { return t }
-            if let t = json["answer"] as? String { return t }
-            if let args = json["tool_args"] as? [String: Any], let t = args["text"] as? String { return t }
-            if let args = json["arguments"] as? [String: Any], let t = args["text"] as? String { return t }
-            if let args = json["args"] as? [String: Any], let t = args["text"] as? String { return t }
-            // Handle string-encoded tool_args
-            for key in ["tool_args", "args", "arguments"] {
-                if let str = json[key] as? String,
-                   let data = str.data(using: .utf8),
-                   let inner = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                   let t = inner["text"] as? String { return t }
-            }
-            // Last resort: return thoughts if available
-            if let thoughts = json["thoughts"] as? [String], !thoughts.isEmpty {
-                return thoughts.joined(separator: " ")
+        if trimmed.hasPrefix("{") {
+            if let json = extractAndParseJSON(from: trimmed) {
+                // Try to find a user-facing text field
+                if let t = json["text"] as? String { return t }
+                if let t = json["content"] as? String { return t }
+                if let t = json["response"] as? String { return t }
+                if let t = json["message"] as? String { return t }
+                if let t = json["answer"] as? String { return t }
+                if let args = json["tool_args"] as? [String: Any], let t = args["text"] as? String { return t }
+                if let args = json["toolargs"] as? [String: Any], let t = args["text"] as? String { return t }
+                if let args = json["arguments"] as? [String: Any], let t = args["text"] as? String { return t }
+                if let args = json["args"] as? [String: Any], let t = args["text"] as? String { return t }
+                // Handle string-encoded tool_args
+                for key in ["tool_args", "args", "arguments"] {
+                    if let str = json[key] as? String,
+                       let data = str.data(using: .utf8),
+                       let inner = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                       let t = inner["text"] as? String { return t }
+                }
+                // Last resort: return thoughts if available
+                if let thoughts = json["thoughts"] as? [String], !thoughts.isEmpty {
+                    return thoughts.joined(separator: " ")
+                }
+                // Nuclear: recursively find text anywhere in the JSON tree
+                if let deep = Self.deepExtractText(json) { return deep }
+            } else if let call = recoverToolCallFromMalformedJSON(trimmed),
+                      let t = call.arguments["text"], !t.isEmpty {
+                // JSON was malformed (e.g. missing [] on thoughts) but we recovered the text
+                return t
             }
         }
 
@@ -121,6 +136,54 @@ public struct ToolCallParser: Sendable {
 
         // Not JSON — return as-is
         return trimmed
+    }
+
+    // MARK: - Deep Text Extraction (nuclear fallback)
+
+    /// Recursively searches a JSON dictionary for the most likely user-facing text value.
+    /// Tries known text keys first, then nested args objects, then any non-metadata string.
+    public static func deepExtractText(_ dict: [String: Any]) -> String? {
+        let textKeys = ["text", "content", "response", "message", "answer", "reply", "output", "result"]
+        let skipKeys: Set<String> = ["tool_name", "toolname", "name", "tool", "function", "action", "confidence", "thoughts", "thought"]
+
+        // 1. Direct text keys at this level
+        for key in textKeys {
+            if let s = dict[key] as? String, !s.isEmpty,
+               !s.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("{") { return s }
+        }
+
+        // 2. Check nested args objects
+        for key in ["tool_args", "toolargs", "args", "arguments", "parameters", "input"] {
+            if let nested = dict[key] as? [String: Any] {
+                for tk in textKeys {
+                    if let s = nested[tk] as? String, !s.isEmpty,
+                       !s.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("{") { return s }
+                }
+                // Any non-JSON string in nested args
+                for (_, value) in nested {
+                    if let s = value as? String, !s.isEmpty,
+                       !s.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("{") { return s }
+                }
+            }
+            // String-encoded args (JSON string that needs parsing)
+            if let str = dict[key] as? String, !str.isEmpty {
+                if let data = str.data(using: .utf8),
+                   let inner = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let deep = deepExtractText(inner) { return deep }
+                if !str.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("{") { return str }
+            }
+        }
+
+        // 3. Any non-metadata string value (longest wins)
+        var best = ""
+        for (key, value) in dict where !skipKeys.contains(key) {
+            if let s = value as? String,
+               !s.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("{"),
+               s.count > best.count { best = s }
+        }
+        if !best.isEmpty { return best }
+
+        return nil
     }
 
     // MARK: - Format Tool Result (fed back to LLM)
@@ -149,6 +212,8 @@ public struct ToolCallParser: Sendable {
             name = n
         } else if let n = json["action"] as? String, !n.isEmpty {
             name = n
+        } else if let n = json["toolname"] as? String, !n.isEmpty {
+            name = n
         } else {
             return nil
         }
@@ -157,6 +222,7 @@ public struct ToolCallParser: Sendable {
         var args: [String: String] = [:]
         var argsObj: [String: Any]? =
             json["tool_args"] as? [String: Any] ??
+            json["toolargs"] as? [String: Any] ??
             json["parameters"] as? [String: Any] ??
             json["arguments"] as? [String: Any] ??
             json["args"] as? [String: Any] ??
@@ -164,7 +230,7 @@ public struct ToolCallParser: Sendable {
 
         // Handle string-encoded tool_args (common with Qwen and other local models)
         if argsObj == nil {
-            for key in ["tool_args", "args", "arguments", "parameters", "input"] {
+            for key in ["tool_args", "toolargs", "args", "arguments", "parameters", "input"] {
                 if let str = json[key] as? String,
                    let data = str.data(using: .utf8),
                    let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
@@ -177,7 +243,7 @@ public struct ToolCallParser: Sendable {
         // Fallback: if tool_args is a plain string (not JSON), use it as "text" directly
         // This handles: {"tool_name":"response","tool_args":"Hallo, wie kann ich helfen?"}
         if argsObj == nil {
-            for key in ["tool_args", "args", "arguments", "parameters", "input"] {
+            for key in ["tool_args", "toolargs", "args", "arguments", "parameters", "input"] {
                 if let str = json[key] as? String, !str.isEmpty {
                     args["text"] = str
                     break
@@ -209,6 +275,71 @@ public struct ToolCallParser: Sendable {
         let confidence = json["confidence"] as? Double
 
         return ParsedToolCall(name: name, arguments: args, thoughts: thoughts, confidence: confidence)
+    }
+
+    // MARK: - Recovery from malformed JSON
+
+    /// Extracts tool name via regex and toolargs sub-object via balanced-brace scan.
+    /// Works even when other fields (e.g. thoughts without []) make the outer JSON invalid.
+    private func recoverToolCallFromMalformedJSON(_ text: String) -> ParsedToolCall? {
+        // Must contain at least a tool-name-like key
+        guard text.contains("\"tool_name\"") || text.contains("\"toolname\"") ||
+              text.contains("\"name\"") || text.contains("\"function\"") else { return nil }
+
+        // Extract tool name via regex
+        let namePattern = #""(?:tool_name|toolname|name|tool|function|action)"\s*:\s*"([^"]+)""#
+        guard let nameRegex = try? NSRegularExpression(pattern: namePattern),
+              let nameMatch = nameRegex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+              let nameRange = Range(nameMatch.range(at: 1), in: text) else { return nil }
+        let name = String(text[nameRange])
+        guard !name.isEmpty else { return nil }
+
+        // Extract toolargs/tool_args sub-object via balanced brace scan
+        let argsPattern = #""(?:tool_args|toolargs|arguments|args|parameters)"\s*:\s*\{"#
+        guard let argsRegex = try? NSRegularExpression(pattern: argsPattern),
+              let argsMatch = argsRegex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+              let argsMatchRange = Range(argsMatch.range, in: text) else {
+            // No args — return tool call with empty args
+            print("[ToolCallParser] RECOVERY: Found tool '\(name)' (no args) from malformed JSON")
+            return ParsedToolCall(name: name, arguments: [:])
+        }
+
+        // Find the opening brace
+        guard let braceStart = text[argsMatchRange].lastIndex(of: "{") else { return nil }
+
+        // Balanced brace scan (string-aware)
+        var depth = 0
+        var inStr = false
+        var esc = false
+        var pos = braceStart
+        while pos < text.endIndex {
+            let ch = text[pos]
+            if esc { esc = false }
+            else if ch == "\\" && inStr { esc = true }
+            else if ch == "\"" { inStr.toggle() }
+            else if !inStr {
+                if ch == "{" { depth += 1 }
+                else if ch == "}" {
+                    depth -= 1
+                    if depth == 0 {
+                        let argsJSON = String(text[braceStart...pos])
+                        if let data = argsJSON.data(using: .utf8),
+                           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                            var args: [String: String] = [:]
+                            for (key, value) in json { args[key] = stringify(value) }
+                            print("[ToolCallParser] RECOVERY: Extracted '\(name)' with \(args.count) args from malformed JSON")
+                            return ParsedToolCall(name: name, arguments: args)
+                        }
+                        break
+                    }
+                }
+            }
+            pos = text.index(after: pos)
+        }
+
+        // Args sub-object also malformed — return with empty args
+        print("[ToolCallParser] RECOVERY: Found tool '\(name)' but args sub-object also malformed")
+        return ParsedToolCall(name: name, arguments: [:])
     }
 
     // MARK: - Extract JSON from LLM output (dirty parsing)
@@ -288,7 +419,8 @@ public struct ToolCallParser: Sendable {
                 if depth == 0, let start = startIndex {
                     let block = String(text[start...idx])
                     // Only collect blocks that look like they might have tool_name
-                    if block.contains("tool_name") || block.contains("\"name\"") ||
+                    if block.contains("tool_name") || block.contains("\"toolname\"") ||
+                       block.contains("\"name\"") ||
                        block.contains("\"tool\"") || block.contains("\"function\"") ||
                        block.contains("\"action\"") {
                         blocks.append(block)

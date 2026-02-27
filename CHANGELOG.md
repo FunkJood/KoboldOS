@@ -1,5 +1,78 @@
 # KoboldOS Changelog
 
+## Alpha v0.3.5 — 2026-02-27
+
+### Prozess-Entlastung: Schwere Operationen aus dem Hauptprozess ausgelagert
+- **PlaywrightTool**: Von synchronem `waitUntilExit()` auf `AsyncProcess.run()` umgestellt — blockiert den Agent Loop nicht mehr
+- **STTManager**: Whisper-Inference via `Task.detached` vom MainActor gelöst — UI friert nicht mehr bei Sprachtranskription
+- **VisionTool**: OCR (`VNImageRequestHandler.perform()`) in `Task.detached` verschoben — große Bilder blockieren den Agent nicht mehr
+- **Analyse**: Alle 50+ Tools auf Blocking-Verhalten geprüft — ShellTool, AppleScriptTool, Network-Tools waren bereits async-safe
+
+### Lokale Bildgenerierung (ComfyUI + SDXL)
+- **ComfyUI Integration**: Lokale Bildgenerierung via ComfyUI API (Port 8188) auf Apple Silicon
+- **4 Modelle**: Juggernaut XL v9 (fotorealistisch), SDXL Base 1.0 (vielseitig), SDXL Refiner 1.0, 4x-UltraSharp Upscaler
+- **Image-Generation-Skill**: Neuer Skill mit automatischem Server-Start, Workflow-Submission und Polling
+- **kobold_generate.py**: CLI-Helper für direkte Bildgenerierung mit Model/Size/Seed-Parametern
+- **Output**: Generierte Bilder landen in `~/Documents/KoboldOS/Bilder/`
+- **Telegram-Integration**: Bilder werden automatisch im Chat UND per Telegram gesendet
+
+### Telegram Bot — JSON-Leak Fix
+- **Root Cause**: Lokale Modelle gaben manchmal kaputtes JSON aus (unescapte Quotes in thoughts-Array) — `JSONSerialization` scheiterte komplett
+- **Regex-Lösung**: `"text"\s*:\s*"((?:[^"\\]|\\.)*)"` extrahiert Text auch aus defektem JSON
+- **3-Schicht-Fallback**: DaemonListener.stripJSONForTelegram + TelegramBot.cleanJSONResponse + Leere-Antwort-Guard
+- **Ergebnis**: Keine rohen JSON-Strings mehr an Telegram-Nutzer
+
+### Workflow-Ansicht — Alle Tools, Verbindungen & Skills
+- **46 Tools verfügbar**: Tool-Auswahl von 16 auf 46 erweitert, in 9 Kategorien gruppiert (Basis, Kommunikation, APIs & Verbindungen, Medien, Gedächtnis, macOS, IoT/Infra, System, Agenten)
+- **Suchfeld**: Schnelles Finden von Tools per Name oder Label
+- **Skill-Injection**: Agent-Nodes können jetzt eine Fähigkeit (Skill) zugewiesen bekommen — Skill-Inhalt wird automatisch in den Prompt injiziert
+- **Speichern-Button**: Expliziter Save mit visuellem Feedback ("Gespeichert!")
+- **Neue Persistenz**: Workflows werden unter `~/Documents/KoboldOS/workflows/` gespeichert (sichtbar, exportierbar)
+- **Auto-Migration**: Bestehende Workflows aus App Support werden automatisch migriert
+
+### Bildgenerierung — Spam-Fix
+- **ShellTool Timeout**: Hard-Cap von 60s auf 300s erhöht (Bildgenerierung braucht ~50s)
+- **Lock-Datei**: `kobold_generate.py` nutzt `.generating.lock` gegen parallele Generierungen
+- **Queue-Check**: Prüft ComfyUI Queue vor Submit — verhindert Doppel-Generierungen
+- **Exit Code 2**: Dedizierter Exit-Code wenn bereits eine Generierung läuft
+
+### Skills-System
+- **image_generation Skill**: Automatisch aktiviert bei Neuinstallation, mit `timeout: 120` und Anti-Retry-Regeln
+- **SkillLoader**: `image_generation` in Default-Enabled-Liste aufgenommen
+
+### Statistik
+- ~53.000+ Lines of Code
+
+---
+
+## Alpha v0.3.4 — 2026-02-27
+
+### Telegram Bot — Sprachnachrichten
+- **Voice Messages**: OGG Download → ffmpeg → whisper.cpp STT, automatische Transkription
+- **Audio-Nachrichten**: MP3/WAV etc. werden ebenfalls transkribiert
+- **STTManager Fix**: Race Condition bei lazy init behoben (loadModelIfAvailable vor Zugriff)
+
+### ToolCallParser — Robuster gegen LLM-Fehler
+- **Strategy 6**: Regex-Recovery für komplett kaputtes JSON (z.B. fehlende `[]` bei thoughts)
+- **toolname/toolargs**: Parser erkennt beide Varianten (mit und ohne Unterstrich)
+- **cleanJSONResponse**: Balanced-Brace Fallback im TelegramBot für malformed JSON
+
+### Settings UI
+- **Tab-Reihenfolge**: Allgemein > Agenten > Benachrichtigungen > Berechtigungen > Datenschutz > Fähigkeiten > Gedächtnis > Sprache & Audio > Sicherheit > Verbindungen > Über
+- **Persönlichkeit**: In Agenten-Tab integriert (kein eigener Tab mehr)
+- **DaemonLogView**: Vollbild-Modus mit Filter, Clear-Button, Escape-Shortcut
+- **Suno AI**: Verbindungskarte nach oben verschoben (neben Telegram)
+
+### GUI Performance
+- topics/activeTopicId: objectWillChange nur bei echtem Wert-Wechsel
+- OnboardingView: 6 → 2 repeatForever Animationen
+
+### Dokumentation
+- TUTORIAL.txt: 14-Kapitel Benutzerhandbuch für DMG
+- ~52.200+ Lines of Code
+
+---
+
 ## Alpha v0.3.3 — 2026-02-27
 
 ### File-Upload für YouTube, SoundCloud & Telegram

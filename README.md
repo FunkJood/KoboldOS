@@ -2,7 +2,7 @@
 
 **KoboldOS** is a native macOS application that runs a self-contained AI agent system locally on your Mac. It wraps an Ollama-backed LLM in a full agent loop with tools, persistent memory, a scheduling system, and a polished SwiftUI control panel — no cloud required.
 
-**Current version: Alpha v0.3.3**
+**Current version: Alpha v0.3.5**
 
 ---
 
@@ -15,29 +15,29 @@ ollama pull llama3.2  # or any other model
 
 # 2. Build and run KoboldOS
 swift build -c release
-bash scripts/build.sh  # creates ~/Desktop/KoboldOS-0.3.3.dmg
+bash scripts/build.sh  # creates ~/Desktop/KoboldOS-0.3.5.dmg
 ```
 
-Or just open `~/Desktop/KoboldOS-0.3.3.dmg`, drag to Applications, and launch.
+Or just open `~/Desktop/KoboldOS-0.3.5.dmg`, drag to Applications, and launch.
 
 ---
 
 ## Features
 
 - **Autonomous Agent**: Full agent loop with tool execution, memory, and multi-step reasoning
-- **35+ Built-in Tools**: Shell, File, Browser, Playwright, Screen Control, Calculator, Calendar, Contacts, Telegram, Google/YouTube/Drive, SoundCloud, Suno AI, Reddit, Microsoft, GitHub, Slack, Notion, Uber, WhatsApp, and more
+- **46+ Built-in Tools**: Shell, File, Browser, Playwright, Screen Control, Calendar, Contacts, Telegram, Google/YouTube/Drive, SoundCloud, Suno AI, Reddit, Microsoft, GitHub, Slack, Notion, Uber, WhatsApp, HuggingFace, Lieferando, MQTT, CalDAV, RSS, and more
 - **Teams (AI-Beratungsgremium)**: Parallele AI-Agenten diskutieren in 3 Runden (Analyse → Diskussion → Synthese)
 - **Playwright Browser Automation**: Chrome navigieren, klicken, ausfüllen, Screenshots, JavaScript ausführen
 - **Screen Control**: Maus/Tastatur-Steuerung, Screenshots, OCR via Vision.framework
 - **Goals System**: Langfristige Ziele unter Persönlichkeit, fließen in den Agent-System-Prompt
 - **Idle Tasks & Heartbeat**: Definierbare Aufgaben für den Agent wenn er nichts zu tun hat — konkret oder vage Richtungen
-- **Speech**: Text-to-Speech (AVSpeechSynthesizer) + Speech-to-Text (whisper.cpp via SwiftWhisper)
-- **Image Generation**: Local Stable Diffusion via Apple ml-stable-diffusion (CoreML) mit Modell-Auswahl
+- **Speech**: Text-to-Speech (AVSpeechSynthesizer) + Speech-to-Text (whisper.cpp via SwiftWhisper) — auch via Telegram Voice Messages
+- **Image Generation**: Local SDXL via ComfyUI (Juggernaut XL v9, SDXL Base), auto server start, output to ~/Documents/KoboldOS/Bilder/
 - **Persistent Memory**: Three-tier memory system (Kurzzeit/Langzeit/Wissen) with vector search
-- **Connections**: Google OAuth (YouTube/Drive Upload), SoundCloud (Upload), Telegram Bot (File/Photo/Audio), Suno AI (Musik), Reddit, Microsoft, GitHub, Slack, Notion, Uber, WhatsApp, A2A Protocol
+- **Connections**: Google OAuth (YouTube/Drive Upload), SoundCloud (Upload), Telegram Bot (File/Photo/Audio/Voice), Suno AI (Musik), Reddit, Microsoft, GitHub, Slack, Notion, Uber, WhatsApp, A2A Protocol
 - **Proactive Agent**: Heartbeat-System, Idle-Tasks, Goals, System-Health-Alerts
 - **Scheduled Tasks**: Cron-based task scheduler with auto-execution + Team-Integration
-- **Workflows**: Visual workflow editor with multi-step automations + Team-Nodes
+- **Workflows**: Visual workflow editor with 46+ tools, skill injection, save to ~/Documents/KoboldOS/workflows/
 - **Interactive Buttons**: Ja/Nein-Buttons im Chat mit Auto-Erkennung
 - **Marketplace**: Widgets, Automationen, Skills, Themes, Konnektoren (Mock)
 - **AI-Suggestions**: Ollama-basierte Vorschläge mit 4h-Cache
@@ -82,7 +82,7 @@ Or just open `~/Desktop/KoboldOS-0.3.3.dmg`, drag to Applications, and launch.
 | **In-process daemon** | No subprocess needed — app is self-contained and distributable |
 | **Ollama-first** | Best local model support; llama-server as fallback |
 | **Proper message roles** | `[system, user, assistant, user(tool_results)]` — models need this for reliable tool use |
-| **5-strategy ToolCallParser** | Handles markdown blocks, balanced JSON, XML, line-scan — works with any local model |
+| **5-strategy ToolCallParser** | Handles markdown blocks, balanced JSON, XML, line-scan — supports `tool_name`/`toolname` variants — works with any local model |
 | **NotificationCenter bridge** | Tools in KoboldCore communicate with UI managers (TTS, ImageGen, STT) via notifications |
 | **`Task.detached` per request** | Prevents actor serialization; handles concurrent requests |
 | **Memory type prefixes** | `kt.` / `lz.` / `ws.` encode short/long-term/knowledge type in label |
@@ -166,7 +166,7 @@ Final answers go through the `response` tool: `{"tool_name": "response", "tool_a
 | `generate_image` | Stable Diffusion image generation |
 | `calendar` | Apple Calendar events & reminders |
 | `contacts` | Apple Contacts search |
-| `telegram_send` | Send Telegram messages, files, photos, audio |
+| `telegram_send` | Send Telegram messages, files, photos, audio. Receive voice messages via STT |
 | `google_api` | Google Drive, Gmail, YouTube (incl. video upload), Calendar |
 | `soundcloud_api` | SoundCloud: tracks, playlists, audio upload |
 | `suno_api` | Suno AI music generation (generate, status, get_track) |
@@ -303,3 +303,4 @@ bash scripts/build.sh
 - Screen Control requires macOS Accessibility permissions (System Preferences → Security → Accessibility)
 - Teams marketplace items are mock/placeholder data
 - OAuth tokens for some services may expire — reconnect in Settings → Connections if needed
+- Telegram Voice Messages require a Whisper model loaded in Settings → Sprache & Audio and ffmpeg installed (`brew install ffmpeg`)

@@ -419,8 +419,16 @@ class OAuthManager: NSObject, @unchecked Sendable {
 
         do {
             let (data, _) = try await URLSession.shared.data(for: request)
-            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let accessToken = json["access_token"] as? String else { return false }
+            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { return false }
+
+            // Support nested token paths (e.g. "authed_user.access_token" for Slack)
+            let extractedToken: String?
+            if let path = config.tokenJsonPath {
+                extractedToken = resolveJsonPath(json, path: path) as? String
+            } else {
+                extractedToken = json["access_token"] as? String
+            }
+            guard let accessToken = extractedToken, !accessToken.isEmpty else { return false }
 
             let expiresIn = json["expires_in"] as? Int ?? 86400
             let expiry = Date().addingTimeInterval(TimeInterval(expiresIn - 60))
@@ -583,7 +591,7 @@ final class SlackOAuth: OAuthManager, @unchecked Sendable {
             serviceName: "slack",
             authorizeURL: "https://slack.com/oauth/v2/authorize",
             tokenURL: "https://slack.com/api/oauth.v2.access",
-            userInfoURL: nil,
+            userInfoURL: "https://slack.com/api/auth.test",
             scopes: "channels:read channels:history chat:write users:read",
             clientIdKey: "kobold.slack.clientId",
             clientSecretKey: "kobold.slack.clientSecret",
@@ -596,6 +604,33 @@ final class SlackOAuth: OAuthManager, @unchecked Sendable {
     override init(config: OAuthConfig) {
         super.init(config: config)
     }
+
+    /// Slack auth.test is POST-only and returns {"ok":false} instead of HTTP 401
+    override func verifyToken() async {
+        let token = getAccessTokenRaw()
+        guard !token.isEmpty else { setConnected(false); return }
+
+        guard let url = URL(string: "https://slack.com/api/auth.test") else { return }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.timeoutInterval = 10
+
+        do {
+            let (data, _) = try await URLSession.shared.data(for: req)
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let ok = json["ok"] as? Bool, !ok {
+                let error = json["error"] as? String ?? ""
+                if error == "invalid_auth" || error == "token_expired" || error == "token_revoked" {
+                    if await refreshAccessToken() { return }
+                    setConnected(false)
+                }
+            }
+        } catch {
+            // Network error → don't disconnect
+        }
+    }
 }
 
 final class NotionOAuth: OAuthManager, @unchecked Sendable {
@@ -605,7 +640,7 @@ final class NotionOAuth: OAuthManager, @unchecked Sendable {
             serviceName: "notion",
             authorizeURL: "https://api.notion.com/v1/oauth/authorize",
             tokenURL: "https://api.notion.com/v1/oauth/token",
-            userInfoURL: nil,
+            userInfoURL: "https://api.notion.com/v1/users/me",
             scopes: "",
             usePKCE: false,
             authHeaderPrefix: "Bearer",
@@ -613,6 +648,29 @@ final class NotionOAuth: OAuthManager, @unchecked Sendable {
             extraAuthorizeParams: ["owner": "user"],
             userNameJsonPath: "owner.user.name"
         ))
+    }
+
+    /// Notion requires Notion-Version header on all API calls
+    override func verifyToken() async {
+        let token = getAccessTokenRaw()
+        guard !token.isEmpty else { setConnected(false); return }
+
+        guard let url = URL(string: "https://api.notion.com/v1/users/me") else { return }
+        var req = URLRequest(url: url)
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue("2022-06-28", forHTTPHeaderField: "Notion-Version")
+        req.timeoutInterval = 10
+
+        do {
+            let (_, response) = try await URLSession.shared.data(for: req)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            if status == 401 || status == 403 {
+                if await refreshAccessToken() { return }
+                setConnected(false)
+            }
+        } catch {
+            // Network error → don't disconnect
+        }
     }
 }
 

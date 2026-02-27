@@ -116,7 +116,7 @@ struct SettingsView: View {
     @State private var showSecretsManager: Bool = false
     @State private var connectionsVerified: Bool = false
 
-    private let sections = ["Allgemein", "Agenten", "Persönlichkeit", "Gedächtnis", "Fähigkeiten", "Berechtigungen", "Sprache & Audio", "Verbindungen", "Benachrichtigungen", "Datenschutz", "Sicherheit", "Über"]
+    private let sections = ["Allgemein", "Agenten", "Benachrichtigungen", "Berechtigungen", "Datenschutz", "Fähigkeiten", "Gedächtnis", "Persönlichkeit", "Sprache & Audio", "Sicherheit", "Verbindungen", "Über"]
 
     var body: some View {
         HStack(spacing: 0) {
@@ -154,16 +154,16 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 20) {
                     switch selectedSection {
                     case "Allgemein":          generalSection()
-                    case "Persönlichkeit":     agentPersonalitySection()
                     case "Agenten":            agentsSettingsSection()
-                    case "Gedächtnis":         memoryPolicySection(); memorySettingsSection()
+                    case "Benachrichtigungen": notificationsSettingsSection()
                     case "Berechtigungen":     permissionsSection()
                     case "Datenschutz":        securitySection()
-                    case "Benachrichtigungen": notificationsSettingsSection()
+                    case "Fähigkeiten":        skillsSettingsSection()
+                    case "Gedächtnis":         memoryPolicySection(); memorySettingsSection()
+                    case "Persönlichkeit":     agentPersonalitySection()
+                    case "Sprache & Audio":    speechAndAudioSection()
                     case "Sicherheit":         debugSecuritySection()
                     case "Verbindungen":       connectionsSection()
-                    case "Sprache & Audio":    speechAndAudioSection()
-                    case "Fähigkeiten":        skillsSettingsSection()
                     default:                   aboutSection()
                     }
                     Spacer(minLength: 40)
@@ -1599,8 +1599,9 @@ struct SettingsView: View {
         @ObservedObject var log = DaemonLog.shared
         @State private var autoScroll = true
         @State private var filterCategory: DaemonLog.Category? = nil
-        @State private var logFetchTimer: Timer? = nil
+        @State private var logFetchTask: Task<Void, Never>? = nil
         @State private var lastFetchIndex = 0
+        @State private var isFullscreen = false
 
         var filteredEntries: [DaemonLog.Entry] {
             guard let cat = filterCategory else { return log.entries }
@@ -1609,12 +1610,109 @@ struct SettingsView: View {
 
         var body: some View {
             VStack(spacing: 6) {
+                logFilterBar
+                logScrollView
+            }
+            .onAppear { startFetching() }
+            .onDisappear { stopFetching() }
+            .sheet(isPresented: $isFullscreen) {
+                fullscreenLogSheet
+            }
+        }
+
+        private var logFilterBar: some View {
+            HStack(spacing: 6) {
+                Button(action: { filterCategory = nil }) {
+                    Text("Alle")
+                        .font(.system(size: 10, weight: filterCategory == nil ? .bold : .regular))
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(filterCategory == nil ? Color.white.opacity(0.15) : Color.clear)
+                        .cornerRadius(4)
+                }
+                .buttonStyle(.plain)
+
+                ForEach(DaemonLog.Category.allCases, id: \.rawValue) { cat in
+                    Button(action: { filterCategory = filterCategory == cat ? nil : cat }) {
+                        HStack(spacing: 3) {
+                            Image(systemName: DaemonLog.Entry(timestamp: Date(), message: "", category: cat).icon)
+                                .font(.system(size: 9))
+                            Text(cat.rawValue)
+                                .font(.system(size: 10, weight: filterCategory == cat ? .bold : .regular))
+                        }
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(filterCategory == cat ? Color.white.opacity(0.15) : Color.clear)
+                        .cornerRadius(4)
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                Spacer()
+                Text("\(log.entries.count) Eintr\u{00E4}ge")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(.secondary)
+                Toggle("Auto-Scroll", isOn: $autoScroll)
+                    .toggleStyle(.switch)
+                    .controlSize(.mini)
+                    .font(.system(size: 10))
+
+                Button(action: { isFullscreen = true }) {
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Vollbild")
+            }
+            .foregroundColor(.secondary)
+        }
+
+        private var logScrollView: some View {
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 1) {
+                        ForEach(filteredEntries) { entry in
+                            DaemonLogRow(entry: entry)
+                                .id(entry.id)
+                        }
+                    }
+                    .padding(4)
+                }
+                .background(Color.black.opacity(0.3))
+                .cornerRadius(6)
+                .onChange(of: log.entries.count) {
+                    if autoScroll, let last = filteredEntries.last {
+                        proxy.scrollTo(last.id, anchor: .bottom)
+                    }
+                }
+            }
+        }
+
+        private var fullscreenLogSheet: some View {
+            VStack(spacing: 0) {
+                // Header
+                HStack {
+                    Image(systemName: "terminal.fill")
+                        .foregroundColor(.koboldEmerald)
+                    Text("Live Daemon-Log")
+                        .font(.headline)
+                    Spacer()
+                    Text("\(log.entries.count) Eintr\u{00E4}ge")
+                        .font(.caption.monospacedDigit())
+                        .foregroundColor(.secondary)
+                    Toggle("Auto-Scroll", isOn: $autoScroll)
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                    Button("Schlie\u{00DF}en") { isFullscreen = false }
+                        .keyboardShortcut(.escape)
+                }
+                .padding()
+
                 // Filter bar
                 HStack(spacing: 6) {
                     Button(action: { filterCategory = nil }) {
                         Text("Alle")
-                            .font(.system(size: 10, weight: filterCategory == nil ? .bold : .regular))
-                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .font(.system(size: 11, weight: filterCategory == nil ? .bold : .regular))
+                            .padding(.horizontal, 8).padding(.vertical, 3)
                             .background(filterCategory == nil ? Color.white.opacity(0.15) : Color.clear)
                             .cornerRadius(4)
                     }
@@ -1624,29 +1722,34 @@ struct SettingsView: View {
                         Button(action: { filterCategory = filterCategory == cat ? nil : cat }) {
                             HStack(spacing: 3) {
                                 Image(systemName: DaemonLog.Entry(timestamp: Date(), message: "", category: cat).icon)
-                                    .font(.system(size: 9))
+                                    .font(.system(size: 10))
                                 Text(cat.rawValue)
-                                    .font(.system(size: 10, weight: filterCategory == cat ? .bold : .regular))
+                                    .font(.system(size: 11, weight: filterCategory == cat ? .bold : .regular))
                             }
-                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .padding(.horizontal, 8).padding(.vertical, 3)
                             .background(filterCategory == cat ? Color.white.opacity(0.15) : Color.clear)
                             .cornerRadius(4)
                         }
                         .buttonStyle(.plain)
                     }
-
                     Spacer()
-                    Text("\(log.entries.count) Einträge")
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundColor(.secondary)
-                    Toggle("Auto-Scroll", isOn: $autoScroll)
-                        .toggleStyle(.switch)
-                        .controlSize(.mini)
-                        .font(.system(size: 10))
+                    Button(action: { DaemonLog.shared.clear() }) {
+                        HStack(spacing: 3) {
+                            Image(systemName: "trash")
+                                .font(.system(size: 10))
+                            Text("Leeren")
+                                .font(.system(size: 11))
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundColor(.red.opacity(0.7))
                 }
+                .padding(.horizontal)
                 .foregroundColor(.secondary)
 
-                // Log entries
+                Divider().padding(.vertical, 4)
+
+                // Full log view
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 1) {
@@ -1655,10 +1758,9 @@ struct SettingsView: View {
                                     .id(entry.id)
                             }
                         }
-                        .padding(4)
+                        .padding(8)
                     }
-                    .background(Color.black.opacity(0.3))
-                    .cornerRadius(6)
+                    .background(Color.black.opacity(0.4))
                     .onChange(of: log.entries.count) {
                         if autoScroll, let last = filteredEntries.last {
                             proxy.scrollTo(last.id, anchor: .bottom)
@@ -1666,22 +1768,25 @@ struct SettingsView: View {
                     }
                 }
             }
-            .onAppear { startFetching() }
-            .onDisappear { stopFetching() }
+            .frame(minWidth: 700, minHeight: 500)
+            .background(.ultraThinMaterial)
         }
 
         private func startFetching() {
             fetchDaemonLogs()
-            logFetchTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { _ in
-                MainActor.assumeIsolated {
+            logFetchTask?.cancel()
+            logFetchTask = Task { @MainActor in
+                while !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: 5_000_000_000)
+                    guard !Task.isCancelled else { break }
                     fetchDaemonLogs()
                 }
             }
         }
 
         private func stopFetching() {
-            logFetchTimer?.invalidate()
-            logFetchTimer = nil
+            logFetchTask?.cancel()
+            logFetchTask = nil
         }
 
         private func fetchDaemonLogs() {
@@ -1801,8 +1906,11 @@ struct SettingsView: View {
             soundCloudOAuthSection()
         }
 
-        // Row 2: Telegram (full width)
-        telegramSection()
+        // Row 2: Telegram + Suno AI
+        HStack(alignment: .top, spacing: 12) {
+            telegramSection()
+            sunoConnectionSection()
+        }
 
         // Row 3: WebApp-Server + Cloudflare Tunnel
         HStack(alignment: .top, spacing: 12) {
@@ -1852,11 +1960,8 @@ struct SettingsView: View {
             uberConnectionSection()
         }
 
-        // Row 11: Suno AI + Reddit
-        HStack(alignment: .top, spacing: 12) {
-            sunoConnectionSection()
-            redditConnectionSection()
-        }
+        // Row 11: Reddit
+        redditConnectionSection()
 
         // Weitere Integrationen (Phase 2+)
         FuturisticBox(icon: "puzzlepiece.extension.fill", title: "Weitere Integrationen", accent: .koboldGold) {
@@ -4062,7 +4167,7 @@ struct SettingsView: View {
                     )
                 VStack(alignment: .leading, spacing: 4) {
                     Text("KoboldOS").font(.title.bold())
-                    Text("Alpha v0.3.3").font(.title3).foregroundColor(.koboldGold)
+                    Text("Alpha v0.3.4").font(.title3).foregroundColor(.koboldGold)
                     Text("Dein lokaler KI-Assistent für macOS")
                         .font(.subheadline).foregroundColor(.secondary)
                 }
@@ -4072,7 +4177,7 @@ struct SettingsView: View {
         }
 
         FuturisticBox(icon: "info.circle", title: "Build-Info", accent: .koboldGold) {
-                infoRow("Version", "Alpha v0.3.3")
+                infoRow("Version", "Alpha v0.3.4")
                 infoRow("Build", "2026-02-27")
                 infoRow("Swift", "6.0")
                 infoRow("Plattform", "macOS 14+ (Sonoma)")
@@ -4150,7 +4255,7 @@ struct SettingsView: View {
         panel.allowedContentTypes = [.plainText]
         panel.nameFieldStringValue = "koboldos-logs.txt"
         if panel.runModal() == .OK, let url = panel.url {
-            let logs = "KoboldOS Alpha v0.3.3 — Logs\nPID: \(ProcessInfo.processInfo.processIdentifier)\nUptime: \(Date())\n"
+            let logs = "KoboldOS Alpha v0.3.4 — Logs\nPID: \(ProcessInfo.processInfo.processIdentifier)\nUptime: \(Date())\n"
             try? logs.write(to: url, atomically: true, encoding: .utf8)
         }
     }

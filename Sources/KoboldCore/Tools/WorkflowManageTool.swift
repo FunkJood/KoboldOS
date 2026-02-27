@@ -111,11 +111,16 @@ public struct WorkflowManageTool: Tool, Sendable {
             .appendingPathComponent("KoboldOS")
     }
 
-    private var projectsFileURL: URL { appSupportDir.appendingPathComponent("projects.json") }
+    private var workflowsDir: URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("KoboldOS/workflows")
+    }
+
+    private var projectsFileURL: URL { workflowsDir.appendingPathComponent("projects.json") }
     private var legacyWorkflowsURL: URL { appSupportDir.appendingPathComponent("workflows.json") }
 
     private func workflowURL(for projectId: String) -> URL {
-        appSupportDir.appendingPathComponent("workflows/\(projectId).json")
+        workflowsDir.appendingPathComponent("\(projectId).json")
     }
 
     // MARK: - Validate

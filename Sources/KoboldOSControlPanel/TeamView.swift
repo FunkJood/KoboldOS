@@ -1,5 +1,6 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import KoboldCore
 
 // MARK: - TeamView
 // Visuelle n8n-artige Workflow-Builder für Agenten-Teams.
@@ -23,6 +24,8 @@ struct TeamView: View {
     @State private var agentBuildStatus: String = ""
     @State private var showImportPicker: Bool = false
     @State private var workflowSuggestionOffset: Int = 0
+    @State private var showSavedConfirmation: Bool = false
+    @State private var workflowTask: Task<Void, Never>?
     // Canvas zoom & pan
     @State private var canvasScale: CGFloat = 1.0
     @State private var canvasOffset: CGSize = .zero
@@ -39,8 +42,8 @@ struct TeamView: View {
             return viewModel.workflowURL(for: pid)
         }
         // Fallback for no project selected
-        return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-            .appendingPathComponent("KoboldOS/workflow_canvas.json")
+        return FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("KoboldOS/workflows/workflow_canvas.json")
     }
 
     var body: some View {
@@ -134,7 +137,7 @@ struct TeamView: View {
             if let projectId = notification.object as? String,
                let selected = viewModel.selectedProjectId,
                selected.uuidString.hasPrefix(projectId) || selected.uuidString == projectId {
-                Task { await runWorkflow() }
+                workflowTask = Task { await runWorkflow() }
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .koboldProjectsChanged)) { _ in
@@ -162,15 +165,32 @@ struct TeamView: View {
                     GlassButton(title: "Import", icon: "square.and.arrow.down", isPrimary: false) {
                         showImportPicker = true
                     }
+                    GlassButton(
+                        title: showSavedConfirmation ? "Gespeichert!" : "Speichern",
+                        icon: showSavedConfirmation ? "checkmark.circle.fill" : "square.and.arrow.down.fill",
+                        isPrimary: false
+                    ) {
+                        saveWorkflowState()
+                        showSavedConfirmation = true
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                            showSavedConfirmation = false
+                        }
+                    }
                     GlassButton(title: "Node +", icon: "plus", isPrimary: false) {
                         addNode()
                     }
                     GlassButton(
-                        title: isRunning ? "Läuft..." : "Ausführen",
+                        title: isRunning ? "Stop" : "Ausführen",
                         icon: isRunning ? "stop.fill" : "play.fill",
                         isPrimary: true
                     ) {
-                        Task { await runWorkflow() }
+                        if isRunning {
+                            workflowTask?.cancel()
+                            workflowTask = nil
+                            isRunning = false
+                        } else {
+                            workflowTask = Task { await runWorkflow() }
+                        }
                     }
                 }
             }
@@ -644,6 +664,7 @@ struct TeamView: View {
         var visited = Set<UUID>()
 
         while !queue.isEmpty {
+            guard !Task.isCancelled else { break }
             let currentId = queue.removeFirst()
             guard !visited.contains(currentId) else { continue }
             visited.insert(currentId)
@@ -733,9 +754,18 @@ struct TeamView: View {
 
         case .agent:
             updateNode(id: nodeId) { $0.statusMessage = "Agent arbeitet..." }
-            let prompt = node.prompt.isEmpty
+            var basePrompt = node.prompt.isEmpty
                 ? "Aufgabe: \(node.title)\n\nKontext:\n\(String(upstreamOutput.prefix(1000)))"
                 : "\(node.prompt)\n\nKontext:\n\(String(upstreamOutput.prefix(1000)))"
+
+            // Inject skill content if selected
+            if let skillName = node.skillName, !skillName.isEmpty {
+                let skills = await SkillLoader.shared.loadSkills()
+                if let skill = skills.first(where: { $0.name == skillName }) {
+                    basePrompt = "Nutze folgende Fähigkeit:\n\(skill.content)\n\n\(basePrompt)"
+                }
+            }
+            let prompt = basePrompt
 
             viewModel.sendWorkflowMessage(prompt, modelOverride: node.modelOverride, agentOverride: node.agentType)
 
@@ -743,9 +773,13 @@ struct TeamView: View {
             while waitCount < 120 {
                 try? await Task.sleep(nanoseconds: 500_000_000)
                 waitCount += 1
-                updateNode(id: nodeId) {
-                    $0.executionProgress = min(0.9, Double(waitCount) / 120.0)
-                    $0.statusMessage = "Agent arbeitet... (\(waitCount/2)s)"
+                if Task.isCancelled { return "Abgebrochen" }
+                // Throttle UI updates: nur alle 5s statt alle 500ms (97% weniger Re-Renders)
+                if waitCount % 10 == 0 {
+                    updateNode(id: nodeId) {
+                        $0.executionProgress = min(0.9, Double(waitCount) / 120.0)
+                        $0.statusMessage = "Agent arbeitet... (\(waitCount/2)s)"
+                    }
                 }
                 if let lastMsg = viewModel.workflowLastResponse, !lastMsg.isEmpty {
                     viewModel.workflowLastResponse = nil
@@ -767,9 +801,13 @@ struct TeamView: View {
             while toolWait < 60 {
                 try? await Task.sleep(nanoseconds: 500_000_000)
                 toolWait += 1
-                updateNode(id: nodeId) {
-                    $0.executionProgress = min(0.9, Double(toolWait) / 60.0)
-                    $0.statusMessage = "Tool arbeitet... (\(toolWait / 2)s)"
+                if Task.isCancelled { return "Abgebrochen" }
+                // Throttle UI updates: nur alle 5s statt alle 500ms
+                if toolWait % 10 == 0 {
+                    updateNode(id: nodeId) {
+                        $0.executionProgress = min(0.9, Double(toolWait) / 60.0)
+                        $0.statusMessage = "Tool arbeitet... (\(toolWait / 2)s)"
+                    }
                 }
                 if let resp = viewModel.workflowLastResponse, !resp.isEmpty {
                     viewModel.workflowLastResponse = nil
@@ -1000,6 +1038,7 @@ struct WorkflowNode: Identifiable, Codable {
     var modelOverride: String?            // Per-node model (e.g. "llama3.2", "gpt-4o")
     var agentType: String?                // Per-node agent type (e.g. "coder", "web")
     var teamId: String?                   // For team nodes: which team to consult
+    var skillName: String?                 // For agent nodes: which skill to inject
 
     // Execution state (not persisted)
     var executionStatus: NodeExecutionStatus = .idle
@@ -1009,7 +1048,7 @@ struct WorkflowNode: Identifiable, Codable {
 
     enum CodingKeys: String, CodingKey {
         case id, type, title, prompt, x, y, triggerConfig, conditionExpression, delaySeconds
-        case modelOverride, agentType, teamId
+        case modelOverride, agentType, teamId, skillName
     }
 
     init(id: UUID = UUID(), type: NodeType, title: String, prompt: String = "", x: CGFloat, y: CGFloat) {
@@ -1248,12 +1287,11 @@ struct WorkflowNodeCard: View {
                    (node.executionStatus == .error ? Color.red.opacity(0.3) : .black.opacity(0.3)))),
             radius: isNodeRunning ? 16 : (isSelected ? 12 : 4)
         )
-        // Only pulse the actively running node (not all nodes!)
-        .scaleEffect(isNodeRunning ? 1.05 : 1.0)
-        .animation(isNodeRunning
-            ? .easeInOut(duration: 0.6).repeatForever(autoreverses: true)
-            : .default,
-            value: isNodeRunning)
+        // Running indicator: static green glow (kein repeatForever — spart GPU)
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.green.opacity(isNodeRunning ? 0.6 : 0), lineWidth: 2)
+        )
         .gesture(
             DragGesture()
                 .updating($dragStart) { value, state, _ in
@@ -1374,51 +1412,10 @@ struct NodeInspector: View {
 
             // Tool selection
             if node.type == .tool {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Tool / Integration").font(.caption).foregroundColor(.secondary)
-                    let toolOptions: [(String, String, String)] = [
-                        ("shell",      "terminal.fill",                 "Shell-Befehl"),
-                        ("file",       "doc.fill",                      "Datei lesen/schreiben"),
-                        ("browser",    "globe",                         "Web-Suche/Scraping"),
-                        ("http",       "network",                       "HTTP-Request"),
-                        ("email",      "envelope.fill",                 "E-Mail senden"),
-                        ("sms",        "message.fill",                  "SMS senden"),
-                        ("telegram",   "paperplane.fill",               "Telegram-Nachricht"),
-                        ("slack",      "number",                        "Slack-Nachricht"),
-                        ("github",     "chevron.left.forwardslash.chevron.right", "GitHub API"),
-                        ("notion",     "doc.text.fill",                 "Notion Seite"),
-                        ("calendar",   "calendar",                      "Kalender-Event"),
-                        ("contacts",   "person.2.fill",                 "Kontakte"),
-                        ("webhook",    "antenna.radiowaves.left.and.right", "Webhook aufrufen"),
-                        ("tts",        "speaker.wave.3.fill",           "Text vorlesen"),
-                        ("memory",     "brain.head.profile",            "Gedächtnis"),
-                        ("custom",     "wrench.fill",                   "Benutzerdefiniert"),
-                    ]
-                    let currentTool = node.agentType ?? "custom"
-                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 4) {
-                        ForEach(toolOptions, id: \.0) { (id, icon, label) in
-                            Button(action: { node.agentType = id }) {
-                                HStack(spacing: 4) {
-                                    Image(systemName: icon)
-                                        .font(.system(size: 12.5))
-                                        .frame(width: 16)
-                                    Text(label)
-                                        .font(.system(size: 12.5))
-                                        .lineLimit(1)
-                                    Spacer()
-                                }
-                                .padding(.horizontal, 6).padding(.vertical, 4)
-                                .background(currentTool == id ? Color.koboldEmerald.opacity(0.2) : Color.koboldSurface)
-                                .cornerRadius(4)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 4)
-                                        .stroke(currentTool == id ? Color.koboldEmerald : Color.clear, lineWidth: 1)
-                                )
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                }
+                ToolSelectionGrid(selectedTool: Binding(
+                    get: { node.agentType ?? "shell" },
+                    set: { node.agentType = $0 }
+                ))
             }
 
             // Condition expression
@@ -1484,6 +1481,11 @@ struct NodeInspector: View {
                     }
                     .pickerStyle(.menu)
                 }
+
+                SkillPickerSection(selectedSkill: Binding(
+                    get: { node.skillName ?? "" },
+                    set: { node.skillName = $0.isEmpty ? nil : $0 }
+                ))
 
                 GlassButton(title: "Chat öffnen", icon: "message.fill", isPrimary: true) {
                     onOpenChat()
@@ -1643,5 +1645,191 @@ struct NodeInspector: View {
         .background(Color.red.opacity(0.06))
         .cornerRadius(8)
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.red.opacity(0.15), lineWidth: 0.5))
+    }
+}
+
+// MARK: - Tool Selection Grid (categorized, all 46 tools)
+
+private struct ToolCategory: Identifiable {
+    let id: String
+    let label: String
+    let tools: [(id: String, icon: String, label: String)]
+}
+
+private let allToolCategories: [ToolCategory] = [
+    ToolCategory(id: "basis", label: "Basis", tools: [
+        (id: "shell",       icon: "terminal.fill",                 label: "Shell-Befehl"),
+        (id: "file",        icon: "doc.fill",                      label: "Datei lesen/schreiben"),
+        (id: "http",        icon: "network",                       label: "HTTP-Request"),
+        (id: "browser",     icon: "globe",                         label: "Web-Suche"),
+        (id: "applescript", icon: "applescript",                    label: "AppleScript"),
+    ]),
+    ToolCategory(id: "komm", label: "Kommunikation", tools: [
+        (id: "telegram_send", icon: "paperplane.fill",             label: "Telegram"),
+        (id: "email",         icon: "envelope.fill",               label: "E-Mail"),
+        (id: "sms_send",      icon: "message.fill",                label: "SMS"),
+        (id: "slack_api",     icon: "number",                      label: "Slack"),
+        (id: "whatsapp_api",  icon: "phone.bubble.fill",           label: "WhatsApp"),
+    ]),
+    ToolCategory(id: "apis", label: "APIs & Verbindungen", tools: [
+        (id: "github_api",      icon: "chevron.left.forwardslash.chevron.right", label: "GitHub"),
+        (id: "google_api",      icon: "magnifyingglass",           label: "Google"),
+        (id: "microsoft_api",   icon: "envelope.badge.fill",       label: "Microsoft"),
+        (id: "soundcloud_api",  icon: "waveform",                  label: "SoundCloud"),
+        (id: "notion_api",      icon: "doc.text.fill",             label: "Notion"),
+        (id: "huggingface_api", icon: "cpu",                       label: "HuggingFace"),
+        (id: "reddit_api",      icon: "bubble.left.and.bubble.right.fill", label: "Reddit"),
+        (id: "suno_api",        icon: "music.note",                label: "Suno AI"),
+        (id: "uber_api",        icon: "car.fill",                  label: "Uber"),
+        (id: "lieferando_api",  icon: "takeoutbag.and.cup.and.straw.fill", label: "Lieferando"),
+    ]),
+    ToolCategory(id: "medien", label: "Medien", tools: [
+        (id: "speak",          icon: "speaker.wave.3.fill",        label: "Text vorlesen"),
+        (id: "generate_image", icon: "photo.artframe",             label: "Bild generieren"),
+        (id: "vision_load",    icon: "eye.fill",                   label: "Bild analysieren"),
+        (id: "playwright",     icon: "theatermasks.fill",          label: "Browser-Bot"),
+    ]),
+    ToolCategory(id: "memory", label: "Gedächtnis", tools: [
+        (id: "memory_save",            icon: "brain.head.profile",  label: "Erinnerung speichern"),
+        (id: "memory_recall",          icon: "brain",               label: "Erinnerung abrufen"),
+        (id: "core_memory_append",     icon: "text.badge.plus",     label: "Core Memory +"),
+        (id: "core_memory_replace",    icon: "text.badge.checkmark",label: "Core Memory ersetzen"),
+        (id: "archival_memory_search", icon: "archivebox.fill",     label: "Archiv durchsuchen"),
+    ]),
+    ToolCategory(id: "macos", label: "macOS", tools: [
+        (id: "calendar",       icon: "calendar",                   label: "Kalender"),
+        (id: "contacts",       icon: "person.2.fill",              label: "Kontakte"),
+        (id: "screen_control", icon: "display",                    label: "Bildschirm"),
+        (id: "app_terminal",   icon: "rectangle.topthird.inset.filled", label: "App-Terminal"),
+    ]),
+    ToolCategory(id: "infra", label: "IoT & Infra", tools: [
+        (id: "caldav",   icon: "calendar.badge.clock",             label: "CalDAV"),
+        (id: "mqtt",     icon: "antenna.radiowaves.left.and.right.circle.fill", label: "MQTT"),
+        (id: "rss",      icon: "dot.radiowaves.up.forward",       label: "RSS-Feed"),
+        (id: "webhook",  icon: "antenna.radiowaves.left.and.right", label: "Webhook"),
+        (id: "secrets",  icon: "key.fill",                         label: "Secrets"),
+    ]),
+    ToolCategory(id: "system", label: "System", tools: [
+        (id: "notify_user",      icon: "bell.fill",                label: "Benachrichtigung"),
+        (id: "checklist",        icon: "checklist",                label: "Checkliste"),
+        (id: "task_manage",      icon: "list.bullet.rectangle",    label: "Task-Verwaltung"),
+        (id: "workflow_manage",  icon: "arrow.triangle.branch",    label: "Workflow-Verwaltung"),
+        (id: "settings",         icon: "gearshape.fill",           label: "Einstellungen lesen"),
+    ]),
+    ToolCategory(id: "agenten", label: "Agenten", tools: [
+        (id: "call_subordinate",  icon: "person.badge.plus",       label: "Sub-Agent"),
+        (id: "delegate_parallel", icon: "person.3.sequence.fill",  label: "Parallel delegieren"),
+        (id: "skill_write",       icon: "doc.badge.gearshape",     label: "Skill erstellen"),
+    ]),
+]
+
+struct ToolSelectionGrid: View {
+    @Binding var selectedTool: String
+    @State private var searchText = ""
+
+    private var filteredCategories: [ToolCategory] {
+        if searchText.isEmpty { return allToolCategories }
+        let q = searchText.lowercased()
+        return allToolCategories.compactMap { cat in
+            let filtered = cat.tools.filter {
+                $0.id.lowercased().contains(q) || $0.label.lowercased().contains(q)
+            }
+            return filtered.isEmpty ? nil : ToolCategory(id: cat.id, label: cat.label, tools: filtered)
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Tool / Integration").font(.caption).foregroundColor(.secondary)
+
+            // Search field
+            HStack(spacing: 4) {
+                Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundColor(.secondary)
+                TextField("Suchen...", text: $searchText)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12.5))
+                if !searchText.isEmpty {
+                    Button(action: { searchText = "" }) {
+                        Image(systemName: "xmark.circle.fill").font(.system(size: 11)).foregroundColor(.secondary)
+                    }.buttonStyle(.plain)
+                }
+            }
+            .padding(5)
+            .background(Color.black.opacity(0.2))
+            .cornerRadius(5)
+
+            // Categorized grid
+            ScrollView(.vertical, showsIndicators: true) {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(filteredCategories) { cat in
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(cat.label)
+                                .font(.system(size: 10.5, weight: .semibold))
+                                .foregroundColor(.secondary)
+                                .textCase(.uppercase)
+
+                            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 3) {
+                                ForEach(cat.tools, id: \.id) { tool in
+                                    Button(action: { selectedTool = tool.id }) {
+                                        HStack(spacing: 4) {
+                                            Image(systemName: tool.icon)
+                                                .font(.system(size: 11.5))
+                                                .frame(width: 15)
+                                            Text(tool.label)
+                                                .font(.system(size: 11.5))
+                                                .lineLimit(1)
+                                            Spacer()
+                                        }
+                                        .padding(.horizontal, 5).padding(.vertical, 3)
+                                        .background(selectedTool == tool.id ? Color.koboldEmerald.opacity(0.2) : Color.koboldSurface)
+                                        .cornerRadius(4)
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 4)
+                                                .stroke(selectedTool == tool.id ? Color.koboldEmerald : Color.clear, lineWidth: 1)
+                                        )
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .frame(maxHeight: 280)
+        }
+    }
+}
+
+// MARK: - Skill Picker Section (for Agent nodes)
+
+struct SkillPickerSection: View {
+    @Binding var selectedSkill: String
+    @State private var skills: [Skill] = []
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Fähigkeit").font(.caption).foregroundColor(.secondary)
+            Picker("", selection: $selectedSkill) {
+                Text("Keine").tag("")
+                ForEach(skills) { skill in
+                    Text(skill.name.replacingOccurrences(of: "_", with: " ").capitalized)
+                        .tag(skill.name)
+                }
+            }
+            .pickerStyle(.menu)
+
+            if !selectedSkill.isEmpty,
+               let skill = skills.first(where: { $0.name == selectedSkill }) {
+                Text(String(skill.content.prefix(120)) + "...")
+                    .font(.system(size: 11)).foregroundColor(.secondary)
+                    .lineLimit(3)
+                    .padding(6)
+                    .background(Color.black.opacity(0.15))
+                    .cornerRadius(4)
+            }
+        }
+        .task {
+            skills = await SkillLoader.shared.loadSkills().filter { $0.isEnabled }
+        }
     }
 }

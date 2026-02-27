@@ -194,20 +194,8 @@ struct AgentsView: View {
                     }
                 }
 
-                // Tool Routing Map (einklappbar)
-                DisclosureGroup(isExpanded: $toolRoutingExpanded) {
-                    toolRoutingSection
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "arrow.triangle.swap")
-                            .font(.system(size: 14.5))
-                            .foregroundColor(.koboldEmerald)
-                        Text("Tool-Routing")
-                            .font(.system(size: 16.5, weight: .semibold))
-                        Text("\(Self.toolRoutingDefaults.count) Tools")
-                            .font(.caption).foregroundColor(.secondary)
-                    }
-                }
+                // Tool Routing Map (GlassCard wie Agent-Karten)
+                toolRoutingCard
             }
             .padding(24)
         }
@@ -368,90 +356,125 @@ struct AgentsView: View {
         saveToolRouting(map)
     }
 
-    var toolRoutingSection: some View {
+    var toolRoutingCard: some View {
         GlassCard(padding: 0, cornerRadius: 14) {
-            VStack(alignment: .leading, spacing: 0) {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        Label("Tool-Routing", systemImage: "arrow.triangle.swap")
-                            .font(.system(size: 16.5, weight: .semibold))
-                        Spacer()
-                        Text("\(Self.toolRoutingDefaults.count) Tools")
-                            .font(.caption).foregroundColor(.secondary)
+            VStack(spacing: 0) {
+                // Header (klickbar, wie AgentConfigCard)
+                Button(action: {
+                    withAnimation(.spring(response: 0.3)) {
+                        toolRoutingExpanded.toggle()
                     }
-                    Text("Bestimmt, welche Tools dem AgentLoop pro Agent zur Verfügung stehen. Deaktivierte Tools werden aus dem System-Prompt entfernt und können nicht aufgerufen werden.")
-                        .font(.system(size: 12, weight: .regular))
-                        .foregroundColor(.secondary)
-                        .lineLimit(2)
-                }
-                .padding(14)
-
-                Divider()
-
-                // Header
-                HStack(spacing: 12) {
-                    Text("Tool")
-                        .font(.system(size: 12.5, weight: .bold))
-                        .frame(width: 130, alignment: .leading)
-                    // Agent profile name headers
-                    HStack(spacing: 4) {
-                        ForEach(store.configs, id: \.id) { config in
-                            Text(shortProfileName(config.id))
-                                .font(.system(size: 11, weight: .bold))
-                                .foregroundColor(.secondary)
-                                .frame(width: 48)
-                        }
-                    }
-                    Text("Beschreibung")
-                        .font(.system(size: 12.5, weight: .bold))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .padding(.horizontal, 14).padding(.vertical, 6)
-                .background(Color.white.opacity(0.03))
-
-                ForEach(Self.toolRoutingDefaults, id: \.tool) { item in
+                }) {
                     HStack(spacing: 12) {
-                        // Icon (centered) + Role
-                        HStack(spacing: 8) {
-                            Image(systemName: item.icon)
-                                .font(.system(size: 13))
-                                .foregroundColor(.koboldEmerald)
-                                .frame(width: 20, alignment: .center)
-                            Text(item.role)
-                                .font(.system(size: 13.5, weight: .medium))
+                        Image(systemName: "arrow.triangle.swap")
+                            .font(.title2)
+                            .foregroundColor(.koboldEmerald)
+                            .frame(width: 36, height: 36)
+                            .background(Color.koboldSurface)
+                            .cornerRadius(10)
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Tool-Routing")
+                                .font(.system(size: 16.5, weight: .semibold))
+                            Text("Welche Tools stehen welchem Sub-Agenten zur Verfügung")
+                                .font(.caption).foregroundColor(.secondary)
                                 .lineLimit(1)
                         }
-                        .frame(width: 130, alignment: .leading)
 
-                        // Agent toggle badges — click to enable/disable
+                        Spacer()
+
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(Color.koboldEmerald)
+                                .frame(width: 6, height: 6)
+                            Text("\(Self.toolRoutingDefaults.count) Tools")
+                                .font(.caption.monospaced())
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(.horizontal, 8).padding(.vertical, 4)
+                        .background(Color.koboldSurface)
+                        .cornerRadius(6)
+
+                        Image(systemName: toolRoutingExpanded ? "chevron.up" : "chevron.down")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(14)
+                }
+                .buttonStyle(.plain)
+
+                // Content (eingeklappt/ausgeklappt)
+                if toolRoutingExpanded {
+                    Divider().padding(.horizontal, 14)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Deaktivierte Tools werden aus dem System-Prompt entfernt. General hat immer Zugriff auf alle Tools als Orchestrator.")
+                            .font(.system(size: 12))
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.horizontal, 14).padding(.top, 10).padding(.bottom, 4)
+
+                    // Table header
+                    HStack(spacing: 12) {
+                        Text("Tool")
+                            .font(.system(size: 12.5, weight: .bold))
+                            .frame(width: 130, alignment: .leading)
                         HStack(spacing: 4) {
                             ForEach(store.configs, id: \.id) { config in
-                                let enabled = isAgentEnabled(tool: item.tool, agent: config.id)
-                                Button(action: { toggleAgent(tool: item.tool, agent: config.id) }) {
-                                    Text(config.emoji)
-                                        .font(.system(size: 14.5))
-                                        .frame(width: 48, height: 24)
-                                        .background(RoundedRectangle(cornerRadius: 6)
-                                            .fill(enabled ? Color.koboldEmerald.opacity(0.25) : Color.white.opacity(0.04)))
-                                        .overlay(RoundedRectangle(cornerRadius: 6)
-                                            .stroke(enabled ? Color.koboldEmerald.opacity(0.5) : Color.clear, lineWidth: 1))
-                                        .saturation(enabled ? 1.0 : 0.0)
-                                        .opacity(enabled ? 1.0 : 0.3)
-                                }
-                                .buttonStyle(.plain)
-                                .help(enabled ? "\(config.displayName): aktiv" : "\(config.displayName): deaktiviert")
+                                Text(shortProfileName(config.id))
+                                    .font(.system(size: 11, weight: .bold))
+                                    .foregroundColor(.secondary)
+                                    .frame(width: 48)
                             }
                         }
-
-                        // Beschreibung — fills remaining space
-                        Text(item.reason)
-                            .font(.system(size: 12.5))
-                            .foregroundColor(.secondary)
+                        Text("Beschreibung")
+                            .font(.system(size: 12.5, weight: .bold))
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .lineLimit(2)
                     }
-                    .padding(.horizontal, 14).padding(.vertical, 5)
-                    Divider().padding(.leading, 14)
+                    .padding(.horizontal, 14).padding(.vertical, 6)
+                    .background(Color.white.opacity(0.03))
+
+                    ForEach(Self.toolRoutingDefaults, id: \.tool) { item in
+                        HStack(spacing: 12) {
+                            HStack(spacing: 8) {
+                                Image(systemName: item.icon)
+                                    .font(.system(size: 13))
+                                    .foregroundColor(.koboldEmerald)
+                                    .frame(width: 20, alignment: .center)
+                                Text(item.role)
+                                    .font(.system(size: 13.5, weight: .medium))
+                                    .lineLimit(1)
+                            }
+                            .frame(width: 130, alignment: .leading)
+
+                            HStack(spacing: 4) {
+                                ForEach(store.configs, id: \.id) { config in
+                                    let enabled = isAgentEnabled(tool: item.tool, agent: config.id)
+                                    Button(action: { toggleAgent(tool: item.tool, agent: config.id) }) {
+                                        Text(config.emoji)
+                                            .font(.system(size: 14.5))
+                                            .frame(width: 48, height: 24)
+                                            .background(RoundedRectangle(cornerRadius: 6)
+                                                .fill(enabled ? Color.koboldEmerald.opacity(0.25) : Color.white.opacity(0.04)))
+                                            .overlay(RoundedRectangle(cornerRadius: 6)
+                                                .stroke(enabled ? Color.koboldEmerald.opacity(0.5) : Color.clear, lineWidth: 1))
+                                            .saturation(enabled ? 1.0 : 0.0)
+                                            .opacity(enabled ? 1.0 : 0.3)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .help(enabled ? "\(config.displayName): aktiv" : "\(config.displayName): deaktiviert")
+                                }
+                            }
+
+                            Text(item.reason)
+                                .font(.system(size: 12.5))
+                                .foregroundColor(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .lineLimit(2)
+                        }
+                        .padding(.horizontal, 14).padding(.vertical, 5)
+                        Divider().padding(.leading, 14)
+                    }
                 }
             }
         }

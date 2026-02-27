@@ -10,7 +10,7 @@ struct CloverPatternBackground: View {
     var color: Color = .koboldEmerald
     var opacity: Double = 0.025
     var size: CGFloat = 28
-    var spacing: CGFloat = 60
+    var spacing: CGFloat = 80
 
     var body: some View {
         Canvas { context, canvasSize in
@@ -90,7 +90,7 @@ struct GlassCard<Content: View>: View {
         content
             .padding(padding)
             .background(GlassBackground(cornerRadius: cornerRadius))
-            .shadow(color: .black.opacity(0.2), radius: 8, x: 0, y: 4)
+            .shadow(color: .black.opacity(0.15), radius: 4, x: 0, y: 2)
     }
 }
 
@@ -507,7 +507,7 @@ struct FuturisticBox<Content: View>: View {
                     )
             }
         )
-        .shadow(color: accentColor.opacity(0.08), radius: 8, x: 0, y: 2)
+        .shadow(color: accentColor.opacity(0.06), radius: 4, x: 0, y: 1)
     }
 }
 
@@ -1873,7 +1873,7 @@ struct AgentChecklistOverlay: View {
                 .fill(Color.koboldPanel.opacity(0.95))
                 .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.koboldEmerald.opacity(0.3), lineWidth: 1))
         )
-        .shadow(color: .black.opacity(0.2), radius: 8, x: 0, y: -2)
+        .shadow(color: .black.opacity(0.15), radius: 4, x: 0, y: -1)
         .padding(.horizontal, 16).padding(.bottom, 4)
         .transition(.move(edge: .bottom).combined(with: .opacity))
     }

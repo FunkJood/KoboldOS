@@ -6,6 +6,13 @@ import Network
 final class WebAppServer: @unchecked Sendable {
     static let shared = WebAppServer()
 
+    /// WebGUI files are stored here so the agent can modify them via file tool
+    static let webGUIDir: String = {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("KoboldOS").appendingPathComponent("webgui").path
+        return base
+    }()
+
     private let lock = NSLock()
     private var listener: NWListener?
     private var _isRunning = false
@@ -44,12 +51,37 @@ final class WebAppServer: @unchecked Sendable {
         }
     }
 
+    /// Current WebGUI version — bump when HTML changes to auto-update on-disk copy
+    private static let webGUIVersion = "v4"
+
+    /// Write default index.html to disk if not present or outdated (agent can then edit it)
+    func ensureWebGUIFiles() {
+        let fm = FileManager.default
+        let dir = Self.webGUIDir
+        if !fm.fileExists(atPath: dir) {
+            try? fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        }
+        let indexPath = (dir as NSString).appendingPathComponent("index.html")
+        let html = Self.buildHTML()
+        let versionTag = "<!-- KoboldOS WebGUI \(Self.webGUIVersion) -->"
+        if let existing = try? String(contentsOfFile: indexPath, encoding: .utf8) {
+            if !existing.contains(versionTag) {
+                try? html.write(toFile: indexPath, atomically: true, encoding: .utf8)
+            }
+        } else {
+            try? html.write(toFile: indexPath, atomically: true, encoding: .utf8)
+        }
+    }
+
     func start(port: Int, daemonPort: Int, daemonToken: String, username: String, password: String) {
         lock.lock()
         guard !_isRunning else { lock.unlock(); return }
         let cfg = WebAppConfig(port: port, daemonPort: daemonPort, daemonToken: daemonToken, username: username, password: password)
         config = cfg
         lock.unlock()
+
+        // Write default WebGUI files to disk on first start
+        ensureWebGUIFiles()
 
         do {
             let params = NWParameters.tcp
@@ -228,8 +260,8 @@ final class WebAppServer: @unchecked Sendable {
         } else if path.hasPrefix("/api/") {
             proxyToDaemon(method: method, path: String(path.dropFirst(4)), headers: headers, raw: raw, conn: conn, config: config)
         } else {
-            let resp = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-            conn.send(content: resp.data(using: .utf8), completion: .contentProcessed { _ in conn.cancel() })
+            // Try serving static file from webgui directory
+            serveStaticFile(path: path, conn: conn)
         }
     }
 
@@ -268,18 +300,83 @@ final class WebAppServer: @unchecked Sendable {
         }.resume()
     }
 
-    // MARK: - Serve HTML
+    // MARK: - Serve HTML (from disk, fallback to inline)
 
     private func serveHTML(conn: NWConnection) {
-        let html = Self.buildHTML()
-        let resp = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: \(html.utf8.count)\r\nConnection: close\r\n\r\n\(html)"
+        let indexPath = (Self.webGUIDir as NSString).appendingPathComponent("index.html")
+        let html: String
+        if let diskHTML = try? String(contentsOfFile: indexPath, encoding: .utf8) {
+            html = diskHTML
+        } else {
+            html = Self.buildHTML()
+        }
+        let body = html.data(using: .utf8) ?? Data()
+        let resp = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: \(body.count)\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n"
+        var fullResp = resp.data(using: .utf8)!
+        fullResp.append(body)
+        conn.send(content: fullResp, completion: .contentProcessed { _ in conn.cancel() })
+    }
+
+    // MARK: - Serve Static Files from webgui/
+
+    private func serveStaticFile(path: String, conn: NWConnection) {
+        // Sanitize path to prevent directory traversal
+        let cleaned = path.replacingOccurrences(of: "..", with: "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard !cleaned.isEmpty else {
+            send404(conn: conn)
+            return
+        }
+
+        let filePath = (Self.webGUIDir as NSString).appendingPathComponent(cleaned)
+
+        // Ensure resolved path stays within webgui dir
+        let resolved = (filePath as NSString).standardizingPath
+        guard resolved.hasPrefix(Self.webGUIDir) else {
+            send404(conn: conn)
+            return
+        }
+
+        guard let data = FileManager.default.contents(atPath: filePath) else {
+            send404(conn: conn)
+            return
+        }
+
+        let mime = Self.mimeType(for: filePath)
+        let resp = "HTTP/1.1 200 OK\r\nContent-Type: \(mime)\r\nContent-Length: \(data.count)\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n"
+        var fullResp = resp.data(using: .utf8)!
+        fullResp.append(data)
+        conn.send(content: fullResp, completion: .contentProcessed { _ in conn.cancel() })
+    }
+
+    private func send404(conn: NWConnection) {
+        let resp = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
         conn.send(content: resp.data(using: .utf8), completion: .contentProcessed { _ in conn.cancel() })
+    }
+
+    private static func mimeType(for path: String) -> String {
+        let ext = (path as NSString).pathExtension.lowercased()
+        switch ext {
+        case "html", "htm": return "text/html; charset=utf-8"
+        case "css":         return "text/css; charset=utf-8"
+        case "js":          return "application/javascript; charset=utf-8"
+        case "json":        return "application/json"
+        case "png":         return "image/png"
+        case "jpg", "jpeg": return "image/jpeg"
+        case "gif":         return "image/gif"
+        case "svg":         return "image/svg+xml"
+        case "ico":         return "image/x-icon"
+        case "woff2":       return "font/woff2"
+        case "woff":        return "font/woff"
+        case "ttf":         return "font/ttf"
+        default:            return "application/octet-stream"
+        }
     }
 
     // MARK: - Full HTML Template (Apple-inspired redesign)
 
     private static func buildHTML() -> String {
         return """
+        <!-- KoboldOS WebGUI v4 -->
         <!DOCTYPE html>
         <html lang="de">
         <head>
@@ -291,23 +388,23 @@ final class WebAppServer: @unchecked Sendable {
         <script src="https://unpkg.com/lucide@latest"></script>
         <style>
         :root {
-          --bg: #000000;
-          --bg-primary: #1c1c1e;
-          --bg-secondary: #2c2c2e;
-          --bg-tertiary: #3a3a3c;
-          --bg-elevated: rgba(44,44,46,0.72);
+          --bg: #111316;
+          --bg-primary: #171a1c;
+          --bg-secondary: #212429;
+          --bg-tertiary: #2a2d33;
+          --bg-elevated: rgba(23,26,28,0.85);
           --fill: rgba(120,120,128,0.2);
           --fill-secondary: rgba(120,120,128,0.16);
-          --separator: rgba(84,84,88,0.65);
+          --separator: rgba(255,255,255,0.08);
           --text: #ffffff;
           --text-secondary: rgba(235,235,245,0.6);
           --text-tertiary: rgba(235,235,245,0.3);
-          --accent: #0a84ff;
-          --accent-secondary: #5e5ce6;
-          --green: #30d158;
-          --orange: #ff9f0a;
-          --red: #ff453a;
-          --teal: #64d2ff;
+          --accent: #20d189;
+          --accent-secondary: #ffc738;
+          --green: #20d189;
+          --orange: #ffc738;
+          --red: #f24040;
+          --teal: #33bfea;
           --pink: #ff375f;
           --purple: #bf5af2;
           --radius: 12px;
@@ -401,6 +498,55 @@ final class WebAppServer: @unchecked Sendable {
         .glass:hover { border-color: rgba(120,120,128,0.4); }
         .glass-title { font-size: 13px; font-weight: 600; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
         .glass-title i { width: 16px; height: 16px; color: var(--accent); }
+
+        /* ─── FuturisticBox (native match) ─── */
+        .fbox {
+          padding: 14px; border-radius: 12px;
+          background: var(--bg-primary);
+          border: 0.8px solid rgba(255,255,255,0.06);
+          position: relative; overflow: hidden;
+          transition: var(--transition); margin-bottom: 16px;
+        }
+        .fbox::before {
+          content: ''; position: absolute; inset: 0;
+          border-radius: 12px; pointer-events: none;
+        }
+        .fbox:hover { border-color: rgba(255,255,255,0.12); }
+        .fbox.emerald { border-color: rgba(33,209,137,0.2); box-shadow: 0 1px 6px rgba(33,209,137,0.06); }
+        .fbox.emerald::before { background: linear-gradient(135deg, rgba(33,209,137,0.04), transparent 50%); }
+        .fbox.gold { border-color: rgba(255,199,56,0.2); box-shadow: 0 1px 6px rgba(255,199,56,0.06); }
+        .fbox.gold::before { background: linear-gradient(135deg, rgba(255,199,56,0.04), transparent 50%); }
+        .fbox.cyan { border-color: rgba(51,191,234,0.2); box-shadow: 0 1px 6px rgba(51,191,234,0.06); }
+        .fbox.cyan::before { background: linear-gradient(135deg, rgba(51,191,234,0.04), transparent 50%); }
+        .fbox.redbox { border-color: rgba(242,64,64,0.2); box-shadow: 0 1px 6px rgba(242,64,64,0.06); }
+        .fbox.redbox::before { background: linear-gradient(135deg, rgba(242,64,64,0.04), transparent 50%); }
+        .fbox-header {
+          display: flex; align-items: center; gap: 8px;
+          font-size: 15px; font-weight: 700;
+          padding-bottom: 10px; margin-bottom: 12px;
+          position: relative;
+        }
+        .fbox-header::after {
+          content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: 1px;
+          background: linear-gradient(to right, rgba(255,255,255,0.1), transparent);
+        }
+        .fbox.emerald .fbox-header::after { background: linear-gradient(to right, rgba(33,209,137,0.6), rgba(33,209,137,0.1), transparent); }
+        .fbox.gold .fbox-header::after { background: linear-gradient(to right, rgba(255,199,56,0.6), rgba(255,199,56,0.1), transparent); }
+        .fbox.cyan .fbox-header::after { background: linear-gradient(to right, rgba(51,191,234,0.6), rgba(51,191,234,0.1), transparent); }
+        .fbox.redbox .fbox-header::after { background: linear-gradient(to right, rgba(242,64,64,0.6), rgba(242,64,64,0.1), transparent); }
+        .fbox-header i { width: 16px; height: 16px; }
+        .fbox.emerald .fbox-header i { color: #20d189; filter: drop-shadow(0 0 4px rgba(33,209,137,0.5)); }
+        .fbox.gold .fbox-header i { color: #ffc738; filter: drop-shadow(0 0 4px rgba(255,199,56,0.5)); }
+        .fbox.cyan .fbox-header i { color: #33bfea; filter: drop-shadow(0 0 4px rgba(51,191,234,0.5)); }
+        .fbox.redbox .fbox-header i { color: #f24040; filter: drop-shadow(0 0 4px rgba(242,64,64,0.5)); }
+        .fbox .inner-block {
+          padding: 12px 0; border-bottom: 0.5px solid var(--separator);
+        }
+        .fbox .inner-block:last-child { border-bottom: none; }
+        .fbox .inner-label {
+          font-size: 13px; font-weight: 600; margin-bottom: 8px;
+          display: flex; align-items: center; gap: 6px;
+        }
 
         /* ─── Chat ─── */
         .chat-container { flex: 1; display: flex; flex-direction: column; height: 100%; }
@@ -818,21 +964,35 @@ final class WebAppServer: @unchecked Sendable {
           <div class="tab" id="tab-settings">
             <div class="page-header"><h2>Einstellungen</h2></div>
             <div class="page-body">
-              <div class="settings-section">
-                <h3>System</h3>
-                <div class="glass">
-                  <div class="stats-grid" id="settingsMetrics"></div>
+              <div class="fbox emerald">
+                <div class="fbox-header"><i data-lucide="activity"></i>System</div>
+                <div class="stats-grid" id="settingsMetrics"></div>
+                <div style="margin-top:10px;display:flex;gap:8px">
+                  <button class="btn btn-secondary btn-sm" onclick="resetMetrics()"><i data-lucide="rotate-ccw"></i>Zurücksetzen</button>
                 </div>
               </div>
-              <div class="settings-section">
-                <h3>Modell</h3>
+              <div class="fbox gold">
+                <div class="fbox-header"><i data-lucide="cpu"></i>Modell</div>
                 <div id="modelList"></div>
               </div>
-              <div class="settings-section">
-                <h3>Daemon</h3>
-                <div class="glass" id="daemonInfo">
-                  <div style="color:var(--text-secondary);font-size:13px">Lade...</div>
-                </div>
+              <div class="fbox emerald">
+                <div class="fbox-header"><i data-lucide="server"></i>Daemon</div>
+                <div id="daemonInfo" style="font-size:13px;color:var(--text-secondary)">Lade...</div>
+              </div>
+              <div class="fbox emerald">
+                <div class="fbox-header"><i data-lucide="brain"></i>Core Memory</div>
+                <div id="coreMemoryArea" style="font-size:13px;color:var(--text-secondary)">Lade...</div>
+              </div>
+              <div class="fbox gold">
+                <div class="fbox-header"><i data-lucide="scroll-text"></i>Aktivitäts-Log</div>
+                <div id="activityLog" style="max-height:300px;overflow-y:auto;font-size:13px;color:var(--text-secondary)">Lade...</div>
+              </div>
+              <div class="fbox gold">
+                <div class="fbox-header"><i data-lucide="info"></i>Über</div>
+                <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="aboutVersion" style="color:var(--orange)">—</span></div>
+                <div class="settings-row"><span class="settings-label">Backend</span><span class="settings-value">Ollama (lokal)</span></div>
+                <div class="settings-row"><span class="settings-label">Plattform</span><span class="settings-value">macOS 14+ (Sonoma)</span></div>
+                <div class="settings-row"><span class="settings-label">Engine</span><span class="settings-value">Swift 6 · SwiftUI</span></div>
               </div>
             </div>
           </div>
@@ -1090,18 +1250,19 @@ final class WebAppServer: @unchecked Sendable {
           try{
             const[metrics,health,models]=await Promise.all([api('/metrics'),api('/health'),api('/models')]);
             document.getElementById('settingsMetrics').innerHTML=
-              statCard('Anfragen',metrics.chat_requests||0,'accent')+
-              statCard('Tool-Aufrufe',metrics.tool_calls||0,'green')+
+              statCard('Anfragen',metrics.chat_requests||0,'green')+
+              statCard('Tool-Aufrufe',metrics.tool_calls||0,'accent')+
               statCard('Tokens',metrics.tokens_total||0,'orange')+
               statCard('Fehler',metrics.errors||0,'red')+
-              statCard('Uptime',Math.round((metrics.uptime||0)/60)+' min','accent')+
-              statCard('Latenz',Math.round(metrics.avg_latency_ms||0)+' ms','green');
+              statCard('Uptime',Math.round((metrics.uptime||0)/60)+' min','green')+
+              statCard('Latenz',Math.round(metrics.avg_latency_ms||0)+' ms','accent');
 
             document.getElementById('daemonInfo').innerHTML=
               '<div class="settings-row"><span class="settings-label">Version</span><span class="settings-value">'+(health.version||'?')+'</span></div>'+
               '<div class="settings-row"><span class="settings-label">PID</span><span class="settings-value">'+(health.pid||'?')+'</span></div>'+
               '<div class="settings-row"><span class="settings-label">Status</span><span class="settings-value" style="color:var(--green)">Online</span></div>'+
               '<div class="settings-row"><span class="settings-label">Modell</span><span class="settings-value">'+(metrics.model||'?')+'</span></div>';
+            document.getElementById('aboutVersion').textContent='Alpha '+(health.version||'v0.3.4');
 
             const modelList=document.getElementById('modelList');
             const available=models.models||[];
@@ -1123,6 +1284,8 @@ final class WebAppServer: @unchecked Sendable {
             document.getElementById('settingsMetrics').innerHTML='<div style="color:var(--red);font-size:13px;grid-column:1/-1">Daemon nicht erreichbar</div>';
             document.getElementById('daemonInfo').innerHTML='<div style="color:var(--red);font-size:13px">Offline</div>';
           }
+          loadCoreMemory();
+          loadActivityLog();
         }
 
         function statCard(label,val,color){
@@ -1132,6 +1295,73 @@ final class WebAppServer: @unchecked Sendable {
         async function setModel(name){
           await api('/model/set',{method:'POST',body:JSON.stringify({model:name})});
           loadSettings();
+        }
+
+        // ─── Core Memory ───
+        async function loadCoreMemory(){
+          try{
+            const data=await api('/memory');
+            const area=document.getElementById('coreMemoryArea');
+            const blocks=data.blocks||data.core_memory||{};
+            const keys=Object.keys(blocks);
+            if(!keys.length){area.innerHTML='<div class="glass" style="color:var(--text-secondary);font-size:13px">Kein Core Memory vorhanden</div>';return}
+            area.innerHTML=keys.map((label,i)=>{
+              const content=blocks[label]||'';
+              const safeLabel=label.replace(/'/g,"\\\\'");
+              const isLast=i===keys.length-1;
+              return '<div class="inner-block" style="'+(isLast?'border-bottom:none;padding-bottom:0':'')+'">'+
+                '<div class="inner-label" style="color:var(--green)"><i data-lucide="bookmark" style="width:14px;height:14px"></i>'+esc(label)+'</div>'+
+                '<textarea class="form-input" id="cmem_'+esc(label)+'" style="min-height:80px;resize:vertical;margin:0;background:var(--bg-secondary)">'+esc(content)+'</textarea>'+
+                '<div style="margin-top:8px;text-align:right"><button class="btn btn-primary btn-sm" onclick="saveCoreMemBlock(\\''+safeLabel+'\\')"><i data-lucide="save"></i>Speichern</button></div>'+
+                '</div>';
+            }).join('');
+            lucide.createIcons();
+          }catch(e){
+            document.getElementById('coreMemoryArea').innerHTML='<div class="glass" style="color:var(--red);font-size:13px">Fehler: '+esc(e.message)+'</div>';
+          }
+        }
+
+        async function saveCoreMemBlock(label){
+          const el=document.getElementById('cmem_'+label);
+          if(!el)return;
+          try{
+            await api('/memory/update',{method:'POST',body:JSON.stringify({label:label,content:el.value})});
+            const parent=el.closest('.glass');
+            const btn=parent?parent.querySelector('.btn-primary'):null;
+            if(btn){const old=btn.innerHTML;btn.innerHTML='\\u2713 Gespeichert';btn.style.background='var(--green)';setTimeout(()=>{btn.innerHTML=old;btn.style.background='';lucide.createIcons()},1500)}
+          }catch(e){alert('Fehler beim Speichern: '+e.message)}
+        }
+
+        // ─── Activity Log ───
+        async function loadActivityLog(){
+          try{
+            const data=await api('/trace');
+            const log=document.getElementById('activityLog');
+            const events=data.events||data.trace||[];
+            if(!events.length){log.innerHTML='<div style="color:var(--text-secondary);font-size:13px">Keine Aktivitäten</div>';return}
+            const recent=events.slice(-30).reverse();
+            log.innerHTML=recent.map(ev=>{
+              const time=ev.timestamp?new Date(ev.timestamp).toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit',second:'2-digit'}):'';
+              const type=ev.type||ev.event||'event';
+              const detail=ev.detail||ev.message||ev.tool||'';
+              const color=type.includes('error')?'var(--red)':type.includes('tool')?'var(--green)':'var(--text-secondary)';
+              return '<div style="padding:6px 0;border-bottom:0.5px solid var(--separator);font-size:12px;display:flex;gap:10px;align-items:baseline">'+
+                '<span style="color:var(--text-tertiary);font-family:SF Mono,monospace;font-size:10px;flex-shrink:0">'+time+'</span>'+
+                '<span style="color:'+color+';font-weight:600;min-width:60px">'+esc(type)+'</span>'+
+                '<span style="color:var(--text-secondary);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(detail)+'</span>'+
+                '</div>';
+            }).join('');
+          }catch(e){
+            document.getElementById('activityLog').innerHTML='<div style="color:var(--red);font-size:13px">Fehler: '+esc(e.message)+'</div>';
+          }
+        }
+
+        // ─── Metrics Reset ───
+        async function resetMetrics(){
+          try{
+            await api('/metrics/reset',{method:'POST'});
+            loadSettings();
+          }catch(e){alert('Fehler: '+e.message)}
         }
         </script>
         </body>

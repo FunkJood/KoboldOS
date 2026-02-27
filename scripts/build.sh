@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Build script for KoboldOS
-VERSION="0.3.3"
+VERSION="0.3.5"
 echo "Building KoboldOS v${VERSION}..."
 
 # Clean previous builds
@@ -144,6 +144,9 @@ if command -v hdiutil &> /dev/null; then
         cp dist/CHANGELOG.txt "$DMG_STAGING/CHANGELOG.txt"
     elif [ -f "CHANGELOG.md" ]; then
         cp CHANGELOG.md "$DMG_STAGING/CHANGELOG.txt"
+    fi
+    if [ -f "dist/TUTORIAL.txt" ]; then
+        cp dist/TUTORIAL.txt "$DMG_STAGING/TUTORIAL.txt"
     fi
 
     # 4. Create DMG

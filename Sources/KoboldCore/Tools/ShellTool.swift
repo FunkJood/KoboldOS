@@ -22,7 +22,7 @@ public struct ShellTool: Tool, Sendable {
                 ),
                 "timeout": ToolSchemaProperty(
                     type: "string",
-                    description: "Timeout in seconds (max 120, default 30)"
+                    description: "Timeout in seconds (max 300, default 30)"
                 )
             ],
             required: ["command"]
@@ -136,7 +136,7 @@ public struct ShellTool: Tool, Sendable {
         let workdir = arguments["workdir"] ?? NSTemporaryDirectory()
         let timeoutStr = arguments["timeout"] ?? "30"
         let hardCap = Double(UserDefaults.standard.integer(forKey: "kobold.shell.timeout"))
-        let maxTimeout = hardCap > 0 ? hardCap : 60.0
+        let maxTimeout = hardCap > 0 ? hardCap : 300.0
         let timeout = min(Double(timeoutStr) ?? 60.0, maxTimeout)
 
         try validateCommand(command)

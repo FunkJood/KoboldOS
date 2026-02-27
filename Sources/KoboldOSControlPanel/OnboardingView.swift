@@ -286,31 +286,30 @@ struct OnboardingView: View {
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
 
-            // Egg with glow
+            // Egg with glow — single animation for performance
             ZStack {
-                // Glow
+                // Static glow
                 Ellipse()
-                    .fill(Color(hex: "#00C46A").opacity(0.15))
+                    .fill(Color(hex: "#00C46A").opacity(0.12))
                     .frame(width: 140, height: 100)
                     .blur(radius: 20)
-                    .scaleEffect(isAnimating ? 1.3 : 0.9)
-                    .animation(.easeInOut(duration: 1.5).repeatForever(autoreverses: true), value: isAnimating)
+                    .scaleEffect(isAnimating ? 1.1 : 0.95)
+                    .animation(.easeInOut(duration: 1.5), value: isAnimating)
 
-                // Egg
-                Text("🥚")
+                // Egg with gentle wobble
+                Text("\u{1F95A}")
                     .font(.system(size: 80))
                     .rotationEffect(.degrees(isAnimating ? -3 : 3))
-                    .animation(.easeInOut(duration: 0.4).repeatForever(autoreverses: true), value: isAnimating)
                     .scaleEffect(isAnimating ? 1.05 : 0.95)
-                    .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: isAnimating)
+                    .animation(.easeInOut(duration: 0.8), value: isAnimating)
             }
             .frame(height: 140)
 
             Text(lang.obSomethingStirs)
                 .font(.caption)
                 .foregroundColor(Color(hex: "#00C46A"))
-                .opacity(isAnimating ? 1 : 0.4)
-                .animation(.easeInOut(duration: 1.0).repeatForever(autoreverses: true), value: isAnimating)
+                .opacity(isAnimating ? 1 : 0.5)
+                .animation(.easeInOut(duration: 1.0), value: isAnimating)
 
             GlassButton(title: lang.obBeginHatching, icon: "sparkles", isPrimary: true) {
                 withAnimation(.spring()) { step = .name }
@@ -571,13 +570,13 @@ struct OnboardingView: View {
                 )
 
             ZStack {
-                // Cracking egg
-                Text(eggCrackProgress < 0.5 ? "🥚" : eggCrackProgress < 0.8 ? "🪺" : "✨")
+                // Cracking egg — single animation
+                Text(eggCrackProgress < 0.5 ? "\u{1F95A}" : eggCrackProgress < 0.8 ? "\u{1FAB9}" : "\u{2728}")
                     .font(.system(size: 90))
-                    .scaleEffect(isAnimating ? 1.2 : 1.0)
-                    .animation(.spring(response: 0.3, dampingFraction: 0.4).repeatForever(autoreverses: true), value: isAnimating)
+                    .scaleEffect(isAnimating ? 1.1 : 1.0)
+                    .animation(.spring(response: 0.3, dampingFraction: 0.4), value: isAnimating)
 
-                // Glow ring
+                // Static glow ring (no repeatForever)
                 Circle()
                     .stroke(
                         LinearGradient(
@@ -587,9 +586,9 @@ struct OnboardingView: View {
                         lineWidth: 3
                     )
                     .frame(width: 120, height: 120)
-                    .opacity(isAnimating ? 0.8 : 0.2)
-                    .scaleEffect(isAnimating ? 1.4 : 0.8)
-                    .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: isAnimating)
+                    .opacity(isAnimating ? 0.6 : 0.2)
+                    .scaleEffect(isAnimating ? 1.2 : 0.9)
+                    .animation(.easeInOut(duration: 0.8), value: isAnimating)
             }
             .frame(height: 160)
 

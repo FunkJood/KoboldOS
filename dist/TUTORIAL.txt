@@ -1,0 +1,616 @@
+══════════════════════════════════════════════
+KOBOLDOS — TUTORIAL & FUNKTIONSUEBERSICHT
+Alpha v0.3.5
+══════════════════════════════════════════════
+
+INHALTSVERZEICHNIS
+──────────────────
+1. Installation & Erster Start
+2. Die Oberflaeche (Control Panel)
+3. Chat — Mit dem Agenten sprechen
+4. Tools — Was der Agent alles kann
+5. Verbindungen — Cloud-Services anbinden
+6. Telegram Bot — Fernsteuerung per Handy
+7. Gedaechtnis — Kurz-/Langzeit/Wissen
+8. Aufgaben & Workflows
+9. Teams — KI-Beratungsgremium
+10. Sprache & Medien (TTS, STT, Stable Diffusion)
+11. Bildgenerierung — Lokale SDXL-Bilder mit ComfyUI
+12. CLI — Kommandozeile
+13. WebApp — Fernzugriff im Browser
+14. Einstellungen im Detail
+15. Tipps & Fehlerbehebung
+
+══════════════════════════════════════════════
+1. INSTALLATION & ERSTER START
+══════════════════════════════════════════════
+
+Voraussetzungen:
+  - macOS 14 (Sonoma) oder neuer
+  - Ollama installiert (https://ollama.com)
+  - Mindestens ein LLM-Modell gepullt
+
+Schritte:
+  1. KoboldOS.app aus dem DMG in den Programme-Ordner ziehen
+  2. Ollama starten: Terminal oeffnen, "ollama serve" eingeben
+  3. Modell herunterladen: "ollama pull llama3.2" (oder ein anderes)
+  4. KoboldOS.app starten
+  5. Beim ersten Start erscheint der Onboarding-Wizard:
+     - Sprache waehlen
+     - Modell auswaehlen
+     - Persona (Persoenlichkeit) konfigurieren
+  6. Fertig! Der Agent ist bereit.
+
+Hinweis: KoboldOS startet einen internen Server auf Port 8080.
+         Ollama muss im Hintergrund laufen (Standard: Port 11434).
+
+══════════════════════════════════════════════
+2. DIE OBERFLAECHE (CONTROL PANEL)
+══════════════════════════════════════════════
+
+Die Sidebar links zeigt alle Bereiche:
+
+  Dashboard      Ueberblick, Willkommensgruss, Metriken, Temperatur
+  Chat           Hauptkommunikation mit dem Agenten
+  Aufgaben       Geplante & wiederkehrende Aufgaben (Cron)
+  Workflows      Visuelle Automatisierungen mit Nodes
+  Teams          Parallele KI-Agenten als Beratungsgremium
+  Marktplatz     Widgets, Skills, Themes (Community)
+  Gedaechtnis    Kurzzeit/Langzeit/Wissen — was sich der Agent merkt
+  Agenten        Agenten-Konfiguration (Modell, Temperatur, Tools)
+  Einstellungen  Alle Optionen (12 Sektionen)
+
+Sidebar ein-/ausklappen: Klick auf das Hamburger-Menu oben links.
+
+══════════════════════════════════════════════
+3. CHAT — MIT DEM AGENTEN SPRECHEN
+══════════════════════════════════════════════
+
+Grundlagen:
+  - Nachricht eintippen und Enter druecken
+  - Der Agent denkt (Thinking-Layer sichtbar), nutzt Tools, und antwortet
+  - Antworten > 800 Zeichen werden eingeklappt ("Mehr anzeigen")
+
+Multi-Session:
+  - Neuen Chat starten: "+" Button in der Sidebar
+  - Zwischen Chats wechseln: Klick auf Chat-Titel in Sidebar
+  - Chat loeschen: Rechtsklick → Loeschen
+
+Interaktive Buttons:
+  - Bei Rueckfragen zeigt der Agent Ja/Nein-Buttons
+  - Autonomie-Level bestimmt wie oft gefragt wird (Einstellungen)
+
+Context-Bar:
+  - Zeigt Token-Verbrauch des aktuellen Chats
+  - "Komprimieren" Button: Fasst langen Kontext zusammen
+
+Task-Chats:
+  - Aufgaben erzeugen eigene Chat-Sessions
+  - Sichtbar unter "Task-Chats" in der Sidebar
+  - Isolierter Kontext pro Aufgabe
+
+Confidence-Badge:
+  - Jede Antwort hat eine Konfidenz-Bewertung (0.0-1.0)
+  - Gruen (>0.8), Gelb (0.5-0.8), Rot (<0.5)
+  - Bei niedriger Konfidenz fragt der Agent nach
+
+══════════════════════════════════════════════
+4. TOOLS — WAS DER AGENT ALLES KANN
+══════════════════════════════════════════════
+
+Der Agent hat 43+ Tools. Er waehlt automatisch das richtige.
+
+── System & Dateien ──────────────────────────
+  shell           Shell-Befehle ausfuehren (ls, grep, python, etc.)
+  file            Dateien lesen, schreiben, auflisten, suchen
+  applescript     macOS-Apps steuern (Safari, Mail, Finder, etc.)
+  screen_control  Maus bewegen/klicken, Tastatur tippen, Screenshots, OCR
+  notify          macOS Push-Benachrichtigung senden
+
+── Web & Browser ─────────────────────────────
+  browser         Webseiten abrufen, Web-Suche, Downloads
+  playwright      Chrome-Automatisierung (navigieren, klicken, ausfuellen)
+  http            HTTP GET/POST Requests
+  rss_reader      RSS/Atom Feeds lesen
+
+── Kommunikation ─────────────────────────────
+  telegram_send   Telegram: Text, Dateien, Fotos, Audio senden
+  whatsapp_api    WhatsApp Business: Nachrichten, Bilder, Templates
+  slack_api       Slack: Kanaele, Nachrichten, Verlauf
+  email           E-Mail senden/empfangen (SMTP/IMAP)
+  twilio_sms      SMS senden via Twilio
+
+── Cloud-Dienste ─────────────────────────────
+  google_api      YouTube (Upload), Drive (Upload), Gmail, Calendar
+  soundcloud_api  Tracks suchen/hochladen, Playlists, Likes
+  suno_api        KI-Musik generieren (Suno AI)
+  reddit_api      Reddit: Suchen, lesen, kommentieren
+  github_api      GitHub: Repos, Issues, Pull Requests
+  microsoft_api   OneDrive, Outlook, Calendar, Teams
+  notion_api      Notion: Seiten suchen, lesen, erstellen
+  uber_api        Uber: Fahrpreis, Fahrt anfordern
+  huggingface_api HuggingFace: KI-Modelle nutzen
+  lieferando_api  Restaurants suchen, Speisekarten lesen
+
+── Medien ────────────────────────────────────
+  speak           Text vorlesen (Text-to-Speech)
+  generate_image  Bilder erzeugen (Stable Diffusion, lokal)
+  vision          Bild-Analyse mit OCR
+
+── Kontakte & Kalender ───────────────────────
+  calendar        Apple Kalender: Events erstellen/lesen
+  caldav          CalDAV-Server: Termine verwalten
+  contacts        Apple Kontakte durchsuchen
+
+── Aufgaben & Organisation ───────────────────
+  task_manage     Geplante Aufgaben erstellen/verwalten
+  workflow_manage Workflows erstellen/verwalten
+  delegate_task   Aufgabe an Sub-Agenten delegieren
+  skill_write     Neue Agent-Faehigkeiten erstellen
+  checklist       Interaktive Checklisten im Chat
+
+── Smart Home & IoT ──────────────────────────
+  mqtt            MQTT publizieren/abonnieren (IoT/Smart Home)
+  webhook         Webhooks senden und empfangen
+
+── Gedaechtnis ───────────────────────────────
+  core_memory     Gedaechtnis speichern/aendern
+  tagged_memory   Getaggte Erinnerungen speichern/suchen
+  archival_memory Langzeit-Archiv durchsuchen
+
+── Sicherheit ────────────────────────────────
+  secrets         Passwoerter/API-Keys im Keychain verwalten
+  settings_read   KoboldOS-Einstellungen lesen/aendern
+
+Beispiel-Befehle an den Agenten:
+  "Erstelle eine Datei auf dem Desktop mit einer Einkaufsliste"
+  "Suche im Web nach dem Wetter in Berlin"
+  "Spiel mir den Text vor"
+  "Sende eine Telegram-Nachricht an den Kanal"
+  "Lade dieses Video auf YouTube hoch"
+  "Generiere ein Bild von einem Sonnenuntergang"
+  "Was steht in meinem Kalender fuer morgen?"
+
+══════════════════════════════════════════════
+5. VERBINDUNGEN — CLOUD-SERVICES ANBINDEN
+══════════════════════════════════════════════
+
+Einstellungen → Verbindungen zeigt alle verfuegbaren Dienste:
+
+  Google (YouTube/Drive/Gmail)
+    → OAuth: Client-ID + Secret eingeben, "Anmelden" klicken
+    → Ermoeglicht: Video-Upload, Drive-Upload, E-Mail, Kalender
+
+  SoundCloud
+    → OAuth: Client-ID + Secret, dann Anmeldung
+    → Ermoeglicht: Track-Upload mit Titel/Genre/Tags
+
+  Telegram Bot
+    → Bot-Token von @BotFather eingeben
+    → Chat-ID eintragen (eigene oder Gruppen-ID)
+    → Bot empfaengt Text- UND Sprachnachrichten
+
+  Suno AI (Musik)
+    → API-Key von sunoapi.org eingeben
+    → Ermoeglicht: KI-Musik generieren mit Textbeschreibung
+
+  Reddit
+    → OAuth: Client-ID + Secret + Username + Password
+    → Ermoeglicht: Suchen, lesen, kommentieren
+
+  Microsoft (OneDrive/Outlook/Teams)
+    → OAuth: Client-ID + Tenant-ID
+    → Ermoeglicht: Dateien, E-Mails, Teams-Chat
+
+  GitHub
+    → Personal Access Token eingeben
+    → Ermoeglicht: Repos, Issues, PRs verwalten
+
+  Slack
+    → Bot Token (xoxb-...) eingeben
+    → Ermoeglicht: Nachrichten senden, Kanaele lesen
+
+  Notion
+    → Integration Token eingeben
+    → Ermoeglicht: Seiten suchen/erstellen/bearbeiten
+
+  Uber
+    → OAuth: Client-ID + Secret
+    → Ermoeglicht: Fahrpreise, Fahrten anfordern
+
+  WhatsApp Business
+    → API-Token + Phone-ID eingeben
+    → Ermoeglicht: Nachrichten, Bilder, Templates
+
+  WebApp & Cloudflare Tunnel
+    → Fernzugriff auf KoboldOS im Browser (siehe Kapitel 12)
+
+  A2A Protocol
+    → Agent-to-Agent Kommunikation (Google Standard)
+
+Verbindungsstatus:
+  - Gruener Punkt = Verbunden & Token gueltig
+  - Roter Punkt = Nicht verbunden oder Token abgelaufen
+  - "Alle pruefen" testet alle Tokens gleichzeitig
+
+══════════════════════════════════════════════
+6. TELEGRAM BOT — FERNSTEUERUNG PER HANDY
+══════════════════════════════════════════════
+
+Setup:
+  1. @BotFather auf Telegram oeffnen
+  2. /newbot → Namen und Username waehlen
+  3. Bot-Token kopieren → Einstellungen → Verbindungen → Telegram
+  4. Chat-ID eintragen (Tipp: @userinfobot anschreiben fuer eigene ID)
+  5. "Bot starten" aktivieren
+
+Nutzung:
+  - Textnachrichten → Agent verarbeitet und antwortet
+  - Sprachnachrichten → Automatische Transkription (whisper.cpp) → Agent antwortet
+  - Audio-Dateien → Werden ebenfalls transkribiert
+  - Der Agent kann zurueck senden: Text, Dateien, Fotos, Audio
+
+Voraussetzungen fuer Sprachnachrichten:
+  - Whisper-Modell muss geladen sein (Einstellungen → Sprache & Audio)
+  - ffmpeg muss installiert sein: brew install ffmpeg
+
+Hinweis: Nachrichten vom Bot werden als "[Telegram] ..." im Daemon-Log angezeigt.
+
+══════════════════════════════════════════════
+7. GEDAECHTNIS — KURZ-/LANGZEIT/WISSEN
+══════════════════════════════════════════════
+
+Drei Gedaechtnis-Typen:
+
+  Kurzzeit (kt.)   Kontext der aktuellen Sitzung, temporaer
+  Langzeit (lz.)   Bleibt ueber Sitzungen erhalten
+  Wissen (ws.)     Fakten und Referenzwissen
+
+Alle gespeicherten Bloecke fliessen in jeden System-Prompt ein —
+der Agent hat also immer Zugriff auf sein gesamtes Gedaechtnis.
+
+Verwaltung:
+  - Gedaechtnis-Tab: Alle Bloecke anzeigen, bearbeiten, loeschen
+  - Agent kann selbst speichern: "Merk dir, dass ich Kaffee mag"
+  - Archiv-System: Bei >80% Auslastung werden alte Eintraege archiviert
+  - Archivierte Eintraege sind per Suche abrufbar
+
+Memory Versionierung:
+  - Jede Aenderung wird versioniert (Git-style)
+  - Rollback auf fruehere Versionen moeglich
+  - CLI: "kobold memory log" zeigt Versionshistorie
+
+══════════════════════════════════════════════
+8. AUFGABEN & WORKFLOWS
+══════════════════════════════════════════════
+
+Aufgaben (Tasks):
+  - Einmalige oder wiederkehrende Aufgaben mit Cron-Syntax
+  - Beispiel: "Jeden Morgen um 8 Uhr Wetter checken"
+  - Aufgaben starten eigene Chat-Sessions (Task-Chats)
+  - Idle-Tasks: Aufgaben fuer den Agenten wenn er nichts zu tun hat
+
+Aufgabe erstellen:
+  1. Aufgaben-Tab → "Neue Aufgabe"
+  2. Name, Beschreibung, Zeitplan (Cron) eingeben
+  3. Optional: Team zuweisen
+  4. Speichern → Wird automatisch zur geplanten Zeit ausgefuehrt
+
+Workflows:
+  - Visuelle Automatisierungen mit verbundenen Nodes
+  - 11 Node-Typen: Trigger, Input, Agent, Tool, Output,
+    Condition, Merger, Delay, Webhook, Formula, Team
+  - 46 Tools in 9 Kategorien direkt im Tool-Node verfuegbar
+  - Skill-Injection: Agent-Nodes koennen Faehigkeiten nutzen
+  - Drag & Drop zum Verbinden
+  - Trigger: Manuell, Zeitplan, Webhook, Datei-Watcher, App-Event
+  - Workflows werden unter ~/Documents/KoboldOS/workflows/ gespeichert
+
+Workflow erstellen:
+  1. Workflows-Tab → "Neues Projekt"
+  2. Nodes platzieren und verbinden (Node + Button)
+  3. Pro Node im Inspector konfigurieren:
+     - Tool-Nodes: Aus 46 Tools waehlen (mit Suchfeld)
+     - Agent-Nodes: Typ, Modell, Faehigkeit waehlen
+     - Trigger-Nodes: Zeitplan, Webhook, etc. konfigurieren
+  4. "Speichern" klicken → Datei in ~/Documents/KoboldOS/workflows/
+  5. "Ausfuehren" klicken → Workflow startet
+
+Tool-Kategorien im Workflow:
+  Basis:          Shell, Datei, HTTP, Browser, AppleScript
+  Kommunikation:  Telegram, E-Mail, SMS, Slack, WhatsApp
+  APIs:           GitHub, Google, Microsoft, SoundCloud, Notion,
+                  HuggingFace, Reddit, Suno AI, Uber, Lieferando
+  Medien:         Text vorlesen, Bild generieren, Bild analysieren
+  Gedaechtnis:    Speichern, Abrufen, Core Memory, Archiv
+  macOS:          Kalender, Kontakte, Bildschirm, App-Terminal
+  IoT/Infra:      CalDAV, MQTT, RSS, Webhook, Secrets
+  System:         Benachrichtigung, Checkliste, Tasks, Einstellungen
+
+══════════════════════════════════════════════
+9. TEAMS — KI-BERATUNGSGREMIUM
+══════════════════════════════════════════════
+
+Teams ermoeglicht parallele KI-Agenten, die ein Thema diskutieren:
+
+3-Runden-Diskursmodell:
+  Runde 1 — Analyse    Jeder Agent analysiert unabhaengig
+  Runde 2 — Diskussion Agenten diskutieren Ergebnisse
+  Runde 3 — Synthese   Zusammenfassung und Konsens
+
+Team erstellen:
+  1. Teams-Tab → "Neues Team"
+  2. Agenten hinzufuegen (verschiedene Rollen/Modelle moeglich)
+  3. Ziele definieren
+  4. Thema eingeben und Diskussion starten
+
+Features:
+  - Organigramm-Ansicht
+  - Persistenz (Teams bleiben erhalten)
+  - Integration in Workflows und Aufgaben
+
+══════════════════════════════════════════════
+10. SPRACHE & MEDIEN (TTS, STT, SD)
+══════════════════════════════════════════════
+
+Text-to-Speech (TTS):
+  - Agent kann Text vorlesen: "Lies mir das vor"
+  - Stimme, Geschwindigkeit, Lautstaerke einstellbar
+  - Speaker-Button an jeder Agenten-Nachricht
+  - Einstellungen → Sprache & Audio → TTS
+
+Speech-to-Text (STT):
+  - Lokale Spracherkennung via whisper.cpp
+  - Modell herunterladen in Einstellungen → Sprache & Audio
+  - Verfuegbare Groessen: tiny (~75MB) bis large (~1.5GB)
+  - Wird automatisch fuer Telegram-Sprachnachrichten genutzt
+
+Bildgenerierung (Stable Diffusion):
+  - Lokale Bildgenerierung via Apple CoreML
+  - Modell muss einmalig heruntergeladen werden (~2 GB)
+  - "Generiere ein Bild von ..." → Bild erscheint inline im Chat
+  - Einstellungen: Modell-Auswahl, Steps, Guidance Scale
+  - Einstellungen → Sprache & Audio → Stable Diffusion
+
+══════════════════════════════════════════════
+11. BILDGENERIERUNG — LOKALE SDXL-BILDER MIT COMFYUI
+══════════════════════════════════════════════
+
+KoboldOS kann lokal Bilder mit Stable Diffusion XL generieren.
+Die Bildgenerierung laeuft ueber ComfyUI (separater Prozess).
+
+Voraussetzungen:
+  - ComfyUI installiert unter ~/KoboldAI_ImageEngine/
+  - Mindestens ein SDXL-Modell heruntergeladen
+  - Apple Silicon Mac (M1/M2/M3/M4) mit MPS-Beschleunigung
+
+Verfuegbare Modelle:
+  - Juggernaut XL v9 — fotorealistisch, hochdetailliert (Standard)
+  - SDXL Base 1.0 — vielseitig, kuenstlerisch
+  - SDXL Refiner 1.0 — nachtraegliche Verfeinerung
+  - 4x-UltraSharp — Hochskalierung (4-fache Aufloesung)
+
+So funktioniert es:
+  1. Sag dem Agenten: "Generiere ein Bild von einem Sonnenuntergang"
+  2. Der Agent nutzt den image_generation Skill automatisch
+  3. ComfyUI Server wird bei Bedarf gestartet (dauert ~10 Sekunden)
+  4. Bild wird generiert (~25-60 Sekunden je nach Groesse)
+  5. Ergebnis erscheint im Chat UND wird per Telegram gesendet
+
+Bildgroessen:
+  - 1024x1024 — Quadrat (Standard)
+  - 1024x768  — Querformat (Landscape)
+  - 768x1024  — Hochformat (Portrait)
+
+Output-Verzeichnis:
+  ~/Documents/KoboldOS/Bilder/
+
+Tipps fuer gute Bilder:
+  - Der Agent uebersetzt deinen Prompt automatisch ins Englische
+  - Stildeskriptoren helfen: "photorealistic", "8k", "cinematic lighting"
+  - Juggernaut XL = besser fuer Fotos und Portraets
+  - SDXL Base = besser fuer Kunst und abstrakte Stile
+  - Ein "Negative Prompt" filtert unerwuenschte Elemente (bereits eingebaut)
+
+CLI-Nutzung (ohne Agent):
+  cd ~/KoboldAI_ImageEngine && source venv/bin/activate
+  python3 kobold_generate.py "a sunset over mountains" --model juggernaut --size 1024x768
+
+══════════════════════════════════════════════
+12. CLI — KOMMANDOZEILE
+══════════════════════════════════════════════
+
+KoboldOS hat ein vollstaendiges CLI-Tool. Kopiere "kobold" aus dem
+App-Bundle oder nutze den Build-Pfad.
+
+Interaktiver Chat:
+  kobold                       Startet interaktive Chat-Session
+                               12 Slash-Befehle (/help, /new, /list, etc.)
+
+Daemon:
+  kobold daemon --port 8080    Daemon manuell starten
+  kobold health                Server-Status pruefen
+
+Modelle:
+  kobold model list            Verfuegbare Modelle anzeigen
+  kobold model set llama3.2    Aktives Modell setzen
+
+Gedaechtnis:
+  kobold memory list           Alle Gedaechtnis-Bloecke
+  kobold memory get <label>    Einzelnen Block lesen
+  kobold memory set <l> <v>    Block setzen
+  kobold memory log            Versionshistorie
+  kobold memory diff <a> <b>   Versionen vergleichen
+  kobold memory rollback <id>  Zuruecksetzen
+
+Aufgaben:
+  kobold task list             Alle Aufgaben anzeigen
+  kobold task create           Neue Aufgabe erstellen
+  kobold task delete <id>      Aufgabe loeschen
+
+Workflows:
+  kobold workflow list         Alle Workflows
+  kobold workflow run <id>     Workflow ausfuehren
+
+Skills:
+  kobold skill list            Faehigkeiten anzeigen
+  kobold skill import <file>   Skill importieren (Markdown)
+
+Secrets:
+  kobold secret set <key>      Secret im Keychain speichern
+  kobold secret get <key>      Secret abrufen
+  kobold secret list           Alle Keys anzeigen
+
+Weitere:
+  kobold metrics [--watch]     Nutzungsstatistiken
+  kobold trace list            Agent-Aktivitaeten
+  kobold config                Konfiguration
+  kobold checkpoint resume <id> Pausierte Aufgabe fortsetzen
+  kobold card                  A2A Agent Card anzeigen
+  kobold safe-mode status      Safe Mode pruefen
+  kobold diagnose              Probleme diagnostizieren
+
+══════════════════════════════════════════════
+13. WEBAPP — FERNZUGRIFF IM BROWSER
+══════════════════════════════════════════════
+
+KoboldOS hat einen eingebauten Webserver fuer Browser-Zugriff:
+
+Lokaler Zugriff:
+  1. Einstellungen → Verbindungen → WebApp
+  2. Port und Passwort festlegen
+  3. WebApp starten
+  4. Im Browser oeffnen: http://localhost:<port>
+
+Fernzugriff via Cloudflare Tunnel:
+  1. Cloudflare Tunnel aktivieren in Verbindungen
+  2. Oeffentliche URL wird generiert
+  3. Von jedem Geraet aus erreichbar (mit Basic Auth)
+
+WebApp Features:
+  - Chat mit dem Agenten
+  - Aufgaben verwalten
+  - Gedaechtnis einsehen
+  - Einstellungen anpassen
+  - Responsive Design (Handy/Tablet/Desktop)
+
+══════════════════════════════════════════════
+14. EINSTELLUNGEN IM DETAIL
+══════════════════════════════════════════════
+
+Allgemein
+  - Auto-Start bei Login (LaunchAgent)
+  - Update-Pruefung (GitHub Releases)
+  - Heartbeat: Intervall und Quiet Hours
+
+Agenten
+  - Pro Agent: Modell, Temperatur, Vision an/aus
+  - Tool-Routing: Welcher Agent darf welche Tools nutzen
+  - Agenten-Typen: general (Orchestrator), coder, web
+
+Persoenlichkeit
+  - Kommunikationsstil anpassen
+  - Soul.md / Personality.md bearbeiten
+  - Verhaltensregeln definieren
+  - Ziele setzen (fliessen in System-Prompt)
+  - Autonomie-Level (1=sicher, 2=normal, 3=voll)
+
+Gedaechtnis
+  - Block-Limits pro Typ
+  - Auto-Memorisierung an/aus
+  - Export/Import
+
+Faehigkeiten (Skills)
+  - Markdown-basierte Skills aktivieren/deaktivieren
+  - Skills erweitern die Faehigkeiten des Agenten
+
+Berechtigungen
+  - Autonomie-Level: Wie selbststaendig darf der Agent handeln?
+  - Einzelne Tool-Berechtigungen (Shell, Playwright, Screen Control)
+  - Playwright und Screen Control separat aktivierbar
+
+Sprache & Audio
+  - TTS: Stimme, Rate, Lautstaerke
+  - STT: Whisper-Modell auswaehlen und laden, Sprache
+  - Stable Diffusion: Modell, Steps, Guidance Scale
+
+Verbindungen
+  - Alle Cloud-Dienste konfigurieren (siehe Kapitel 5)
+  - Verbindungsstatus pruefen
+  - Token-Refresh bei Ablauf
+
+Benachrichtigungen
+  - macOS Push-Benachrichtigungen konfigurieren
+  - Wann soll der Agent benachrichtigen?
+
+Datenschutz & Sicherheit
+  - Safe Mode: Einschraenkungen aktivieren
+  - API-Keys und Secrets verwalten (Keychain)
+  - Tool-Sandboxing
+
+Daemon-Log (Live)
+  - Echtzeit-Log aller Daemon-Aktivitaeten
+  - Filtern nach Suchbegriff
+  - Vollbild-Modus (Pfeil-Icon oder Escape zum Schliessen)
+  - Log leeren
+
+Ueber
+  - Version, Build-Datum, PID
+  - Credits
+  - Log-Export
+
+══════════════════════════════════════════════
+15. TIPPS & FEHLERBEHEBUNG
+══════════════════════════════════════════════
+
+Der Agent antwortet nicht:
+  → Ist Ollama gestartet? ("ollama serve" im Terminal)
+  → Ist ein Modell geladen? (Einstellungen → Modelle)
+  → Daemon-Log pruefen (Einstellungen → unten)
+
+Telegram Bot reagiert nicht:
+  → Bot-Token korrekt? (@BotFather pruefen)
+  → Chat-ID korrekt? (@userinfobot anschreiben)
+  → "Bot starten" in Einstellungen aktiviert?
+
+Sprachnachrichten werden nicht erkannt:
+  → Whisper-Modell geladen? (Einstellungen → Sprache & Audio)
+  → ffmpeg installiert? (brew install ffmpeg)
+
+Agent gibt JSON statt Text zurueck:
+  → Sollte seit v0.3.4 Update 2 behoben sein
+  → Falls doch: Modell wechseln oder groesseres Modell nutzen
+
+Bildgenerierung funktioniert nicht:
+  → Stable Diffusion Modell heruntergeladen? (~2 GB, erster Start)
+  → Einstellungen → Sprache & Audio → Stable Diffusion
+
+Performance / Lags:
+  → Kleineres Modell waehlen (llama3.2 statt groesserer Modelle)
+  → Weniger offene Chat-Sessions
+  → Heartbeat-Intervall erhoehen
+
+Playwright funktioniert nicht:
+  → npm install -g playwright
+  → Chrome muss installiert sein
+
+Screen Control funktioniert nicht:
+  → macOS Systemeinstellungen → Datenschutz → Bedienungshilfen
+  → KoboldOS muss dort aktiviert sein
+
+Verbindung abgelaufen:
+  → Einstellungen → Verbindungen → "Alle pruefen"
+  → Betroffenen Dienst neu verbinden
+
+Speicherort fuer Daten:
+  ~/Library/Application Support/KoboldOS/
+    sessions.json      Chat-Verlaeufe
+    memory/            Gedaechtnis-Daten
+    skills/            Installierte Skills
+    checkpoints/       Gespeicherte Agent-States
+
+══════════════════════════════════════════════
+  KoboldOS — Dein autonomer KI-Agent fuer macOS
+  https://github.com/your-repo/koboldos
+  ~52.800+ Lines of Swift Code
+══════════════════════════════════════════════

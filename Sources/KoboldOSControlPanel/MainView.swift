@@ -255,7 +255,7 @@ struct SidebarView: View {
             .buttonStyle(.plain)
 
             if showNormalChatsInSubTab {
-                ForEach(viewModel.sessions.prefix(100)) { session in
+                ForEach(viewModel.sessions.prefix(100), id: \.id) { session in
                     SidebarSessionRow(
                         session: session,
                         isCurrent: session.id == viewModel.currentSessionId,
@@ -1402,8 +1402,8 @@ struct PersistentThinkingBar: View {
             Circle()
                 .fill(Color.koboldEmerald)
                 .frame(width: 6, height: 6)
-                .opacity(pulse ? 1 : 0.3)
-                .animation(.easeInOut(duration: 1.0).repeatForever(autoreverses: true), value: pulse)
+                .opacity(pulse ? 1 : 0.4)
+                .animation(.easeInOut(duration: 1.5), value: pulse)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 6)

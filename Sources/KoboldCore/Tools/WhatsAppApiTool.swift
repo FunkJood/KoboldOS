@@ -38,6 +38,11 @@ public struct WhatsAppApiTool: Tool {
         return (token, phoneId)
     }
 
+    private let oauth = OAuthTokenHelper(
+        prefix: "kobold.whatsapp",
+        tokenURL: "https://graph.facebook.com/v18.0/oauth/access_token"
+    )
+
     private func whatsappRequest(endpoint: String, method: String = "POST", body: String? = nil) async -> String {
         guard let creds = getCredentials() else {
             return "Error: WhatsApp nicht konfiguriert. Bitte unter Einstellungen → Verbindungen → WhatsApp anmelden und Phone Number ID eintragen."
@@ -59,10 +64,22 @@ public struct WhatsAppApiTool: Tool {
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-            let responseStr = String(data: data.prefix(8192), encoding: .utf8) ?? "(empty)"
+
+            // Auto-refresh on 401
             if status == 401 {
-                return "Error: WhatsApp-Token ungültig oder abgelaufen. Bitte unter Einstellungen → Verbindungen → WhatsApp neu anmelden."
+                if let newToken = await oauth.refreshToken() {
+                    request.setValue("Bearer \(newToken)", forHTTPHeaderField: "Authorization")
+                    let (retryData, retryResponse) = try await URLSession.shared.data(for: request)
+                    let retryStatus = (retryResponse as? HTTPURLResponse)?.statusCode ?? 0
+                    let retryBody = String(data: retryData.prefix(8192), encoding: .utf8) ?? "(empty)"
+                    if retryStatus >= 400 { return "Error: HTTP \(retryStatus): \(retryBody)" }
+                    return retryBody
+                } else {
+                    return "Error: WhatsApp-Token abgelaufen und Refresh fehlgeschlagen. Bitte unter Einstellungen → Verbindungen → WhatsApp neu anmelden."
+                }
             }
+
+            let responseStr = String(data: data.prefix(8192), encoding: .utf8) ?? "(empty)"
             if status >= 400 { return "Error: HTTP \(status): \(responseStr)" }
             return responseStr
         } catch {

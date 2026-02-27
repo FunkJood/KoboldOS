@@ -49,34 +49,26 @@ public struct PlaywrightTool: Tool, Sendable {
         let action = arguments["action"] ?? ""
         let script = buildScript(action: action, arguments: arguments)
 
-        let process = Process()
         let nodePath = findNodePath()
-        process.executableURL = URL(fileURLWithPath: nodePath)
-        process.arguments = ["-e", script]
+        let env = ["PATH": (ProcessInfo.processInfo.environment["PATH"] ?? "") + ":/opt/homebrew/bin:/usr/local/bin"]
 
-        var env = ProcessInfo.processInfo.environment
-        env["PATH"] = (env["PATH"] ?? "") + ":/opt/homebrew/bin:/usr/local/bin"
-        process.environment = env
+        // Non-blocking execution via AsyncProcess (was: synchronous waitUntilExit)
+        let result = try await AsyncProcess.run(
+            executable: nodePath,
+            arguments: ["-e", script],
+            environment: env,
+            timeout: 60
+        )
 
-        let stdout = Pipe()
-        let stderr = Pipe()
-        process.standardOutput = stdout
-        process.standardError = stderr
-
-        try process.run()
-        process.waitUntilExit()
-
-        let output = String(data: stdout.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        let errOutput = String(data: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-
-        if process.terminationStatus != 0 {
-            if errOutput.contains("Cannot find module") {
+        if result.exitCode != 0 {
+            if result.stderr.contains("Cannot find module") {
                 throw ToolError.executionFailed("Playwright nicht installiert. Bitte ausführen: npm install -g playwright && npx playwright install chromium")
             }
-            throw ToolError.executionFailed(errOutput.prefix(500).isEmpty ? "Playwright Fehler (Exit \(process.terminationStatus))" : String(errOutput.prefix(500)))
+            let errMsg = result.stderr.prefix(500)
+            throw ToolError.executionFailed(errMsg.isEmpty ? "Playwright Fehler (Exit \(result.exitCode))" : String(errMsg))
         }
 
-        return output.trimmingCharacters(in: .whitespacesAndNewlines)
+        return result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func findNodePath() -> String {

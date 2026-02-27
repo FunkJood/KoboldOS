@@ -561,7 +561,18 @@ public actor AgentLoop {
 
             // Check if this is the "response" tool (terminal — delivers answer to user)
             if parsed.name == "response" {
-                let rawAnswer = parsed.arguments["text"] ?? llmResponse
+                // Extract response text — try multiple key names (local models vary heavily)
+                var rawAnswer: String = {
+                    for key in ["text", "content", "response", "message", "answer", "reply", "output"] {
+                        if let v = parsed.arguments[key], !v.isEmpty { return v }
+                    }
+                    // Fallback: first non-JSON argument value (model used an unknown key)
+                    for (_, v) in parsed.arguments {
+                        let t = v.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !t.isEmpty && !t.hasPrefix("{") && !t.hasPrefix("[") { return v }
+                    }
+                    return llmResponse
+                }()
 
                 // Recovery: Check if the LLM embedded an actual tool call inside the "response" text.
                 // Local models sometimes wrap tool calls in response text instead of proper JSON format.
@@ -586,6 +597,67 @@ public actor AgentLoop {
                         : resultText
                     messages.append(["role": "user", "content": truncatedResult + "\nAntworte jetzt als JSON."])
                     continue // Continue agent loop — don't treat as final answer
+                }
+
+                // Extract text from JSON if the response is still wrapped in JSON
+                // (same logic as runStreaming — local models often wrap response in JSON)
+                if rawAnswer.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("{") {
+                    if let data = rawAnswer.data(using: .utf8),
+                       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                        var extracted: String? = nil
+                        // Check nested args with multiple text-like keys
+                        let textKeys = ["text", "content", "response", "message", "answer", "reply", "output"]
+                        for argsKey in ["tool_args", "toolargs", "args", "arguments"] {
+                            if let args = json[argsKey] as? [String: Any] {
+                                for tk in textKeys {
+                                    if let s = args[tk] as? String, !s.isEmpty { extracted = s; break }
+                                }
+                                // Generic: any non-JSON string in args
+                                if extracted == nil {
+                                    for (_, value) in args {
+                                        if let s = value as? String, !s.isEmpty, !s.hasPrefix("{") { extracted = s; break }
+                                    }
+                                }
+                                if extracted != nil { break }
+                            }
+                        }
+                        // Top-level text keys
+                        if extracted == nil {
+                            for tk in textKeys {
+                                if let s = json[tk] as? String, !s.isEmpty { extracted = s; break }
+                            }
+                        }
+                        // String-encoded args
+                        if extracted == nil {
+                            for key in ["tool_args", "toolargs", "args", "arguments"] {
+                                if let str = json[key] as? String, !str.isEmpty {
+                                    if let innerData = str.data(using: .utf8),
+                                       let inner = try? JSONSerialization.jsonObject(with: innerData) as? [String: Any],
+                                       let t = inner["text"] as? String, !t.isEmpty {
+                                        extracted = t; break
+                                    }
+                                    if !str.hasPrefix("{") { extracted = str; break }
+                                }
+                            }
+                        }
+                        // Ultimate fallback: any non-metadata top-level string
+                        if extracted == nil {
+                            let skip: Set<String> = ["tool_name", "toolname", "name", "tool", "function", "action", "confidence", "thoughts"]
+                            for (key, value) in json where !skip.contains(key) {
+                                if let s = value as? String, !s.isEmpty, !s.hasPrefix("{"), s.count > 3 { extracted = s; break }
+                            }
+                        }
+                        if let extracted = extracted, !extracted.isEmpty {
+                            rawAnswer = extracted
+                        }
+                    } else {
+                        // JSON is malformed — try regex recovery for toolargs sub-object
+                        let recoveredCall = parser.parse(response: rawAnswer)
+                        if let first = recoveredCall.first, first.name == "response",
+                           let t = first.arguments["text"], !t.isEmpty {
+                            rawAnswer = t
+                        }
+                    }
                 }
 
                 let answer = rawAnswer
@@ -860,7 +932,7 @@ public actor AgentLoop {
     /// This helper finds the actual tool call within the text.
     private func extractEmbeddedToolCall(from text: String) -> ParsedToolCall? {
         // Quick check — only scan if there's a tool_name indicator
-        guard text.contains("\"tool_name\"") || text.contains("\"tool_name\\\"") else { return nil }
+        guard text.contains("\"tool_name\"") || text.contains("\"toolname\"") || text.contains("\"tool_name\\\"") else { return nil }
 
         // String-aware balanced brace extraction (handles braces inside JSON strings correctly)
         var depth = 0
@@ -885,9 +957,9 @@ public actor AgentLoop {
                     // Try to parse as tool call (skip "response" — that's what we're escaping FROM)
                     if let data = block.data(using: .utf8),
                        let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                       let toolName = json["tool_name"] as? String,
+                       let toolName = (json["tool_name"] as? String) ?? (json["toolname"] as? String),
                        toolName != "response" {
-                        let argsObj = json["tool_args"] as? [String: Any] ?? [:]
+                        let argsObj = json["tool_args"] as? [String: Any] ?? json["toolargs"] as? [String: Any] ?? [:]
                         var strArgs: [String: String] = [:]
                         for (key, value) in argsObj {
                             if let s = value as? String { strArgs[key] = s }
@@ -1094,7 +1166,16 @@ public actor AgentLoop {
                     if parsed.name == "response" {
                         // Strip raw JSON if the parser returned the unprocessed LLM output as text.
                         // This happens when the LLM wraps its answer in JSON but the parser used the fallback.
-                        var rawAnswer = parsed.arguments["text"] ?? llmResponse
+                        var rawAnswer: String = {
+                            for key in ["text", "content", "response", "message", "answer", "reply", "output"] {
+                                if let v = parsed.arguments[key], !v.isEmpty { return v }
+                            }
+                            for (_, v) in parsed.arguments {
+                                let t = v.trimmingCharacters(in: .whitespacesAndNewlines)
+                                if !t.isEmpty && !t.hasPrefix("{") && !t.hasPrefix("[") { return v }
+                            }
+                            return llmResponse
+                        }()
 
                         // Recovery: Check for embedded tool call ANYWHERE in the text.
                         // Local models sometimes wrap tool calls in response text:
@@ -1180,32 +1261,45 @@ public actor AgentLoop {
                                 }
 
                                 var extracted: String? = nil
-                                // Direct text fields
-                                extracted = extracted ?? (json["tool_args"] as? [String: Any])?["text"] as? String
-                                extracted = extracted ?? (json["args"] as? [String: Any])?["text"] as? String
-                                extracted = extracted ?? json["text"] as? String
-                                extracted = extracted ?? json["content"] as? String
-                                extracted = extracted ?? json["response"] as? String
-                                extracted = extracted ?? json["message"] as? String
-                                extracted = extracted ?? json["answer"] as? String
-                                // String-encoded tool_args (Qwen-style: tool_args as JSON string)
+                                let textKeys = ["text", "content", "response", "message", "answer", "reply", "output"]
+                                // Check nested args with multiple text-like keys
+                                for argsKey in ["tool_args", "toolargs", "args", "arguments"] {
+                                    if let args = json[argsKey] as? [String: Any] {
+                                        for tk in textKeys {
+                                            if let s = args[tk] as? String, !s.isEmpty { extracted = s; break }
+                                        }
+                                        if extracted == nil {
+                                            for (_, value) in args {
+                                                if let s = value as? String, !s.isEmpty, !s.hasPrefix("{") { extracted = s; break }
+                                            }
+                                        }
+                                        if extracted != nil { break }
+                                    }
+                                }
+                                // Top-level text keys
                                 if extracted == nil {
-                                    for key in ["tool_args", "args", "arguments"] {
+                                    for tk in textKeys {
+                                        if let s = json[tk] as? String, !s.isEmpty { extracted = s; break }
+                                    }
+                                }
+                                // String-encoded tool_args
+                                if extracted == nil {
+                                    for key in ["tool_args", "toolargs", "args", "arguments"] {
                                         if let str = json[key] as? String, !str.isEmpty {
                                             if let innerData = str.data(using: .utf8),
                                                let inner = try? JSONSerialization.jsonObject(with: innerData) as? [String: Any],
                                                let t = inner["text"] as? String, !t.isEmpty {
-                                                extracted = t
-                                                break
+                                                extracted = t; break
                                             }
-                                            extracted = str
-                                            break
+                                            if !str.hasPrefix("{") { extracted = str; break }
                                         }
                                     }
                                 }
+                                // Ultimate fallback: any non-metadata string
                                 if extracted == nil {
-                                    if let thoughts = json["thoughts"] as? [String], !thoughts.isEmpty {
-                                        extracted = thoughts.joined(separator: " ")
+                                    let skip: Set<String> = ["tool_name", "toolname", "name", "tool", "function", "action", "confidence", "thoughts"]
+                                    for (key, value) in json where !skip.contains(key) {
+                                        if let s = value as? String, !s.isEmpty, !s.hasPrefix("{"), s.count > 3 { extracted = s; break }
                                     }
                                 }
                                 if let extracted = extracted, !extracted.isEmpty {
@@ -1888,7 +1982,7 @@ public actor AgentLoop {
         // Current model + identity info for self-awareness
         let currentModel = UserDefaults.standard.string(forKey: "kobold.ollamaModel") ?? "unbekannt"
         let koboldName = UserDefaults.standard.string(forKey: "kobold.koboldName") ?? "KoboldOS"
-        let koboldVersion = "v0.3.3"
+        let koboldVersion = "v0.3.4"
 
         let userGreeting = userName.isEmpty ? "" : "\nDer Nutzer heißt \(userName)."
 
@@ -1896,6 +1990,7 @@ public actor AgentLoop {
         Dein Name ist \(koboldName). Dein Core ist KoboldOS \(koboldVersion), ein lokaler KI-Agent auf macOS. Dein Sprachmodell: \(currentModel) (via Ollama, lokal auf diesem Mac).
         Sprache: \(agentLang == "auto" ? "Sprache des Nutzers" : agentLang.isEmpty ? "Deutsch" : agentLang.capitalized). Tonfall: \(tone).\(userGreeting)
         Arbeitsverzeichnis: \(UserDefaults.standard.string(forKey: "kobold.defaultWorkDir") ?? "~/Documents/KoboldOS")
+        WebGUI-Dateien: ~/Library/Application Support/KoboldOS/webgui/ (index.html etc. — du kannst diese Dateien mit file_read/file_write bearbeiten, um die Web-Oberfläche anzupassen)
         \(personalitySection)\(memoryPolicySection)\(behaviorRulesSection)\(memoryRulesSection)\(buildGoalsSection())
 
         ## Verbindungen

@@ -1,6 +1,6 @@
 import Foundation
 #if os(macOS)
-import Vision
+@preconcurrency import Vision
 import AppKit
 #endif
 
@@ -57,16 +57,19 @@ public struct VisionTool: Tool, @unchecked Sendable {
             return "[Fehler: Bild konnte nicht geladen werden: \(path)]"
         }
 
-        // OCR mit Apple Vision Framework
-        let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .accurate
-        request.recognitionLanguages = ["de-DE", "en-US"]
-        request.usesLanguageCorrection = true
+        // OCR mit Apple Vision Framework (off main thread für große Bilder)
+        let observations: [VNRecognizedTextObservation] = try await Task.detached(priority: .userInitiated) {
+            let request = VNRecognizeTextRequest()
+            request.recognitionLevel = .accurate
+            request.recognitionLanguages = ["de-DE", "en-US"]
+            request.usesLanguageCorrection = true
 
-        let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
-        try handler.perform([request])
+            let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+            try handler.perform([request])
+            return request.results ?? []
+        }.value
 
-        guard let observations = request.results else {
+        guard !observations.isEmpty else {
             return "[Kein Text im Bild erkannt]"
         }
 
