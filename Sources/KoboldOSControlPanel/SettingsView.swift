@@ -107,6 +107,7 @@ struct SettingsView: View {
 
     // Google OAuth
     @AppStorage("kobold.google.clientId") private var googleClientId: String = ""
+    @AppStorage("kobold.google.clientSecret") private var googleClientSecret: String = ""
     @AppStorage("kobold.google.connected") private var googleConnected: Bool = false
     @State private var googleEmail: String = ""
     @State private var showSecretsManager: Bool = false
@@ -2964,27 +2965,68 @@ struct SettingsView: View {
             },
             signInButton: {
                 AnyView(VStack(alignment: .leading, spacing: 10) {
-                    Button(action: { GoogleOAuth.shared.signIn() }) {
-                        HStack(spacing: 10) {
-                            ZStack {
-                                RoundedRectangle(cornerRadius: 4).fill(Color.white).frame(width: 24, height: 24)
-                                Text("G").font(.system(size: 16.5, weight: .bold, design: .rounded))
-                                    .foregroundColor(Color(red: 0.259, green: 0.522, blue: 0.957))
+                    // Credentials setup
+                    DisclosureGroup("API-Zugangsdaten", isExpanded: $googleSetupExpanded) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Erstelle ein OAuth-Projekt in der Google Cloud Console:")
+                                .font(.system(size: 12.5)).foregroundColor(.secondary)
+
+                            Button("Google Cloud Console öffnen") {
+                                NSWorkspace.shared.open(URL(string: "https://console.cloud.google.com/apis/credentials")!)
                             }
-                            Text("Sign in with Google")
-                                .font(.system(size: 15.5, weight: .medium)).foregroundColor(.white)
+                            .font(.system(size: 12.5)).buttonStyle(.borderless)
+
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("1. Neues Projekt erstellen (oder vorhandenes nutzen)")
+                                Text("2. OAuth-Zustimmungsbildschirm → Extern → Erstellen")
+                                Text("3. Anmeldedaten → OAuth-Client-ID → Desktop-App")
+                                Text("4. Client-ID und Secret hier einfügen:")
+                            }
+                            .font(.system(size: 11.5)).foregroundColor(.secondary)
+
+                            TextField("Client-ID", text: $googleClientId)
+                                .textFieldStyle(.roundedBorder)
+                                .font(.system(size: 13))
+                            SecureField("Client-Secret", text: $googleClientSecret)
+                                .textFieldStyle(.roundedBorder)
+                                .font(.system(size: 13))
                         }
-                        .padding(.leading, 4).padding(.trailing, 14).padding(.vertical, 4)
-                        .background(RoundedRectangle(cornerRadius: 6).fill(Color(red: 0.259, green: 0.522, blue: 0.957)))
+                        .padding(.top, 4)
                     }
-                    .buttonStyle(.plain)
-                    scopeSelectionView
+                    .font(.system(size: 13.5, weight: .medium))
+
+                    // Sign-in button (only when credentials are set)
+                    if !googleClientId.isEmpty && !googleClientSecret.isEmpty {
+                        Button(action: { GoogleOAuth.shared.signIn() }) {
+                            HStack(spacing: 10) {
+                                ZStack {
+                                    RoundedRectangle(cornerRadius: 4).fill(Color.white).frame(width: 24, height: 24)
+                                    Text("G").font(.system(size: 16.5, weight: .bold, design: .rounded))
+                                        .foregroundColor(Color(red: 0.259, green: 0.522, blue: 0.957))
+                                }
+                                Text("Sign in with Google")
+                                    .font(.system(size: 15.5, weight: .medium)).foregroundColor(.white)
+                            }
+                            .padding(.leading, 4).padding(.trailing, 14).padding(.vertical, 4)
+                            .background(RoundedRectangle(cornerRadius: 6).fill(Color(red: 0.259, green: 0.522, blue: 0.957)))
+                        }
+                        .buttonStyle(.plain)
+                        scopeSelectionView
+                    } else {
+                        HStack(spacing: 6) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.system(size: 12)).foregroundColor(.orange)
+                            Text("Client-ID und Secret eingeben um fortzufahren")
+                                .font(.system(size: 12.5)).foregroundColor(.orange)
+                        }
+                    }
                 })
             }
         )
         .onAppear {
             googleConnected = GoogleOAuth.shared.isConnected
             googleEmail = GoogleOAuth.shared.userEmail
+            if googleClientId.isEmpty { googleSetupExpanded = true }
         }
         .onReceive(Timer.publish(every: 5, on: .main, in: .common).autoconnect()) { _ in
             googleConnected = GoogleOAuth.shared.isConnected

@@ -105,13 +105,14 @@ public struct GoogleApiTool: Tool {
 
     // MARK: - Token Refresh
 
-    // Hardcoded OAuth credentials (same as GoogleOAuth in UI — public desktop client)
-    private let googleClientId = "1000137948067-qiu8bq7sepj75viib7im5tdmbsjdau6a.apps.googleusercontent.com"
-    private let googleClientSecret = "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"
+    // OAuth credentials from UserDefaults (same keys as GoogleOAuth in UI)
+    private var googleClientId: String { UserDefaults.standard.string(forKey: "kobold.google.clientId") ?? "" }
+    private var googleClientSecret: String { UserDefaults.standard.string(forKey: "kobold.google.clientSecret") ?? "" }
 
     private func refreshToken() async -> String? {
         let defaults = UserDefaults.standard
         guard let refreshToken = defaults.string(forKey: "kobold.google.refreshToken"), !refreshToken.isEmpty else { return nil }
+        guard !googleClientId.isEmpty, !googleClientSecret.isEmpty else { return nil }
 
         guard let url = URL(string: "https://oauth2.googleapis.com/token") else { return nil }
         var request = URLRequest(url: url)
