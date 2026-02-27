@@ -374,6 +374,11 @@ public class RuntimeViewModel: ObservableObject {
                             if !flush.steps.isEmpty {
                                 var state = self.sessionAgentStates[sessionId] ?? SessionAgentState()
                                 state.thinkingSteps.append(contentsOf: flush.steps)
+                                // Cap thinkingSteps to prevent unbounded growth during long sub-agent runs
+                                // Without this, 100+ entries cause O(n) re-renders every 400ms → UI freeze
+                                if state.thinkingSteps.count > 50 {
+                                    state.thinkingSteps = Array(state.thinkingSteps.suffix(40))
+                                }
                                 self.sessionAgentStates[sessionId] = state
                                 didChange = true
                             }

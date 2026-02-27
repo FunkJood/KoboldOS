@@ -69,11 +69,13 @@ struct ChatView: View {
 
                         // Live thinking/streaming area — single unified box
                         if viewModel.isAgentLoadingInCurrentChat {
-                            // Unified thinking box: stream above, warte-sprüche below
-                            ThinkingPanelBubble(entries: viewModel.activeThinkingSteps, isLive: true)
-                                .id("thinking-live")
-                            SubAgentActivityBanner(entries: viewModel.activeThinkingSteps)
-                                .id("subagent-banner")
+                            // Only render ThinkingPanel if showAgentSteps is on (saves massive CPU on sub-agent runs)
+                            if showAgentSteps {
+                                ThinkingPanelBubble(entries: viewModel.activeThinkingSteps, isLive: true)
+                                    .id("thinking-live")
+                                SubAgentActivityBanner(entries: viewModel.activeThinkingSteps)
+                                    .id("subagent-banner")
+                            }
 
                             // Typing animation dots
                             GlassChatBubble(message: "", isUser: false, timestamp: Date(), isLoading: true)

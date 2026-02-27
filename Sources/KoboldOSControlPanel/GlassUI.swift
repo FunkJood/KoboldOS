@@ -1819,9 +1819,10 @@ struct SubAgentActivityBanner: View {
     let entries: [ThinkingEntry]
 
     private var activeSubAgents: [ThinkingEntry] {
-        // Show spawned sub-agents that haven't returned yet
-        let spawned = entries.filter { $0.type == .subAgentSpawn }
-        let finished = Set(entries.filter { $0.type == .subAgentResult }.map { $0.toolName })
+        // Only check recent entries to avoid O(n) scan of entire history
+        let recent = entries.suffix(30)
+        let spawned = recent.filter { $0.type == .subAgentSpawn }
+        let finished = Set(recent.filter { $0.type == .subAgentResult }.map { $0.toolName })
         return spawned.filter { !finished.contains($0.toolName) }
     }
 
