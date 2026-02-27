@@ -6,7 +6,7 @@ struct MainView: View {
     @EnvironmentObject var runtimeManager: RuntimeManager
     @EnvironmentObject var l10n: LocalizationManager
     @StateObject private var viewModel = RuntimeViewModel()
-    @State private var selectedTab: SidebarTab = .dashboard
+    @State private var selectedTab: SidebarTab = .chat
     @State private var isSidebarCollapsed: Bool = false
     @AppStorage("kobold.hasOnboarded") private var hasOnboarded: Bool = false
 
@@ -50,7 +50,7 @@ struct MainView: View {
                 case "tasks": selectedTab = .tasks
                 case "workflows": selectedTab = .workflows
                 case "settings": selectedTab = .settings
-                case "dashboard": selectedTab = .dashboard
+                // Dashboard entfernt
                 case "memory": selectedTab = .memory
                 default: break
                 }
@@ -750,7 +750,6 @@ struct SidebarView: View {
     func labelForTab(_ tab: SidebarTab) -> String {
         switch tab {
         case .chat:         return l10n.language.chat
-        case .dashboard:    return l10n.language.dashboard
         case .memory:       return "Gedächtnis"
         case .tasks:        return l10n.language.tasks
         case .workflows:    return l10n.language.team
@@ -761,7 +760,6 @@ struct SidebarView: View {
     func iconForTab(_ tab: SidebarTab) -> String {
         switch tab {
         case .chat:         return "message.fill"
-        case .dashboard:    return "chart.bar.fill"
         case .memory:       return "brain.filled.head.profile"
         case .tasks:        return "checklist"
         case .workflows:    return "point.3.connected.trianglepath.dotted"
@@ -1360,7 +1358,6 @@ struct ContentAreaView: View {
                     } else {
                         ChatLockedView(status: runtimeManager.healthStatus)
                     }
-                case .dashboard:  DashboardView(viewModel: viewModel)
                 case .memory:     MemoryView(viewModel: viewModel)
                 case .tasks:      TasksView(viewModel: viewModel)
                 case .workflows:
@@ -1448,8 +1445,6 @@ struct GlobalHeaderBar: View {
     @ObservedObject var viewModel: RuntimeViewModel
     @Binding var showNotifications: Bool
     @ObservedObject private var weatherManager = WeatherManager.shared
-    @StateObject private var sysMonitor = SystemMetricsMonitor()
-    @State private var sysTimer: Timer? = nil
 
     private var formattedDate: String {
         let f = DateFormatter()
@@ -1478,33 +1473,10 @@ struct GlobalHeaderBar: View {
 
             Spacer()
 
-            // CPU | Uhr | RAM (mittig)
-            HStack(spacing: 12) {
-                // CPU links neben der Uhr
-                HStack(spacing: 4) {
-                    Image(systemName: "cpu.fill")
-                        .font(.system(size: 11.5))
-                        .foregroundColor(sysMonitor.cpuUsage > 80 ? .red : sysMonitor.cpuUsage > 60 ? .orange : .secondary)
-                    Text(String(format: "%.0f%%", sysMonitor.cpuUsage))
-                        .font(.system(size: 13, weight: .medium, design: .monospaced))
-                        .foregroundColor(sysMonitor.cpuUsage > 80 ? .red : sysMonitor.cpuUsage > 60 ? .orange : .secondary)
-                }
-
-                // Uhrzeit mittig
-                Text(formattedTime)
-                    .font(.system(size: 15.5, weight: .semibold, design: .monospaced))
-                    .foregroundColor(.koboldEmerald)
-
-                // RAM rechts neben der Uhr
-                HStack(spacing: 4) {
-                    Text(String(format: "%.1f GB", sysMonitor.ramUsedGB))
-                        .font(.system(size: 13, weight: .medium, design: .monospaced))
-                        .foregroundColor(sysMonitor.ramUsedGB / max(1, sysMonitor.ramTotalGB) > 0.85 ? .red : .secondary)
-                    Image(systemName: "memorychip.fill")
-                        .font(.system(size: 11.5))
-                        .foregroundColor(sysMonitor.ramUsedGB / max(1, sysMonitor.ramTotalGB) > 0.85 ? .red : .secondary)
-                }
-            }
+            // Uhrzeit mittig
+            Text(formattedTime)
+                .font(.system(size: 15.5, weight: .semibold, design: .monospaced))
+                .foregroundColor(.koboldEmerald)
 
             Spacer()
 
@@ -1560,14 +1532,6 @@ struct GlobalHeaderBar: View {
         .padding(.horizontal, 4)
         .onAppear {
             weatherManager.fetchWeatherIfNeeded()
-            sysMonitor.update()
-            sysTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { _ in
-                Task { @MainActor in sysMonitor.update() }
-            }
-        }
-        .onDisappear {
-            sysTimer?.invalidate()
-            sysTimer = nil
         }
         .padding(.vertical, 10).padding(.horizontal, 14)
         .background(
@@ -1609,7 +1573,6 @@ struct ChatLockedView: View {
 // Order here defines sidebar display order
 
 enum SidebarTab: String, CaseIterable {
-    case dashboard
     case chat
     case tasks
     case workflows

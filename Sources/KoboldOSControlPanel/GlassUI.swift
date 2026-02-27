@@ -195,6 +195,7 @@ struct GlassChatBubble: View {
     @State private var showCopy = false
     @State private var copied = false
     @State private var streamPulse = false
+    // isSpeaking removed — TTSManager.shared.isSpeaking is the single source of truth
     @AppStorage("kobold.chat.fontSize") private var chatFontSize: Double = 16.5
 
     var body: some View {
@@ -243,11 +244,12 @@ struct GlassChatBubble: View {
                         .animation(isStreaming ? .easeInOut(duration: 1.5).repeatForever(autoreverses: true) : .default, value: streamPulse)
                 )
                 .onAppear { if isStreaming { streamPulse = true } }
+                .onDisappear { streamPulse = false }
                 .onChange(of: isStreaming) {
                     if isStreaming { streamPulse = true } else { streamPulse = false }
                 }
 
-                // Copy + Timestamp row
+                // Copy + TTS + Timestamp row
                 HStack(spacing: 6) {
                     Text(timestamp, style: .time)
                         .font(.caption2)
@@ -255,6 +257,23 @@ struct GlassChatBubble: View {
 
                     if showCopy && !isLoading && !message.isEmpty {
                         CopyButton(text: message, copied: $copied)
+
+                        // TTS Speaker-Button (nur bei Assistant-Nachrichten)
+                        if !isUser {
+                            Button(action: {
+                                if TTSManager.shared.isSpeaking {
+                                    TTSManager.shared.stop()
+                                } else {
+                                    TTSManager.shared.speak(message)
+                                }
+                            }) {
+                                Image(systemName: TTSManager.shared.isSpeaking ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                                    .font(.system(size: 12.5))
+                                    .foregroundColor(TTSManager.shared.isSpeaking ? .orange : .secondary)
+                            }
+                            .buttonStyle(.plain)
+                            .help(TTSManager.shared.isSpeaking ? "Vorlesen stoppen" : "Vorlesen")
+                        }
                     }
                 }
             }
@@ -647,6 +666,171 @@ struct ToolResultBubble: View {
     }
 }
 
+// MARK: - DiffResultBubble (Claude Code-style green/red diff display)
+
+private enum DiffLineType {
+    case added, removed, context, header, hunk
+
+    var prefix: String {
+        switch self {
+        case .added: return "+"
+        case .removed: return "-"
+        case .context, .header, .hunk: return " "
+        }
+    }
+
+    var textColor: Color {
+        switch self {
+        case .added: return .green
+        case .removed: return Color(.sRGB, red: 1.0, green: 0.35, blue: 0.35, opacity: 1.0)
+        case .hunk: return Color.blue.opacity(0.7)
+        case .header: return .secondary
+        case .context: return .secondary.opacity(0.8)
+        }
+    }
+
+    var bgColor: Color {
+        switch self {
+        case .added: return Color.green.opacity(0.10)
+        case .removed: return Color.red.opacity(0.10)
+        default: return .clear
+        }
+    }
+}
+
+private struct DiffLine: Identifiable {
+    let id: Int
+    let text: String
+    let type: DiffLineType
+}
+
+struct DiffResultBubble: View {
+    let output: String
+    let success: Bool
+    @State private var expanded = true
+    @State private var showCopy = false
+    @State private var copied = false
+    @State private var cachedLines: [DiffLine] = []
+    @State private var cachedPath = ""
+    @State private var cachedAdded = 0
+    @State private var cachedRemoved = 0
+    @State private var didParse = false
+
+    private func parseIfNeeded() {
+        guard !didParse else { return }
+        let parts = output.components(separatedBy: "\n__DIFF__\n")
+        let summary = parts.first ?? output
+        let diffText = parts.count > 1 ? parts[1] : ""
+        let rawLines = diffText.components(separatedBy: "\n")
+
+        if let range = summary.range(of: "to: ") {
+            cachedPath = String(summary[range.upperBound...]).trimmingCharacters(in: .whitespaces)
+        }
+
+        var result: [DiffLine] = []
+        for (i, line) in rawLines.enumerated() {
+            if line.hasPrefix("+++") || line.hasPrefix("---") {
+                result.append(DiffLine(id: i, text: line, type: .header))
+            } else if line.hasPrefix("@@") {
+                result.append(DiffLine(id: i, text: line, type: .hunk))
+            } else if line.hasPrefix("+") {
+                result.append(DiffLine(id: i, text: String(line.dropFirst()), type: .added))
+            } else if line.hasPrefix("-") {
+                result.append(DiffLine(id: i, text: String(line.dropFirst()), type: .removed))
+            } else if line.hasPrefix(" ") {
+                result.append(DiffLine(id: i, text: String(line.dropFirst()), type: .context))
+            } else if !line.isEmpty {
+                result.append(DiffLine(id: i, text: line, type: .context))
+            }
+        }
+        cachedLines = result
+        cachedAdded = result.filter { $0.type == .added }.count
+        cachedRemoved = result.filter { $0.type == .removed }.count
+        didParse = true
+    }
+
+    private var shortPath: String {
+        let p = cachedPath
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        if p.hasPrefix(home) { return "~" + p.dropFirst(home.count) }
+        return p
+    }
+
+    var body: some View {
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 4) {
+                Button(action: { withAnimation(.easeInOut(duration: 0.2)) { expanded.toggle() } }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "doc.text.fill")
+                            .font(.caption2).foregroundColor(.koboldEmerald)
+                        Text(shortPath.isEmpty ? "file" : (shortPath as NSString).lastPathComponent)
+                            .font(.system(size: 14.5, weight: .semibold)).foregroundColor(.koboldEmerald)
+                            .lineLimit(1)
+                        if cachedAdded > 0 {
+                            Text("+\(cachedAdded)")
+                                .font(.system(size: 11.5, weight: .bold, design: .monospaced))
+                                .foregroundColor(.green)
+                        }
+                        if cachedRemoved > 0 {
+                            Text("-\(cachedRemoved)")
+                                .font(.system(size: 11.5, weight: .bold, design: .monospaced))
+                                .foregroundColor(.red)
+                        }
+                        Spacer()
+                        if showCopy { CopyButton(text: output, copied: $copied) }
+                        Image(systemName: expanded ? "chevron.up" : "chevron.down")
+                            .font(.caption2).foregroundColor(.secondary)
+                    }
+                }
+                .buttonStyle(.plain)
+
+                if !shortPath.isEmpty {
+                    Text(shortPath)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(.secondary.opacity(0.6))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+
+                if expanded && !cachedLines.isEmpty {
+                    ScrollView([.horizontal, .vertical], showsIndicators: true) {
+                        VStack(alignment: .leading, spacing: 0) {
+                            ForEach(cachedLines) { line in
+                                HStack(spacing: 0) {
+                                    // +/- gutter
+                                    Text(line.type == .added ? "+" : line.type == .removed ? "-" : " ")
+                                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                                        .foregroundColor(line.type.textColor)
+                                        .frame(width: 16, alignment: .center)
+                                    // Line content
+                                    Text(line.text)
+                                        .font(.system(size: 12, design: .monospaced))
+                                        .foregroundColor(line.type.textColor)
+                                        .lineLimit(1)
+                                }
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 0.5)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(line.type.bgColor)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                    .frame(maxHeight: 350)
+                    .background(Color.black.opacity(0.35))
+                    .cornerRadius(6)
+                }
+            }
+            .padding(.horizontal, 12).padding(.vertical, 8)
+            .background(RoundedRectangle(cornerRadius: 12).fill(Color.koboldEmerald.opacity(0.06))
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.koboldEmerald.opacity(0.18), lineWidth: 0.5)))
+            .onHover { h in withAnimation(.easeInOut(duration: 0.15)) { showCopy = h } }
+            .onAppear { parseIfNeeded() }
+            Spacer(minLength: 80)
+        }
+    }
+}
+
 // MARK: - InteractiveBubble (Yes/No or multi-choice buttons from agent)
 
 struct InteractiveBubble: View {
@@ -673,19 +857,9 @@ struct InteractiveBubble: View {
                             }
                             .padding(.horizontal, 16)
                             .padding(.vertical, 8)
-                            .background(
-                                RoundedRectangle(cornerRadius: 10)
-                                    .fill(isAnswered && selectedOptionId == option.id
-                                          ? Color.koboldEmerald.opacity(0.25)
-                                          : Color.koboldEmerald.opacity(0.1))
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 10)
-                                    .stroke(isAnswered && selectedOptionId == option.id
-                                            ? Color.koboldEmerald.opacity(0.6)
-                                            : Color.koboldEmerald.opacity(0.3), lineWidth: 1)
-                            )
-                            .foregroundColor(isAnswered && selectedOptionId == option.id ? .koboldEmerald : .primary)
+                            .background(optionBackground(for: option))
+                            .overlay(optionBorder(for: option))
+                            .foregroundColor(isSelected(option) ? .koboldEmerald : .primary)
                         }
                         .buttonStyle(.plain)
                         .disabled(isAnswered)
@@ -703,6 +877,22 @@ struct InteractiveBubble: View {
             .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.koboldEmerald.opacity(0.2), lineWidth: 0.5))
             Spacer(minLength: 60)
         }
+    }
+
+    private func isSelected(_ option: InteractiveOption) -> Bool {
+        isAnswered && selectedOptionId == option.id
+    }
+
+    private func optionBackground(for option: InteractiveOption) -> some View {
+        let selected = isSelected(option)
+        return RoundedRectangle(cornerRadius: 10)
+            .fill(Color.koboldEmerald.opacity(selected ? 0.25 : 0.1))
+    }
+
+    private func optionBorder(for option: InteractiveOption) -> some View {
+        let selected = isSelected(option)
+        return RoundedRectangle(cornerRadius: 10)
+            .stroke(Color.koboldEmerald.opacity(selected ? 0.6 : 0.3), lineWidth: 1)
     }
 }
 
@@ -915,8 +1105,7 @@ struct SubAgentSpawnBubble: View {
         switch profile.lowercased() {
         case "coder", "developer": return "💻"
         case "web":                return "🌐"
-        case "planner":            return "📋"
-        case "instructor":         return "🎯"
+        case "general":            return "🧠"
         default:                   return "🤖"
         }
     }
@@ -1106,6 +1295,7 @@ struct ThinkingPanelBubble: View {
     @State private var pulse = false
     @State private var verbIndex = Int.random(in: 0..<ThinkingPlaceholderBubble.thinkingVerbs.count)
     @State private var verbTimer: Task<Void, Never>?
+    @State private var scrollDebounceTask: Task<Void, Never>?
 
     init(entries: [ThinkingEntry], isLive: Bool, isNewest: Bool = false) {
         self.entries = entries
@@ -1124,9 +1314,10 @@ struct ThinkingPanelBubble: View {
 
     private func startVerbRotation() {
         verbTimer?.cancel()
+        guard isLive else { return } // Nur bei aktiver Anzeige rotieren
         verbTimer = Task { @MainActor in
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 3_500_000_000) // 3.5s rotation
+                try? await Task.sleep(nanoseconds: 4_000_000_000) // 4s rotation (weniger CPU)
                 guard !Task.isCancelled else { break }
                 withAnimation(.easeInOut(duration: 0.3)) {
                     verbIndex = (verbIndex + 1) % ThinkingPlaceholderBubble.thinkingVerbs.count
@@ -1141,9 +1332,8 @@ struct ThinkingPanelBubble: View {
                 // Header — collapsible toggle (live: not collapsible)
                 if !entries.isEmpty {
                     Button(action: {
-                        if !isLive {
-                            withAnimation(.easeInOut(duration: 0.2)) { expanded.toggle() }
-                        }
+                        // Allow collapse even during streaming — user should control visibility
+                        withAnimation(.easeInOut(duration: 0.2)) { expanded.toggle() }
                     }) {
                         HStack(spacing: 6) {
                             Image(systemName: expanded ? "chevron.down" : "chevron.right")
@@ -1191,10 +1381,12 @@ struct ThinkingPanelBubble: View {
                             if hasSubAgentActivity && !expanded {
                                 withAnimation(.easeInOut(duration: 0.2)) { expanded = true }
                             }
-                            if isLive, let lastEntry = entries.last {
-                                withAnimation(.easeOut(duration: 0.15)) {
-                                    scrollProxy.scrollTo(lastEntry.id, anchor: .bottom)
-                                }
+                            // Debounced scroll — avoid 10-20 scroll ops/sec during tool-heavy tasks
+                            scrollDebounceTask?.cancel()
+                            scrollDebounceTask = Task { @MainActor in
+                                try? await Task.sleep(nanoseconds: 400_000_000)
+                                guard !Task.isCancelled, isLive, let lastEntry = entries.last else { return }
+                                scrollProxy.scrollTo(lastEntry.id, anchor: .bottom)
                             }
                         }
                     }
@@ -1210,7 +1402,8 @@ struct ThinkingPanelBubble: View {
                             .font(.system(size: 14.5))
                             .foregroundColor(.koboldGold)
                             .scaleEffect(pulse ? 1.1 : 0.95)
-                            .animation(.easeInOut(duration: 1.0).repeatForever(autoreverses: true), value: pulse)
+                            // Single animation — NO dual repeatForever (was causing infinite re-render loop)
+                            .animation(.easeInOut(duration: 1.5).repeatForever(autoreverses: true), value: pulse)
                         Text(thinkingVerb)
                             .font(.system(size: 14, weight: .semibold))
                             .foregroundColor(.koboldGold)
@@ -1229,7 +1422,7 @@ struct ThinkingPanelBubble: View {
                         RoundedRectangle(cornerRadius: 12)
                             .stroke(Color.koboldGold.opacity(isLive ? (pulse ? 0.7 : 0.2) : 0.2), lineWidth: isLive ? 1.5 : 0.5)
                     )
-                    .animation(isLive ? .easeInOut(duration: 2.0).repeatForever(autoreverses: true) : .default, value: pulse)
+                    // REMOVED: .animation(.repeatForever) on border — dual infinite animations caused 100% CPU
             )
             Spacer(minLength: 80)
         }
@@ -1239,7 +1432,11 @@ struct ThinkingPanelBubble: View {
                 startVerbRotation()
             }
         }
-        .onDisappear { verbTimer?.cancel() }
+        .onDisappear {
+            verbTimer?.cancel()
+            scrollDebounceTask?.cancel()
+            pulse = false
+        }
     }
 
     @ViewBuilder
@@ -1313,23 +1510,26 @@ struct TypewriterText: View {
     var body: some View {
         Text(String(fullText.prefix(visibleCount)))
             .onAppear { startTyping() }
+            .onDisappear { timerTask?.cancel(); timerTask = nil }
             .onChange(of: fullText) {
                 if visibleCount < fullText.count { startTyping() }
             }
     }
 
     private func startTyping() {
+        // Guard: don't restart if already typing (prevents onChange spam creating new Tasks)
+        if timerTask != nil && visibleCount < fullText.count { return }
         timerTask?.cancel()
         if visibleCount >= fullText.count { return }
         timerTask = Task { @MainActor in
             while visibleCount < fullText.count && !Task.isCancelled {
-                // Large chunks + slower tick = far fewer MainActor wakeups.
-                // Old: 3 chars / 8ms → ~42 updates/sec per entry.
-                // New: 12 chars / 40ms → ~8 updates/sec per entry (85% less CPU).
-                let step = min(12, fullText.count - visibleCount)
+                // Bigger chunks + slower tick = fewer MainActor wakeups
+                // 32 chars / 80ms → ~3 updates/sec (much less CPU than 16/60ms)
+                let step = min(32, fullText.count - visibleCount)
                 visibleCount += step
-                try? await Task.sleep(nanoseconds: 40_000_000) // 40ms flat
+                try? await Task.sleep(nanoseconds: 80_000_000) // 80ms
             }
+            timerTask = nil // Mark as done so next call can start fresh
         }
     }
 }
@@ -1529,6 +1729,33 @@ struct ThinkingPlaceholderBubble: View {
             Spacer(minLength: 80)
         }
         .onAppear { pulse = true }
+        .onDisappear { pulse = false }
+    }
+}
+
+// MARK: - AgentChecklistItem
+
+struct AgentChecklistItem: Identifiable {
+    let id = UUID()
+    let text: String
+    var isCompleted: Bool
+
+    init(_ text: String, isCompleted: Bool = false) {
+        self.text = text
+        self.isCompleted = isCompleted
+    }
+
+    init(from string: String) {
+        if string.hasPrefix("[x] ") || string.hasPrefix("[X] ") {
+            self.text = String(string.dropFirst(4))
+            self.isCompleted = true
+        } else if string.hasPrefix("[ ] ") {
+            self.text = String(string.dropFirst(4))
+            self.isCompleted = false
+        } else {
+            self.text = string
+            self.isCompleted = false
+        }
     }
 }
 
@@ -1538,6 +1765,10 @@ struct AgentChecklistOverlay: View {
     let items: [AgentChecklistItem]
     private var completedCount: Int { items.filter(\.isCompleted).count }
     private var progress: Double { items.isEmpty ? 0 : Double(completedCount) / Double(items.count) }
+
+    init(items strings: [String]) {
+        self.items = strings.map { AgentChecklistItem(from: $0) }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -1562,7 +1793,7 @@ struct AgentChecklistOverlay: View {
                     Image(systemName: item.isCompleted ? "checkmark.circle.fill" : "circle")
                         .font(.system(size: 14.5))
                         .foregroundColor(item.isCompleted ? .koboldEmerald : .secondary)
-                    Text(item.label)
+                    Text(item.text)
                         .font(.system(size: 13.5))
                         .foregroundColor(item.isCompleted ? .secondary : .primary)
                         .strikethrough(item.isCompleted, color: .secondary)

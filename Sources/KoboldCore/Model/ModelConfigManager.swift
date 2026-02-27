@@ -11,22 +11,21 @@ public actor ModelConfigManager {
     private init() {}
     
     /// Get the effective model for an agent type.
-    /// If it's the Instructor or if the model is empty, use the global default.
+    /// Priority: 1) Agent-specific config model, 2) General agent model, 3) kobold.ollamaModel
     public func getModel(for agentId: String) -> (provider: String, model: String) {
-        let globalDefault = UserDefaults.standard.string(forKey: defaultModelKey) ?? ""
-        
-        // Load saved configs
         let configs = loadConfigs()
+        let generalConfig = configs.first(where: { $0.id == "general" })
+        let generalModel = generalConfig?.modelName ?? ""
+        let globalDefault = UserDefaults.standard.string(forKey: defaultModelKey) ?? ""
+        let effectiveDefault = !generalModel.isEmpty ? generalModel : globalDefault
+
         if let config = configs.first(where: { $0.id == agentId }) {
-            // Instructor always follows global default OR use fallback if config model is empty
-            if agentId == "instructor" || config.modelName.isEmpty {
-                return (config.provider, globalDefault.isEmpty ? "qwen3-vl:235b-instruct-cloud" : globalDefault)
-            }
-            return (config.provider, config.modelName)
+            let model = config.modelName.isEmpty ? effectiveDefault : config.modelName
+            return (config.provider, model)
         }
-        
-        // Fallback for unknown agents
-        return ("ollama", globalDefault.isEmpty ? "qwen3-vl:235b-instruct-cloud" : globalDefault)
+
+        // Fallback for unknown agents — use general config
+        return (generalConfig?.provider ?? "ollama", effectiveDefault)
     }
     
     /// Validate and save model changes.
@@ -37,8 +36,8 @@ public actor ModelConfigManager {
             configs[idx].modelName = modelName
             saveConfigs(configs)
             
-            // If we updated the instructor, also update the global default for consistency
-            if agentId == "instructor" {
+            // If we updated the general agent, also update the global default for consistency
+            if agentId == "general" || agentId == "instructor" {
                 UserDefaults.standard.set(modelName, forKey: defaultModelKey)
             }
         }
@@ -66,9 +65,8 @@ struct AgentModelConfigInternal: Codable {
     var modelName: String
     
     static let defaults: [AgentModelConfigInternal] = [
-        AgentModelConfigInternal(id: "instructor", provider: "ollama", modelName: ""),
+        AgentModelConfigInternal(id: "general", provider: "ollama", modelName: ""),
         AgentModelConfigInternal(id: "coder", provider: "ollama", modelName: ""),
-        AgentModelConfigInternal(id: "web", provider: "ollama", modelName: ""),
-        AgentModelConfigInternal(id: "utility", provider: "ollama", modelName: "")
+        AgentModelConfigInternal(id: "web", provider: "ollama", modelName: "")
     ]
 }

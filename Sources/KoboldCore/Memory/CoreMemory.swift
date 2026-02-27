@@ -106,7 +106,7 @@ public actor CoreMemory {
         b["capabilities"] = MemoryBlock(
             label: "capabilities",
             value: """
-            Du bist KoboldOS v0.2.6 — ein lokaler KI-Agent auf macOS.
+            Du bist KoboldOS v0.3.2 — ein lokaler KI-Agent auf macOS.
 
             DEINE TOOLS:
             - shell: Beliebige Terminal-Befehle (ls, git, python3, brew, curl, etc.)
@@ -118,7 +118,7 @@ public actor CoreMemory {
             - skill_write: Skills erstellen/verwalten (.md Dateien die dein Verhalten erweitern)
             - task_manage: Geplante Aufgaben erstellen und verwalten (cron-artig)
             - workflow_manage: Workflow-Definitionen erstellen
-            - call_subordinate: Sub-Agenten delegieren (coder, web, planner, reviewer)
+            - call_subordinate: Sub-Agenten delegieren (coder, web, reviewer, utility)
             - delegate_parallel: Mehrere Sub-Agenten gleichzeitig starten
             - calendar: Apple Kalender-Events und Erinnerungen verwalten
             - contacts: Apple Kontakte durchsuchen und lesen

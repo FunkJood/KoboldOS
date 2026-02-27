@@ -41,6 +41,25 @@ class SuggestionService: ObservableObject {
     private let cacheKey = "kobold.suggestions.cache"
     private let cacheDuration: TimeInterval = 4 * 3600
 
+    /// Letzte Nutzer-Aktivität für personalisierte Vorschläge
+    @Published var recentUserTopics: [String] = []
+
+    /// Nutzerverhalten tracken (wird von RuntimeViewModel nach jeder Nachricht aufgerufen)
+    func recordUserActivity(message: String, toolsUsed: [String] = []) {
+        let topic = String(message.prefix(60))
+        recentUserTopics.append(topic)
+        // Max 20 letzte Topics behalten
+        if recentUserTopics.count > 20 { recentUserTopics = Array(recentUserTopics.suffix(20)) }
+        // Speichern für Persistenz
+        UserDefaults.standard.set(recentUserTopics, forKey: "kobold.suggestions.recentTopics")
+        if !toolsUsed.isEmpty {
+            var allTools = UserDefaults.standard.stringArray(forKey: "kobold.suggestions.recentTools") ?? []
+            allTools.append(contentsOf: toolsUsed)
+            if allTools.count > 30 { allTools = Array(allTools.suffix(30)) }
+            UserDefaults.standard.set(allTools, forKey: "kobold.suggestions.recentTools")
+        }
+    }
+
     func generateSuggestions(forceRefresh: Bool = false) async {
         // Check cache
         if !forceRefresh, let cached = loadCache(),
@@ -49,14 +68,38 @@ class SuggestionService: ObservableObject {
             return
         }
 
+        // Lade gespeicherte Nutzer-Aktivität
+        if recentUserTopics.isEmpty {
+            recentUserTopics = UserDefaults.standard.stringArray(forKey: "kobold.suggestions.recentTopics") ?? []
+        }
+        let recentTools = UserDefaults.standard.stringArray(forKey: "kobold.suggestions.recentTools") ?? []
+
         isLoading = true
         defer { isLoading = false }
 
-        let model = UserDefaults.standard.string(forKey: "kobold.ollamaModel") ?? "qwen2.5:3b"
+        let model = UserDefaults.standard.string(forKey: "kobold.ollamaModel") ?? ""
         let hour = Calendar.current.component(.hour, from: Date())
         let weekday = Calendar.current.component(.weekday, from: Date())
         let dayNames = ["Sonntag", "Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag"]
         let dayName = dayNames[weekday - 1]
+
+        // Nutzerkontext für personalisierte Vorschläge
+        let userName = UserDefaults.standard.string(forKey: "kobold.profile.name") ?? ""
+        let userCtx: String
+        if !recentUserTopics.isEmpty || !recentTools.isEmpty {
+            let topicStr = recentUserTopics.suffix(5).joined(separator: ", ")
+            let toolStr = Array(Set(recentTools)).prefix(8).joined(separator: ", ")
+            userCtx = """
+
+            NUTZER-KONTEXT (passe Vorschläge daran an!):
+            \(userName.isEmpty ? "" : "Name: \(userName)")
+            Letzte Themen: \(topicStr.isEmpty ? "Keine" : topicStr)
+            Genutzte Tools: \(toolStr.isEmpty ? "Keine" : toolStr)
+            Mache Vorschläge die zum Nutzerverhalten passen — ähnliche Themen, weiterführende Ideen, komplementäre Aufgaben.
+            """
+        } else {
+            userCtx = ""
+        }
 
         let systemPrompt = """
         Du bist der KoboldOS-Assistent. Es ist \(dayName), \(hour) Uhr.
@@ -64,7 +107,7 @@ class SuggestionService: ObservableObject {
         1. Eine witzige, kurze Begrüßung im Kobold-Stil (max 80 Zeichen, wie "Dein Kobold hat Kaffee gekocht.")
         2. Vier kreative Chat-Vorschläge (praktische macOS-Aufgaben die ein KI-Agent erledigen kann, fortgeschrittene und einfache gemischt)
         3. Drei Automatisierungs-Vorschläge mit Name, Prompt und Zeitplan
-
+        \(userCtx)
         Antworte NUR als JSON:
         {"greeting":"...","chatPrompts":["...","...","...","..."],"tasks":[{"name":"...","prompt":"...","schedule":"Täglich 08:00"},{"name":"...","prompt":"...","schedule":"Wöchentlich"},{"name":"...","prompt":"...","schedule":"Alle 4 Stunden"}]}
         """
@@ -176,26 +219,21 @@ class SuggestionService: ObservableObject {
 
     private func fallbackChatPrompts() -> [String] {
         let all = [
-            "Räum meinen Desktop auf und sortiere nach Dateityp",
-            "Welche Prozesse fressen gerade am meisten CPU?",
-            "Generiere ein Bild von einem Drachen auf einer Burg",
-            "Finde alle Dateien über 1 GB auf meinem Mac",
-            "Erstelle ein Python-Skript das PDFs zusammenführt",
-            "Komprimiere alle PNGs auf dem Desktop zu einem ZIP",
-            "Lösche alle .DS_Store Dateien rekursiv",
-            "Zeig mir die Git-History von diesem Projekt",
-            "Erstelle einen Cronjob der täglich Logs aufräumt",
-            "Finde alle offenen Ports auf meinem Mac",
-            "Erstelle ein Bild im Anime-Stil von einer Katze",
-            "Scanne mein WLAN und zeig alle verbundenen Geräte",
-            "Führe dieses Python-Skript aus und zeig mir die Ausgabe",
-            "Ändere mein Wallpaper auf ein zufälliges von Unsplash",
-            "Prüfe ob meine Webseite erreichbar ist",
-            "Wie viel Speicherplatz ist noch frei?",
-            "Analysiere mein Git-Repo auf Code-Qualität",
-            "Konvertiere dieses Video zu MP4 mit FFmpeg",
-            "Erstelle eine Zusammenfassung der letzten 10 PDFs auf dem Desktop",
-            "Schreibe einen Newsletter-Entwurf über KI-Trends",
+            // Grundlagen — System kennenlernen
+            "Was kannst du alles?",
+            "Wie viel Speicherplatz habe ich noch?",
+            "Zeig mir was auf meinem Desktop liegt",
+            "Welches Modell nutzt du gerade?",
+            // Praktische Alltagshilfe
+            "Räum meinen Desktop auf",
+            "Fasse diese Webseite zusammen",
+            "Schreibe eine kurze E-Mail für mich",
+            "Erinnere mich morgen um 9 Uhr",
+            // Kreativ & Entdecken
+            "Erzähl mir einen Witz",
+            "Hilf mir beim Brainstorming",
+            "Erstelle ein kleines Python-Skript",
+            "Suche im Internet nach den neuesten Nachrichten",
         ]
         let seed = Calendar.current.ordinality(of: .day, in: .year, for: Date()) ?? 1
         let hour = Calendar.current.component(.hour, from: Date())

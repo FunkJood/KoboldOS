@@ -3,29 +3,22 @@ import Foundation
 // MARK: - Agent Type
 
 public enum AgentType: String, Sendable {
-    case web        = "web"
-    case coder      = "coder"
-    case general    = "general"
-    case instructor = "instructor"
-    case planner    = "planner"
+    case web     = "web"
+    case coder   = "coder"
+    case general = "general"
 
     public var stepLimit: Int {
         let defaults: Int
         switch self {
-        case .web:        defaults = 200
-        case .coder:      defaults = 150
-        case .instructor: defaults = 100
-        case .general:    defaults = 100
-        case .planner:    defaults = 80
+        case .web:     defaults = 200
+        case .coder:   defaults = 150
+        case .general: defaults = 100
         }
-        // Allow user override via Settings
         let key: String
         switch self {
-        case .web:        key = "kobold.agent.webSteps"
-        case .coder:      key = "kobold.agent.coderSteps"
-        case .instructor: key = "kobold.agent.instructorSteps"
-        case .general:    key = "kobold.agent.generalSteps"
-        case .planner:    key = "kobold.agent.plannerSteps"
+        case .web:     key = "kobold.agent.webSteps"
+        case .coder:   key = "kobold.agent.coderSteps"
+        case .general: key = "kobold.agent.generalSteps"
         }
         let userValue = UserDefaults.standard.integer(forKey: key)
         return userValue > 0 ? userValue : defaults
@@ -118,10 +111,10 @@ public actor AgentLoop {
 
     // MARK: - Context Management
 
-    /// Context window size from UserDefaults (default 150000)
+    /// Context window size from UserDefaults (default 32768)
     private var contextWindowSize: Int {
         let v = UserDefaults.standard.integer(forKey: "kobold.context.windowSize")
-        return v > 0 ? v : 200_000
+        return v > 0 ? v : 32768
     }
 
     /// Reserve 10% of context window for response generation
@@ -262,39 +255,6 @@ public actor AgentLoop {
         // Text-to-Speech
         await registry.register(TTSTool())
 
-        // MCP (Model Context Protocol) — defer connection until actually needed
-        // This prevents blocking the app startup if external servers are slow/unreachable
-        // MCP servers will be connected on-demand when tools are first used
-    }
-
-    /// Connect MCP servers with timeout and error handling
-    /// This should be called on-demand when MCP tools are first used
-    private func connectMCPserversIfNeeded() async {
-        // TEMPORARILY DISABLED — MCP deactivated for stability debugging
-        print("[AgentLoop] MCP temporarily disabled")
-        return
-        // Check if already connected
-        let mcpStatus = await MCPConfigManager.shared.getStatus()
-        let hasConnectedMCP = mcpStatus.contains { $0.connected }
-        if hasConnectedMCP {
-            return
-        }
-
-        // Connect with timeout using Task cancellation
-        let connectTask = Task {
-            await MCPConfigManager.shared.connectAllServers(registry: registry)
-        }
-
-        // Wait for completion or cancel after timeout
-        do {
-            try await Task.sleep(nanoseconds: 10_000_000_000) // 10 seconds
-            // If we reach here, timeout occurred
-            connectTask.cancel()
-            print("[AgentLoop] Warning: MCP server connection timed out")
-        } catch {
-            // Task.sleep was cancelled, meaning connection completed successfully
-            print("[AgentLoop] MCP servers connected successfully")
-        }
     }
 
     // MARK: - Configuration
@@ -312,6 +272,15 @@ public actor AgentLoop {
     public func clearHistory() {
         conversationHistory = []
         conversationMessages = []
+    }
+
+    /// Public context compression — triggered by /agent/compress endpoint.
+    /// Prunes old messages, truncates tool results, returns remaining message count.
+    public func compressContext() -> Int {
+        guard !conversationMessages.isEmpty else { return 0 }
+        manageContext(&conversationMessages)
+        truncateOldToolResults(&conversationMessages)
+        return conversationMessages.count
     }
 
     /// Trim conversation history to prevent unbounded memory growth
@@ -427,8 +396,8 @@ public actor AgentLoop {
 
     // MARK: - Main Run (AgentZero-style loop)
 
-    /// Maximum time an agent run is allowed to take (unbounded — 2 hours)
-    private let executionTimeout: TimeInterval = 7200
+    /// Maximum time an agent run is allowed to take (10 minutes — was 2 hours which caused hangs)
+    private let executionTimeout: TimeInterval = 600
 
     /// Maximum characters to include from a tool result in the message context
     private let maxToolResultChars = 32000
@@ -458,6 +427,10 @@ public actor AgentLoop {
             self.currentProviderConfig = pc
             await setupTools(providerConfig: pc)
         }
+        // Set Ollama model on the runner if specified
+        if let pc = providerConfig, !pc.model.isEmpty, pc.provider == "ollama" {
+            await llmRunner.setModel(pc.model)
+        }
         conversationHistory.append("User: \(userMessage)")
         trimConversationHistory()
         var steps: [AgentStep] = []
@@ -466,11 +439,17 @@ public actor AgentLoop {
         // Cache static parts of system prompt (don't rebuild every step)
         let toolDescriptions = buildToolDescriptions()
         let skillsPrompt = await SkillLoader.shared.enabledSkillsPrompt()
-        let autonomyLevel = UserDefaults.standard.integer(forKey: "kobold.autonomyLevel")
+        let rawAutonomy = UserDefaults.standard.integer(forKey: "kobold.autonomyLevel")
+        let autonomyLevel = rawAutonomy == 0 ? 2 : min(max(rawAutonomy, 1), 3) // Default: Normal (2)
         let selfCheckEnabled = UserDefaults.standard.bool(forKey: "kobold.perm.selfCheck")
-        let selfCheckPrompt = (autonomyLevel >= 3 && selfCheckEnabled)
-            ? "\n\n# Autonomer Modus\nDu bist vollständig autonom. Prüfe deine Arbeit, teste Code, korrigiere Fehler selbstständig. Frage nur bei destruktiven Aktionen nach."
-            : ""
+        let selfCheckPrompt: String
+        if autonomyLevel >= 3 && selfCheckEnabled {
+            selfCheckPrompt = "\n\n# Autonomer Modus\nDu bist vollständig autonom. Prüfe deine Arbeit, teste Code, korrigiere Fehler selbstständig. Frage nur bei destruktiven Aktionen (rm -rf, Daten löschen) nach."
+        } else if autonomyLevel >= 2 {
+            selfCheckPrompt = "\n\n# Werkzeug-Nutzung\nDu darfst alle aktivierten Tools selbstständig nutzen ohne nachzufragen. Handle Aufgaben direkt. Frage NUR bei potenziell destruktiven Aktionen (Dateien löschen, System ändern) nach Bestätigung."
+        } else {
+            selfCheckPrompt = ""
+        }
         let confidencePrompt = """
 
         # Confidence Self-Assessment
@@ -492,12 +471,15 @@ public actor AgentLoop {
         let relevantMemories = await smartMemoryRetrieval(query: userMessage)
         let memoryRetrievalPrompt = relevantMemories.isEmpty ? "" : "\n\n## Relevante Erinnerungen (automatisch geladen)\n\(relevantMemories)"
 
+        // Skill-basierte Suche: relevante Skills zum Query laden
+        let relevantSkillsPrompt = await SkillLoader.shared.relevantSkills(query: userMessage)
+
         // Context status for LLM awareness
         let ctxTokens = lastKnownPromptTokens > 0 ? lastKnownPromptTokens : TokenEstimator.estimateTokens(messages: conversationMessages)
         let ctxPercent = Int(TokenEstimator.usagePercent(estimatedTokens: ctxTokens, contextSize: contextWindowSize) * 100)
         let contextStatusPrompt = "\n\n# Kontext-Status\nNutzung: ~\(ctxTokens) / \(contextWindowSize) Tokens (\(ctxPercent)%)"
 
-        let sysPrompt = buildSystemPrompt(toolDescriptions: toolDescriptions, compiledMemory: compiledMemory) + skillsPrompt + selfCheckPrompt + confidencePrompt + archivalPrompt + memoryRetrievalPrompt + contextStatusPrompt
+        let sysPrompt = buildSystemPrompt(toolDescriptions: toolDescriptions, compiledMemory: compiledMemory) + skillsPrompt + selfCheckPrompt + confidencePrompt + archivalPrompt + memoryRetrievalPrompt + relevantSkillsPrompt + contextStatusPrompt
 
         var messages: [[String: String]] = [
             ["role": "system", "content": sysPrompt]
@@ -512,7 +494,7 @@ public actor AgentLoop {
             let freshMemory = await coreMemory.compile()
             if freshMemory != compiledMemory {
                 let freshPrompt = buildSystemPrompt(toolDescriptions: toolDescriptions, compiledMemory: freshMemory) + skillsPrompt + selfCheckPrompt + confidencePrompt + archivalPrompt
-                messages[0] = ["role": "system", "content": freshPrompt]
+                if !messages.isEmpty { messages[0] = ["role": "system", "content": freshPrompt] }
             }
 
             // Smart context management (estimate tokens, compress if needed, fallback prune)
@@ -703,8 +685,7 @@ public actor AgentLoop {
                 switch checkpoint.agentType {
                 case "coder": type = .coder
                 case "researcher", "web": type = .web
-                case "planner": type = .planner
-                case "instructor": type = .instructor
+                case "instructor": type = .general
                 default: type = .general
                 }
                 self.agentType = type
@@ -735,7 +716,7 @@ public actor AgentLoop {
                         return
                     }
 
-                    let parsed = parsedCalls[0]
+                    guard let parsed = parsedCalls.first else { continue }
                     if !parsed.thoughts.isEmpty {
                         continuation.yield(AgentStep(stepNumber: actualStep, type: .think, content: parsed.thoughts.joined(separator: "\n"), confidence: parsed.confidence))
                     }
@@ -844,6 +825,11 @@ public actor AgentLoop {
                     self.currentProviderConfig = pc
                     await self.setupTools(providerConfig: pc)
                 }
+                // Set Ollama model on the runner if specified (fixes model mismatch from Settings → Agenten)
+                if let pc = providerConfig, !pc.model.isEmpty, pc.provider == "ollama" {
+                    await llmRunner.setModel(pc.model)
+                    print("[AgentLoop] Set Ollama model to: \(pc.model)")
+                }
                 conversationHistory.append("User: \(userMessage)")
                 trimConversationHistory()
                 ruleEngine.reset()
@@ -852,11 +838,34 @@ public actor AgentLoop {
                 let skillsPrompt = await SkillLoader.shared.enabledSkillsPrompt()
                 let initialMemory = await coreMemory.compile()
 
+                // Autonomy / self-check prompt (same as runInner)
+                let rawAutonomy = UserDefaults.standard.integer(forKey: "kobold.autonomyLevel")
+                let autonomyLevel = rawAutonomy == 0 ? 2 : min(max(rawAutonomy, 1), 3)
+                let selfCheckEnabled = UserDefaults.standard.bool(forKey: "kobold.perm.selfCheck")
+                let selfCheckPrompt: String
+                if autonomyLevel >= 3 && selfCheckEnabled {
+                    selfCheckPrompt = "\n\n# Autonomer Modus\nDu bist vollständig autonom. Prüfe deine Arbeit, teste Code, korrigiere Fehler selbstständig. Frage nur bei destruktiven Aktionen (rm -rf, Daten löschen) nach."
+                } else if autonomyLevel >= 2 {
+                    selfCheckPrompt = "\n\n# Werkzeug-Nutzung\nDu darfst alle aktivierten Tools selbstständig nutzen ohne nachzufragen. Handle Aufgaben direkt. Frage NUR bei potenziell destruktiven Aktionen (Dateien löschen, System ändern) nach Bestätigung."
+                } else {
+                    selfCheckPrompt = ""
+                }
+                let confidencePrompt = "\n\n# Confidence Self-Assessment\nInclude a \"confidence\" field (0.0-1.0) in every JSON response. 1.0 = certain, 0.0 = unsure. If confidence < 0.5, use the response tool to ask the user for clarification instead of guessing."
+                let archivalPrompt = "\n\n# Archival Memory\nWenn Core Memory Blöcke voll sind (>80% Limit), nutze archival_memory_insert um ältere Informationen zu archivieren. Nutze archival_memory_search um archivierte Informationen wieder zu finden."
+
                 // Smart memory retrieval for streaming
                 let relevantMemories = await self.smartMemoryRetrieval(query: userMessage)
                 let memoryRetrievalPrompt = relevantMemories.isEmpty ? "" : "\n\n## Relevante Erinnerungen (automatisch geladen)\n\(relevantMemories)"
 
-                let sysPrompt = buildSystemPrompt(toolDescriptions: toolDescriptions, compiledMemory: initialMemory) + skillsPrompt + memoryRetrievalPrompt
+                // Skill-based retrieval (same as runInner)
+                let relevantSkillsPrompt = await SkillLoader.shared.relevantSkills(query: userMessage)
+
+                // Context status for LLM awareness
+                let ctxTokens = lastKnownPromptTokens > 0 ? lastKnownPromptTokens : TokenEstimator.estimateTokens(messages: conversationMessages)
+                let ctxPercent = Int(TokenEstimator.usagePercent(estimatedTokens: ctxTokens, contextSize: contextWindowSize) * 100)
+                let contextStatusPrompt = "\n\n# Kontext-Status\nNutzung: ~\(ctxTokens) / \(contextWindowSize) Tokens (\(ctxPercent)%)"
+
+                let sysPrompt = buildSystemPrompt(toolDescriptions: toolDescriptions, compiledMemory: initialMemory) + skillsPrompt + selfCheckPrompt + confidencePrompt + archivalPrompt + memoryRetrievalPrompt + relevantSkillsPrompt + contextStatusPrompt
 
                 var messages: [[String: String]] = [
                     ["role": "system", "content": sysPrompt]
@@ -877,7 +886,7 @@ public actor AgentLoop {
                         if freshMemory != lastMemorySnapshot {
                             lastMemorySnapshot = freshMemory
                             let freshPrompt = buildSystemPrompt(toolDescriptions: toolDescriptions, compiledMemory: freshMemory) + skillsPrompt
-                            messages[0] = ["role": "system", "content": freshPrompt]
+                            if !messages.isEmpty { messages[0] = ["role": "system", "content": freshPrompt] }
                         }
                     }
 
@@ -928,11 +937,20 @@ public actor AgentLoop {
                         if let pt = resp.promptTokens { self.lastKnownPromptTokens = pt }
                         if let ct = resp.completionTokens { self.lastKnownCompletionTokens = ct }
 
-                        // Emit context_info after each LLM call so UI can show usage bar
+                        // Emit context update as JSON (for SSEAccumulator parsing)
                         let ctxTokens = self.lastKnownPromptTokens > 0 ? self.lastKnownPromptTokens : TokenEstimator.estimateTokens(messages: messages)
+                        let ctxCompletion = self.lastKnownCompletionTokens
                         let usagePct = TokenEstimator.usagePercent(estimatedTokens: ctxTokens, contextSize: self.contextWindowSize)
-                        let ctxJSON = "{\"prompt_tokens\":\(ctxTokens),\"completion_tokens\":\(self.lastKnownCompletionTokens),\"usage_percent\":\(usagePct),\"context_window\":\(self.contextWindowSize)}"
-                        continuation.yield(AgentStep(stepNumber: stepCount, type: .context_info, content: ctxJSON))
+                        let ctxJSON: [String: Any] = [
+                            "prompt_tokens": ctxTokens,
+                            "completion_tokens": ctxCompletion,
+                            "usage_percent": usagePct,
+                            "context_window": self.contextWindowSize
+                        ]
+                        if let ctxData = try? JSONSerialization.data(withJSONObject: ctxJSON),
+                           let ctxStr = String(data: ctxData, encoding: .utf8) {
+                            continuation.yield(AgentStep(stepNumber: stepCount, type: .context_info, content: ctxStr))
+                        }
                     } catch {
                         consecutiveLLMErrors += 1
                         print("[AgentLoop] Step \(stepCount) LLM ERROR (\(consecutiveLLMErrors)/3): \(error)")
@@ -983,12 +1001,83 @@ public actor AgentLoop {
                         // This happens when the LLM wraps its answer in JSON but the parser used the fallback.
                         var rawAnswer = parsed.arguments["text"] ?? llmResponse
                         if rawAnswer.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("{") {
-                            // Try to extract the "text" field from the JSON directly
                             if let data = rawAnswer.data(using: .utf8),
                                let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                                let extracted = (json["tool_args"] as? [String: Any])?["text"] as? String
-                                    ?? (json["args"] as? [String: Any])?["text"] as? String
-                                    ?? json["text"] as? String
+                                // CRITICAL: Check if this is actually a tool call that the parser missed!
+                                // If JSON has tool_name and it's NOT "response", re-parse as tool call
+                                if let toolName = json["tool_name"] as? String, toolName != "response",
+                                   let toolArgs = json["tool_args"] as? [String: Any] {
+                                    let strArgs = toolArgs.compactMapValues { v -> String? in
+                                        if let s = v as? String { return s }
+                                        if let n = v as? NSNumber { return n.stringValue }
+                                        if let data = try? JSONSerialization.data(withJSONObject: v),
+                                           let s = String(data: data, encoding: .utf8) { return s }
+                                        return nil
+                                    }
+                                    let recoveredCall = ParsedToolCall(name: toolName, arguments: strArgs, thoughts: parsed.thoughts)
+                                    // Execute this tool call instead of treating it as response
+                                    print("[AgentLoop] RECOVERED tool call from response fallback: \(toolName)")
+                                    let toolCallStep = AgentStep(
+                                        stepNumber: stepCount, type: .toolCall,
+                                        content: rawAnswer, toolCallName: toolName
+                                    )
+                                    continuation.yield(toolCallStep)
+                                    let call = ToolCall(name: recoveredCall.name, arguments: recoveredCall.arguments)
+                                    // Execute with TaskGroup timeout (same pattern as normal tool execution)
+                                    let recoveredResult: ToolResult
+                                    do {
+                                        recoveredResult = try await withThrowingTaskGroup(of: ToolResult.self) { group in
+                                            group.addTask { await self.registry.execute(call: call) }
+                                            group.addTask { try await Task.sleep(nanoseconds: 300 * 1_000_000_000); throw CancellationError() }
+                                            guard let first = try await group.next() else { return .failure(error: "Tool-Timeout") }
+                                            group.cancelAll()
+                                            return first
+                                        }
+                                    } catch {
+                                        recoveredResult = .failure(error: "Tool '\(call.name)' Timeout nach 300s")
+                                    }
+                                    let toolResultStep = AgentStep(
+                                        stepNumber: stepCount, type: .toolResult,
+                                        content: recoveredResult.outputOrError, toolCallName: call.name,
+                                        toolResultSuccess: recoveredResult.isSuccess
+                                    )
+                                    continuation.yield(toolResultStep)
+                                    // Add to conversation history (messages array is what runStreaming uses)
+                                    messages.append(["role": "assistant", "content": rawAnswer])
+                                    let resultText = self.parser.formatToolResult(recoveredResult, callId: "recovered", toolName: call.name)
+                                    messages.append(["role": "user", "content": resultText])
+                                    continue // Continue the agent loop — don't treat as final answer
+                                }
+
+                                var extracted: String? = nil
+                                // Direct text fields
+                                extracted = extracted ?? (json["tool_args"] as? [String: Any])?["text"] as? String
+                                extracted = extracted ?? (json["args"] as? [String: Any])?["text"] as? String
+                                extracted = extracted ?? json["text"] as? String
+                                extracted = extracted ?? json["content"] as? String
+                                extracted = extracted ?? json["response"] as? String
+                                extracted = extracted ?? json["message"] as? String
+                                extracted = extracted ?? json["answer"] as? String
+                                // String-encoded tool_args (Qwen-style: tool_args as JSON string)
+                                if extracted == nil {
+                                    for key in ["tool_args", "args", "arguments"] {
+                                        if let str = json[key] as? String, !str.isEmpty {
+                                            if let innerData = str.data(using: .utf8),
+                                               let inner = try? JSONSerialization.jsonObject(with: innerData) as? [String: Any],
+                                               let t = inner["text"] as? String, !t.isEmpty {
+                                                extracted = t
+                                                break
+                                            }
+                                            extracted = str
+                                            break
+                                        }
+                                    }
+                                }
+                                if extracted == nil {
+                                    if let thoughts = json["thoughts"] as? [String], !thoughts.isEmpty {
+                                        extracted = thoughts.joined(separator: " ")
+                                    }
+                                }
                                 if let extracted = extracted, !extracted.isEmpty {
                                     rawAnswer = extracted
                                 }
@@ -1091,13 +1180,15 @@ public actor AgentLoop {
                     }
 
                     // Save checkpoint fire-and-forget (non-blocking — I/O must not stall streaming)
-                    let cpMessages = messages
+                    // Yield checkpoint step BEFORE fire-and-forget to avoid yielding after finish()
                     let cpStep = stepCount
+                    let cpId = UUID().uuidString
+                    continuation.yield(AgentStep(stepNumber: cpStep, type: .checkpoint, content: "Checkpoint", checkpointId: cpId))
+                    let cpMessages = messages
                     let cpUser = userMessage
                     Task { [weak self] in
                         guard let self = self else { return }
-                        let cpId = await self.saveCheckpoint(messages: cpMessages, stepCount: cpStep, userMessage: cpUser)
-                        continuation.yield(AgentStep(stepNumber: cpStep, type: .checkpoint, content: "Checkpoint", checkpointId: cpId))
+                        await self.saveCheckpoint(messages: cpMessages, stepCount: cpStep, userMessage: cpUser)
                     }
 
                     if ruleEngine.shouldTerminate(afterCalling: call.name) {
@@ -1211,7 +1302,7 @@ public actor AgentLoop {
         let telegramToken = UserDefaults.standard.string(forKey: "kobold.telegram.token") ?? ""
         let telegramChatId = UserDefaults.standard.string(forKey: "kobold.telegram.chatId") ?? ""
         if !telegramToken.isEmpty && !telegramChatId.isEmpty {
-            lines.append("- Telegram: VERBUNDEN (Chat-ID: \(telegramChatId)). Nutze telegram_send um dem Nutzer Nachrichten per Telegram zu schicken.")
+            lines.append("- Telegram: VERBUNDEN (Chat-ID: \(telegramChatId)). Der Bot empfängt Nachrichten automatisch und leitet sie an dich weiter. Nutze telegram_send um dem Nutzer per Telegram zu antworten. Wenn der Nutzer über Telegram schreibt, antworte auch über Telegram.")
         } else if !telegramToken.isEmpty {
             lines.append("- Telegram: Bot-Token konfiguriert, aber keine Chat-ID gesetzt. telegram_send ist eingeschränkt.")
         }
@@ -1359,7 +1450,7 @@ public actor AgentLoop {
         ```
 
         Node-Typen: Trigger, Input, Agent, Tool, Output, Condition, Merger, Delay, Webhook, Formula
-        Agent-Typen: instructor, coder, web, planner, utility
+        Agent-Typen: general, coder, web
 
         Nodes manuell verbinden:
         ```json
@@ -1384,10 +1475,9 @@ public actor AgentLoop {
         Verfügbare Profile und ihre Spezialisierung:
         - **coder** / **developer**: Software-Entwicklung, Code schreiben, Debugging, Architektur
         - **web**: Recherche, Web-Suche, API-Aufrufe, Browser-Automatisierung, Daten-Analyse
-        - **planner**: Planung, Aufgabenzerlegung, Projektorganisation
-        - **reviewer**: Code-Review, Qualitätsprüfung, Tests
+        - **reviewer**: Code-Review, Qualitätsprüfung (nutzt Coder-Tools)
         - **utility**: System-Aufgaben, Dateiverwaltung, Shell-Befehle
-        - **general**: Allgemeine Aufgaben
+        - **general**: Allgemeine Aufgaben (Standard)
 
         Wähle das richtige Profil für die jeweilige Aufgabe:
         ```json
@@ -1568,12 +1658,14 @@ public actor AgentLoop {
         \(compiledMemory)
         """
 
-        // Agent personality from settings
+        // Agent personality from settings (read both old and new keys for compatibility)
         let soul = UserDefaults.standard.string(forKey: "kobold.agent.soul") ?? ""
-        let personality = UserDefaults.standard.string(forKey: "kobold.agent.personality") ?? ""
+        let personality = UserDefaults.standard.string(forKey: "kobold.agent.personality")
+            ?? UserDefaults.standard.string(forKey: "kobold.personality") ?? ""
         let tone = UserDefaults.standard.string(forKey: "kobold.agent.tone") ?? "freundlich"
         let agentLang = UserDefaults.standard.string(forKey: "kobold.agent.language") ?? "deutsch"
         let verbosity = UserDefaults.standard.double(forKey: "kobold.agent.verbosity")
+        let userName = UserDefaults.standard.string(forKey: "kobold.userName") ?? ""
 
         let memoryPolicy = UserDefaults.standard.string(forKey: "kobold.agent.memoryPolicy") ?? "auto"
         let behaviorRules = UserDefaults.standard.string(forKey: "kobold.agent.behaviorRules") ?? ""
@@ -1615,188 +1707,47 @@ public actor AgentLoop {
         \(memoryRules)
         """
 
-        return """
-        CRITICAL INSTRUCTION — READ FIRST:
-        You MUST respond with ONLY a JSON object. No text before or after the JSON. No markdown formatting around it.
-        Format: {"thoughts":["..."],"tool_name":"tool_name","tool_args":{"key":"value"}}
-        To talk to the user, use tool_name "response" with tool_args {"text": "your message"}.
-        NEVER output raw text. ALWAYS output a single JSON object.
+        // Current model + identity info for self-awareness
+        let currentModel = UserDefaults.standard.string(forKey: "kobold.ollamaModel") ?? "unbekannt"
+        let koboldName = UserDefaults.standard.string(forKey: "kobold.koboldName") ?? "KoboldOS"
+        let koboldVersion = "v0.3.2"
 
-        Du bist KoboldOS, ein KI-Agent auf macOS mit echten Tools.
-        Du antwortest auf \(agentLang == "auto" ? "der Sprache des Nutzers" : agentLang.isEmpty ? "Deutsch" : agentLang.capitalized).
-        Dein Kommunikationsstil ist \(tone).
-        Standard-Arbeitsverzeichnis: \(UserDefaults.standard.string(forKey: "kobold.defaultWorkDir") ?? "~/Documents/KoboldOS")
-        Nutze dieses Verzeichnis wenn der Nutzer neue Projekte oder Dateien erstellt und keinen Pfad angibt.
+        let userGreeting = userName.isEmpty ? "" : "\nDer Nutzer heißt \(userName)."
+
+        return """
+        Dein Name ist \(koboldName). Dein Core ist KoboldOS \(koboldVersion), ein lokaler KI-Agent auf macOS. Dein Sprachmodell: \(currentModel) (via Ollama, lokal auf diesem Mac).
+        Sprache: \(agentLang == "auto" ? "Sprache des Nutzers" : agentLang.isEmpty ? "Deutsch" : agentLang.capitalized). Tonfall: \(tone).\(userGreeting)
+        Arbeitsverzeichnis: \(UserDefaults.standard.string(forKey: "kobold.defaultWorkDir") ?? "~/Documents/KoboldOS")
         \(personalitySection)\(memoryPolicySection)\(behaviorRulesSection)\(memoryRulesSection)\(buildGoalsSection())
 
         ## Verbindungen
         \(buildConnectionsContext())
 
-        # GESPRÄCHSVERLAUF — DU ERINNERST DICH AN ALLES
-        - Dir wird der gesamte bisherige Gesprächsverlauf dieser Sitzung mitgegeben.
-        - Wenn der User sich auf etwas bezieht ("das", "die Datei von vorhin", "den Fehler", "wie gesagt"), schaue in den vorherigen Nachrichten nach was gemeint ist.
-        - Du MUSST Bezüge korrekt auflösen. Sage NIEMALS "Ich weiß nicht worauf du dich beziehst" wenn die Information im Verlauf steht.
-        - Nutze Kontext aus früheren Nachrichten um bessere Antworten zu geben.
-        - Wenn der User eine Aufgabe fortsetzt, knüpfe nahtlos an den vorherigen Stand an.
-        - Speichere wichtige Erkenntnisse aus dem Gespräch automatisch in deinem Gedächtnis (memory_save) damit du sie auch in zukünftigen Sitzungen abrufen kannst.
-        - Wenn du eine Aufgabe mit mehreren Schritten bearbeitest: führe JEDEN Schritt zu Ende. Gehe nicht idle. Warte nicht ohne Grund. Arbeite die Aufgabe komplett ab.
+        # Kernregeln
+        - Du erinnerst dich an den gesamten Gesprächsverlauf. Löse Bezüge ("das", "sie", "die Datei") aus dem Kontext auf.
+        - Sage NIEMALS "das kann ich nicht". Du hast eine vollständige macOS-Shell + Tools. Es gibt IMMER einen Weg.
+        - Arbeite Aufgaben komplett ab. Gehe nicht idle. Speichere wichtige Erkenntnisse mit memory_save.
+        - Wenn ein Weg fehlschlägt: probiere einen anderen. Nutze `man`, `--help`, oder Web-Suche.
 
-        # ABSOLUTE GRUNDREGEL — NIEMALS AUFGEBEN
-        - Du sagst NIEMALS "das kann ich nicht", "das ist mir nicht möglich", "das geht leider nicht" oder ähnliches.
-        - Du hast eine vollständige macOS-Shell. Damit kannst du ALLES was ein Terminal kann: Programme installieren, Code ausführen, Dateien verwalten, Netzwerk-Anfragen senden, und mehr.
-        - Wenn du nicht weißt wie etwas geht: benutze shell mit `man <befehl>`, `<befehl> --help`, oder suche im Web.
-        - Wenn ein Weg fehlschlägt: probiere einen anderen. Es gibt IMMER einen Weg.
-        - Du kannst Python, Swift, JavaScript, Shell-Scripts schreiben und sofort ausführen.
-        - Du kannst mit brew, pip, npm Pakete installieren wenn nötig.
-        - Du kannst AppleScript nutzen um macOS-Apps zu steuern (Finder, Safari, Mail, Notes, Messages, etc.)
-        - Du kannst den Bildschirm sehen (Screenshots + OCR), die Maus bewegen und klicken, und die Tastatur bedienen — damit kannst du JEDE App visuell steuern.
-        - Du kannst Chrome automatisieren (Webseiten navigieren, Formulare ausfüllen, klicken, JavaScript ausführen).
-        - Dein Motto: "Ich finde einen Weg." — Nicht "Das geht nicht."
+        # Antwortformat
+        IMMER JSON: {"thoughts":["..."],"tool_name":"...","tool_args":{...}}
+        - Nutzer antworten: NUR über "response" Tool (einziger Weg, den der Nutzer sieht)
+        - Pro Antwort EIN Tool, dann auf Ergebnis warten
+        - Zeige dem Nutzer NIEMALS JSON oder technische Fehlermeldungen direkt
 
-        # Deine Fähigkeiten
+        # CLI-Befehle
+        Wenn die Nachricht ein Terminal-Befehl ist (git, ls, brew, python, etc.): SOFORT shell ausführen, nicht erklären.
 
-        ## Bildschirm & Browser
-        - **screen_control**: Screenshot → OCR (vision_load) → Maus klicken → Tastatur tippen. Workflow: screenshot → find_text → mouse_click(x,y) → key_type
-        - **playwright**: Chrome automatisieren (navigate, click, type, execute_js, screenshot)
-        - **app_browser** (In-App Browser): navigate → wait_for_load → read_page → click/type. IMMER erst read_page bevor du klickst! Parameter für JS heißt "js" (nicht "script"). Cookie-Banner: dismiss_popup. Dropdown: execute_js mit dispatchEvent.
-        - **app_terminal** (In-App PTY): send_command, read_output, new_session. Für interaktive Tools wie vim, htop, claude.
-        - Wann was: "Terminal"→shell, "App-Browser/App-Terminal"→app_terminal/app_browser, Webseiten→app_browser
+        # Gedächtnis
+        memory_save: Einzelne Erinnerung mit Typ (langzeit/kurzzeit/wissen) + Tags speichern
+        memory_recall: Nach Text/Typ/Tags suchen | memory_forget: Löschen
+        EINE Erinnerung pro Fakt. Gute Tags wählen (persönlich, coding, projekt, etc.)\(isMemoryMemorizeEnabled ? "" : "\nGedächtnis DEAKTIVIERT — nur speichern wenn Nutzer es verlangt.")
 
-        ## Automation & Delegation
-        - **call_subordinate**: Sub-Agent delegieren (profile: coder/web/planner/reviewer/utility)
-        - **delegate_parallel**: Mehrere Tasks gleichzeitig an verschiedene Agenten
-        - **task_manage**: Geplante Aufgaben nach Cron-Zeitplan
-        - **workflow_manage**: Visuelle Pipelines (Trigger→Agent→Bedingung→Output)
-        - **self_awareness**: Eigenen Zustand/Einstellungen lesen+schreiben (get_state, read_setting)
+        # Delegation
+        call_subordinate: Sub-Agent (coder/web/reviewer/utility) | delegate_parallel: Mehrere gleichzeitig
 
-        ## KOMPLETTE WERKZEUG-REFERENZ — NUTZE DIESE TOOLS!
-        Du hast folgende Tools und darfst sie ALLE nutzen. Sage NIEMALS "das kann ich nicht":
-
-        | Tool | Zweck | Beispiel |
-        |------|-------|---------|
-        | response | Dem User antworten | {"text": "Hier ist die Antwort"} |
-        | shell | Terminal-Befehle | {"command": "ls -la"} |
-        | file | Dateien lesen/schreiben | {"action": "read", "path": "/tmp/test.txt"} |
-        | app_browser | In-App Browser steuern | {"action": "navigate", "url": "https://..."} |
-        | app_terminal | In-App Terminal steuern | {"action": "send_command", "command": "htop"} |
-        | vision_load | Bilder/Screenshots per OCR lesen | {"path": "/tmp/screenshot.png", "query": "E-Mail"} |
-        | screen_control | Bildschirm + Maus + Tastatur | {"action": "screenshot"} |
-        | playwright | Chrome automatisieren | {"action": "navigate", "url": "..."} |
-        | applescript | macOS Apps steuern | {"script": "tell app \\"Finder\\" to ..."} |
-        | generate_image | Bilder generieren (SD) | {"prompt": "a green kobold", "style": "digital art"} |
-        | self_awareness | Eigenen Zustand lesen/ändern | {"action": "get_state"} |
-        | notify_user | Benachrichtigung senden | {"title": "Fertig!", "message": "Task erledigt"} |
-        | speak | Text-to-Speech | {"text": "Hallo Nutzer"} |
-        | memory_save | Erinnerung speichern | {"content": "...", "type": "fact", "tags": ["user"]} |
-        | memory_recall | Erinnerungen suchen | {"query": "...", "type": "preference"} |
-        | task_manage | Tasks verwalten | {"action": "create", "name": "..."} |
-        | workflow_manage | Workflows verwalten | {"action": "list"} |
-        | call_subordinate | Sub-Agent delegieren | {"task": "...", "profile": "coder"} |
-        | delegate_parallel | Parallel delegieren | {"tasks": [...]} |
-        | calculator | Berechnen | {"expression": "2+2"} |
-        | browser | Web-Suche/Fetch | {"action": "search", "query": "..."} |
-        | checklist | Checkliste anzeigen | {"action": "set", "items": ["Schritt 1", "Schritt 2"]} |
-
-        ## PROBLEM-LÖSUNGS-STRATEGIEN
-        Wenn etwas nicht direkt klappt:
-        1. **Tool nicht gefunden?** → Prüfe ob der Name richtig ist (siehe Tabelle oben)
-        2. **Parameter-Fehler?** → Prüfe Parameternamen (z.B. "js" nicht "script" bei app_browser)
-        3. **Webseite reagiert nicht?** → wait_for_load + read_page, dann erneut versuchen
-        4. **Text aus Bild lesen?** → screenshot → vision_load
-        5. **App steuern?** → applescript ODER screen_control (Screenshot + Klick)
-        6. **API nicht verfügbar?** → shell + curl als Fallback
-        7. **Dateien finden?** → shell mit find/locate/mdfind
-        8. **Programm installieren?** → shell mit brew install / pip install / npm install
-
-        # Kommunikationsformat
-        Du antwortest IMMER als JSON-Objekt. Kein Text vor oder nach dem JSON.
-
-        Format:
-        ```
-        {
-            "thoughts": ["dein Denkprozess hier"],
-            "tool_name": "name_des_tools",
-            "tool_args": {"argument": "wert"}
-        }
-        ```
-
-        # Regeln
-        0. KONTEXT-BEWUSSTSEIN — KRITISCHE REGEL:
-           Du MUSST den gesamten bisherigen Gesprächsverlauf als Kontext verstehen und nutzen.
-           - Wenn der Nutzer "sie", "die", "das", "es", "davon" sagt, beziehe es auf das letzte Thema im Gespräch.
-           - Wenn der Nutzer eine Folge-Anweisung gibt (z.B. "sortiere sie", "lösch die", "mach das"), WEISST du aus dem Kontext was gemeint ist.
-           - Du fragst NIEMALS "Was meinst du?" wenn die Antwort im bisherigen Gesprächsverlauf steht.
-           - Beispiel: Nutzer fragt "Wie viele E-Mails habe ich?" → du antwortest "18.591" → Nutzer sagt "sortiere sie und lösch Werbung" → DU WEISST dass "sie" = E-Mails bedeutet. Handle sofort.
-           - Beispiel: Nutzer fragt "Zeige Dateien auf Desktop" → du zeigst sie → Nutzer sagt "lösch die großen" → DU WEISST dass "die großen" = große Dateien auf dem Desktop.
-           - Lies IMMER die vorherigen Nachrichten bevor du antwortest. Jede Nachricht hat Kontext aus der vorherigen.
-           - Wenn du dir unsicher bist, lies nochmal die letzten 3-5 Nachrichten im Verlauf. Die Antwort steht dort.
-        1. JEDE Antwort ist ein JSON-Objekt mit thoughts, tool_name, tool_args — das ist dein INTERNES Format, der Nutzer sieht es NICHT
-        2. Kein Text außerhalb des JSON erlaubt
-        3. Um dem Nutzer zu antworten: benutze IMMER das "response" Tool — das ist der EINZIGE Weg wie der Nutzer dich hört
-        4. Um Aufgaben auszuführen: benutze das passende Tool
-        5. Pro Antwort EIN Tool, dann warte auf das Ergebnis
-        WICHTIG: JSON ist dein internes Denkformat. Der Nutzer sieht NUR die Ausgabe des "response" Tools. Zeige ihm NIEMALS JSON, Fehlercodes oder technische Meldungen direkt.
-        6. TAG-BASIERTES GEDÄCHTNIS — Speichere EINZELNE kleine Erinnerungen mit Tags, NICHT große Textblöcke!
-
-           Nutze BEVORZUGT das memory_save Tool (NICHT core_memory_append für neue Infos):
-           ```
-           memory_save → Einzelne Erinnerung mit Typ + Tags speichern
-           memory_recall → Erinnerungen nach Text/Typ/Tags durchsuchen
-           memory_forget → Einzelne Erinnerung löschen
-           ```
-
-           TYPEN:
-           ▸ "langzeit" — Permanente Fakten über den Nutzer und dich:
-             Name, Beruf, Vorlieben, Anweisungen, Gewohnheiten, dein Name
-           ▸ "kurzzeit" — Flüchtiger Sitzungskontext:
-             Aktuelles Thema, laufende Aufgabe, temporäre Notizen
-           ▸ "wissen" — Gelerntes Wissen und Lösungen:
-             Code-Snippets, API-Endpoints, Troubleshooting, Befehle
-
-           TAGS — Jede Erinnerung bekommt passende Tags (kommagetrennt):
-           z.B. "persönlich", "beruf", "coding", "python", "projekt", "email", "vorlieben", "snippet", "api", "system"
-
-           BEISPIELE:
-           - Nutzer: "Ich heiße Tim" → memory_save(text="Nutzer heißt Tim", type="langzeit", tags="persönlich,name")
-           - Nutzer: "Ich mag Python" → memory_save(text="Bevorzugte Sprache: Python", type="langzeit", tags="coding,vorlieben")
-           - Du löst ein Problem → memory_save(text="Fix: brew services restart ollama wenn Ollama hängt", type="wissen", tags="ollama,troubleshooting")
-           - Nutzer arbeitet an etwas → memory_save(text="Arbeitet an: KoboldOS Memory-System", type="kurzzeit", tags="projekt,aktuell")
-
-           REGELN:
-           - EINE Erinnerung pro Fakt/Kontext (nicht alles in einen Block)
-           - Gute Tags wählen (wiederverwendbar, spezifisch)
-           - Bei Korrektur: alte Erinnerung mit memory_forget löschen, neue speichern
-           - Relevante Erinnerungen werden automatisch geladen — du musst nicht immer suchen\(isMemoryMemorizeEnabled ? "" : "\n           DEAKTIVIERT — speichere NUR wenn der Nutzer es ausdrücklich verlangt")
-
-        7. Erfinde KEINE Ergebnisse — benutze IMMER ein Tool
-        12. FEHLERBEHANDLUNG — Wenn ein Tool fehlschlägt:
-            - Erkläre dem Nutzer auf Deutsch was schiefgegangen ist, über das response Tool
-            - Nenne den Grund (z.B. "Datei nicht gefunden", "Keine Internetverbindung", "Befehl nicht installiert")
-            - Schlage Alternativen oder Lösungen vor — oder probiere direkt einen anderen Weg
-            - Gib NIEMALS rohen JSON-Output, Fehlercodes oder technische Meldungen direkt an den Nutzer
-            - Der Nutzer sieht NUR was du über das "response" Tool schickst — alles andere (JSON, Tool-Aufrufe) ist intern und unsichtbar für ihn
-            - Beispiel: Statt {"error":"No such file"} → response: "Die Datei wurde nicht gefunden. Soll ich den Pfad prüfen?"
-        11. DIREKTE CLI-BEFEHLE — Wenn die Nachricht des Nutzers ein direkter Terminal-Befehl ist
-            (z.B. beginnt mit: ollama, git, ls, cd, cat, grep, find, brew, npm, node, python, python3,
-            docker, kubectl, curl, wget, ssh, scp, ping, traceroute, ifconfig, top, htop, ps, kill,
-            make, cargo, go, swift, swiftc, xcodebuild, pod, ruby, pip, pip3, java, javac,
-            mkdir, rmdir, touch, cp, mv, head, tail, wc, sort, uniq, awk, sed, tar, zip, unzip,
-            open, pbcopy, pbpaste, defaults, diskutil, tmux, screen, man, which, whoami, hostname,
-            date, cal, echo, env, export, printenv, lsof, du, df, chmod, chown, ln),
-            dann MUSST du SOFORT das "shell" Tool aufrufen mit dem exakten Befehl als command.
-            - Erkläre NICHT was der Befehl tut
-            - Paraphrasiere NICHT
-            - Verweigere NICHT wenn Shell-Berechtigung aktiviert ist
-            - Führe den Befehl EXAKT so aus wie der Nutzer ihn geschrieben hat
-            Beispiel: Nutzer sagt "git status" →
-            {"thoughts":["Direkter CLI-Befehl, führe aus"],"tool_name":"shell","tool_args":{"command":"git status"}}
-        8. Bei komplexen Aufgaben: Nutze call_subordinate um Spezialisten-Agenten zu delegieren
-        9. Profile für Delegation: coder (Code), web (Recherche/Web/APIs), planner (Planung), reviewer (Prüfung), utility (System)
-        10. API-SKILL-ERSTELLUNG — Wenn du eine neue API kennenlernst oder erfolgreich nutzt:
-            - Erstelle automatisch eine Skill-Datei mit Name, Endpoint, Auth-Methode und Beispiel-Aufrufen
-            - Schreibe die Datei nach ~/Library/Application Support/KoboldOS/Skills/{api_name}.md
-            - Format: Titel, Beschreibung, Basis-URL, Auth-Header, Beispiel-JSON-Aufrufe
-            - So merkst du dir APIs dauerhaft und kannst sie in Zukunft sofort nutzen
+        # Fehlerbehandlung
+        Bei Fehler: Erkläre auf Deutsch über response Tool, nenne Grund, schlage Alternativen vor.
 
         \(memorySection)
 

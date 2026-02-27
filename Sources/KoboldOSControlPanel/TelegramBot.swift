@@ -20,6 +20,11 @@ final class TelegramBot: @unchecked Sendable {
     private var _chatHistory: [Int64: [(role: String, text: String)]] = [:]
     private let maxHistoryPerChat = 100
 
+    private var historyFileURL: URL {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        return appSupport.appendingPathComponent("KoboldOS/telegram_history.json")
+    }
+
     // Thread-safe synchronous accessors
     var isRunning: Bool { lock.withLock { _isRunning } }
     var botUsername: String { lock.withLock { _botUsername } }
@@ -41,6 +46,9 @@ final class TelegramBot: @unchecked Sendable {
             }
             _chatHistory[chatId] = history
         }
+        // Alle ~10 Nachrichten auf Disk sichern (nicht jede einzelne)
+        let count = lock.withLock { _messagesReceived + _messagesSent }
+        if count % 10 == 0 { saveHistoryToDisk() }
     }
 
     private func getHistory(chatId: Int64) -> [(role: String, text: String)] {
@@ -49,12 +57,43 @@ final class TelegramBot: @unchecked Sendable {
 
     private func clearHistory(chatId: Int64) {
         lock.withLock { _chatHistory[chatId] = nil }
+        saveHistoryToDisk()
+    }
+
+    /// Persistent History — JSON auf Disk speichern
+    private func saveHistoryToDisk() {
+        let snapshot = lock.withLock { _chatHistory }
+        // Convert to serializable format
+        var dict: [String: [[String: String]]] = [:]
+        for (chatId, msgs) in snapshot {
+            dict["\(chatId)"] = msgs.map { ["role": $0.role, "text": $0.text] }
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: dict, options: [.sortedKeys]) else { return }
+        try? FileManager.default.createDirectory(at: historyFileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? data.write(to: historyFileURL)
+    }
+
+    /// Persistent History — JSON von Disk laden
+    private func loadHistoryFromDisk() {
+        guard let data = try? Data(contentsOf: historyFileURL),
+              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: [[String: String]]] else { return }
+        lock.withLock {
+            for (chatIdStr, msgs) in dict {
+                guard let chatId = Int64(chatIdStr) else { continue }
+                _chatHistory[chatId] = msgs.compactMap { m in
+                    guard let role = m["role"], let text = m["text"] else { return nil }
+                    return (role: role, text: text)
+                }
+            }
+        }
     }
 
     // MARK: - Start / Stop
 
     func start(token: String, allowedChatId: Int64 = 0) {
         guard !isRunning else { return }
+        // Persistente History laden
+        loadHistoryFromDisk()
         lock.withLock {
             _botToken = token
             _allowedChatId = allowedChatId
@@ -77,6 +116,7 @@ final class TelegramBot: @unchecked Sendable {
     }
 
     func stop() {
+        saveHistoryToDisk() // Persistente History sichern
         setRunning(false)
         pollingTask?.cancel()
         pollingTask = nil

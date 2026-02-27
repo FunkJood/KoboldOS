@@ -102,10 +102,6 @@ struct SettingsView: View {
     @AppStorage("kobold.profile.email") private var profileEmail: String = ""
     @AppStorage("kobold.profile.avatar") private var profileAvatar: String = "person.crop.circle.fill"
 
-    // Menu bar
-    @AppStorage("kobold.menuBar.enabled") private var menuBarEnabled: Bool = false
-    @AppStorage("kobold.menuBar.hideMainWindow") private var menuBarHideOnClose: Bool = true
-
     // Working directory
     @AppStorage("kobold.defaultWorkDir") private var defaultWorkDir: String = "~/Documents/KoboldOS"
 
@@ -115,7 +111,7 @@ struct SettingsView: View {
     @State private var googleEmail: String = ""
     @State private var showSecretsManager: Bool = false
 
-    private let sections = ["Allgemein", "Persönlichkeit", "Agenten", "Modelle", "Gedächtnis", "Berechtigungen", "Datenschutz & Sicherheit", "Benachrichtigungen", "Debugging & Sicherheit", "Verbindungen", "Sprache & Audio", "Fähigkeiten", "Über"]
+    private let sections = ["Allgemein", "Agenten", "Persönlichkeit", "Gedächtnis", "Fähigkeiten", "Berechtigungen", "Sprache & Audio", "Verbindungen", "Benachrichtigungen", "Datenschutz", "Sicherheit", "Über"]
 
     var body: some View {
         HStack(spacing: 0) {
@@ -124,7 +120,7 @@ struct SettingsView: View {
                 ForEach(sections, id: \.self) { section in
                     Button(action: {
                         selectedSection = section
-                        if section == "Modelle" { loadModels() }
+                        if section == "Agenten" { loadModels() }
                     }) {
                         HStack(spacing: 8) {
                             Image(systemName: iconForSection(section))
@@ -152,19 +148,18 @@ struct SettingsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     switch selectedSection {
-                    case "Allgemein":                generalSection()
-                    case "Persönlichkeit":           agentPersonalitySection()
-                    case "Agenten":                  agentsSettingsSection()
-                    case "Modelle":                  modelsSection()
-                    case "Gedächtnis":               memoryPolicySection(); memorySettingsSection()
-                    case "Berechtigungen":           permissionsSection()
-                    case "Datenschutz & Sicherheit": securitySection()
-                    case "Benachrichtigungen":       notificationsSettingsSection()
-                    case "Debugging & Sicherheit":   debugSecuritySection()
-                    case "Verbindungen":             connectionsSection()
-                    case "Sprache & Audio":          speechAndAudioSection()
-                    case "Fähigkeiten":              skillsSettingsSection()
-                    default:                         aboutSection()
+                    case "Allgemein":          generalSection()
+                    case "Persönlichkeit":     agentPersonalitySection()
+                    case "Agenten":            agentsSettingsSection()
+                    case "Gedächtnis":         memoryPolicySection(); memorySettingsSection()
+                    case "Berechtigungen":     permissionsSection()
+                    case "Datenschutz":        securitySection()
+                    case "Benachrichtigungen": notificationsSettingsSection()
+                    case "Sicherheit":         debugSecuritySection()
+                    case "Verbindungen":       connectionsSection()
+                    case "Sprache & Audio":    speechAndAudioSection()
+                    case "Fähigkeiten":        skillsSettingsSection()
+                    default:                   aboutSection()
                     }
                     Spacer(minLength: 40)
                 }
@@ -177,19 +172,18 @@ struct SettingsView: View {
 
     private func iconForSection(_ s: String) -> String {
         switch s {
-        case "Allgemein":               return "gear"
-        case "Persönlichkeit":          return "person.fill.viewfinder"
-        case "Agenten":                 return "person.3.fill"
-        case "Modelle":                 return "cpu.fill"
-        case "Gedächtnis":              return "brain.head.profile"
-        case "Berechtigungen":          return "shield.lefthalf.filled"
-        case "Datenschutz & Sicherheit": return "lock.shield.fill"
-        case "Benachrichtigungen":      return "bell.badge.fill"
-        case "Debugging & Sicherheit":  return "ant.fill"
-        case "Verbindungen":            return "link.circle.fill"
-        case "Sprache & Audio":         return "waveform"
-        case "Fähigkeiten":            return "sparkles"
-        default:                        return "info.circle.fill"
+        case "Agenten":            return "person.3.fill"
+        case "Allgemein":          return "gear"
+        case "Benachrichtigungen": return "bell.badge.fill"
+        case "Berechtigungen":     return "hand.raised.fill"
+        case "Datenschutz":        return "lock.shield.fill"
+        case "Fähigkeiten":       return "sparkles"
+        case "Gedächtnis":         return "brain.head.profile"
+        case "Persönlichkeit":     return "person.fill.viewfinder"
+        case "Sicherheit":        return "ladybug.fill"
+        case "Sprache & Audio":   return "waveform"
+        case "Verbindungen":      return "link.circle.fill"
+        default:                   return "info.circle.fill"
         }
     }
 
@@ -338,9 +332,6 @@ struct SettingsView: View {
                 Text("Wie oft der Agent seinen Status prüft. Kürzere Intervalle = reaktiver, aber mehr CPU.")
                     .font(.caption2).foregroundColor(.secondary)
 
-                Toggle("Im Dashboard anzeigen", isOn: $proactiveEngine.heartbeatShowInDashboard)
-                    .toggleStyle(.switch).tint(.koboldEmerald)
-
                 Divider()
 
                 HStack(spacing: 12) {
@@ -482,6 +473,8 @@ struct SettingsView: View {
             FuturisticBox(icon: "paintbrush.fill", title: "Darstellung", accent: .koboldGold) {
                 Toggle("Erweiterte Statistiken", isOn: $showAdvancedStats)
                     .toggleStyle(.switch)
+                Text("Zeigt Token-Verbrauch, Schritte und Timing im Chat an.")
+                    .font(.caption2).foregroundColor(.secondary)
                 Toggle("Medien einbetten", isOn: AppStorageToggle("kobold.chat.autoEmbed", default: true))
                     .toggleStyle(.switch)
                 Text("Bilder, Audio und Videos inline anzeigen.")
@@ -710,8 +703,8 @@ struct SettingsView: View {
                     }
                     Spacer()
                     Stepper("\(workerPoolSize)", value: $workerPoolSize, in: 1...16)
-                        .onChange(of: workerPoolSize) { newVal in
-                            Task { await AgentWorkerPool.shared.resize(to: newVal) }
+                        .onChange(of: workerPoolSize) {
+                            Task { await AgentWorkerPool.shared.resize(to: workerPoolSize) }
                         }
                 }
 
@@ -757,59 +750,22 @@ struct SettingsView: View {
                             .font(.system(size: 14.5, weight: .medium))
                             .frame(width: 80, alignment: .leading)
 
-                        // Provider picker (compact)
-                        Picker("", selection: $config.provider) {
-                            Text("Ollama").tag("ollama")
-                            Text("OpenAI").tag("openai")
-                            Text("Anthropic").tag("anthropic")
-                            Text("Groq").tag("groq")
-                        }
-                        .pickerStyle(.menu)
-                        .frame(width: 100)
-                        .onChange(of: config.provider) {
-                            config.modelName = ""  // Reset model on provider change
-                            agentsStore.save()
-                        }
-
-                        // Model picker (adapts to provider)
-                        if config.provider == "ollama" {
-                            if ollamaModels.isEmpty {
-                                TextField("Modellname", text: $config.modelName)
-                                    .textFieldStyle(.roundedBorder)
-                                    .font(.system(.caption, design: .monospaced))
-                                    .onChange(of: config.modelName) { agentsStore.save() }
-                            } else {
-                                Picker("", selection: $config.modelName) {
-                                    Text("— Standard —").tag("")
-                                    ForEach(ollamaModels, id: \.self) { m in
-                                        Text(m).tag(m)
-                                    }
-                                }
-                                .labelsHidden()
-                                .pickerStyle(.menu)
+                        // Model picker (Ollama)
+                        if ollamaModels.isEmpty {
+                            TextField("Modellname", text: $config.modelName)
+                                .textFieldStyle(.roundedBorder)
+                                .font(.system(.caption, design: .monospaced))
                                 .onChange(of: config.modelName) { agentsStore.save() }
-                            }
                         } else {
-                            let models = cloudModels(for: config.provider)
                             Picker("", selection: $config.modelName) {
                                 Text("— Standard —").tag("")
-                                ForEach(models, id: \.self) { m in
+                                ForEach(ollamaModels, id: \.self) { m in
                                     Text(m).tag(m)
                                 }
                             }
                             .labelsHidden()
                             .pickerStyle(.menu)
                             .onChange(of: config.modelName) { agentsStore.save() }
-                        }
-
-                        // Provider badge
-                        if config.provider != "ollama" {
-                            Text(config.provider.uppercased())
-                                .font(.system(size: 9, weight: .bold))
-                                .foregroundColor(.white)
-                                .padding(.horizontal, 4).padding(.vertical, 2)
-                                .background(providerBadgeColor(config.provider))
-                                .cornerRadius(3)
                         }
 
                         // Vision badge
@@ -829,93 +785,6 @@ struct SettingsView: View {
         settingsSaveButton(section: "Modelle")
     }
 
-    @AppStorage("kobold.provider.openai.key") private var openaiKey: String = ""
-    @AppStorage("kobold.provider.openai.baseURL") private var openaiBaseURL: String = "https://api.openai.com"
-    @AppStorage("kobold.provider.anthropic.key") private var anthropicKey: String = ""
-    @AppStorage("kobold.provider.anthropic.baseURL") private var anthropicBaseURL: String = "https://api.anthropic.com"
-    @AppStorage("kobold.provider.groq.key") private var groqKey: String = ""
-    @AppStorage("kobold.provider.groq.baseURL") private var groqBaseURL: String = "https://api.groq.com"
-
-    @State private var testingProvider: String = ""
-    @State private var providerTestResult: String = ""
-
-    @ViewBuilder
-    private func providerCard(name: String, icon: String, color: Color,
-                               keyBinding: Binding<String>, baseURLBinding: Binding<String>,
-                               defaultURL: String, models: [String], provider: String) -> some View {
-        FuturisticBox(icon: icon, title: name, accent: color) {
-                HStack {
-                    Spacer()
-                    // Status badge
-                    if keyBinding.wrappedValue.isEmpty {
-                        GlassStatusBadge(label: "Nicht konfiguriert", color: .secondary)
-                    } else {
-                        GlassStatusBadge(label: "Konfiguriert", color: .koboldEmerald)
-                    }
-                }
-
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("API-Key").font(.caption).foregroundColor(.secondary)
-                    SecureField("sk-...", text: keyBinding)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(.caption, design: .monospaced))
-                }
-
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Basis-URL").font(.caption).foregroundColor(.secondary)
-                    TextField(defaultURL, text: baseURLBinding)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(.caption, design: .monospaced))
-                }
-
-                HStack(spacing: 8) {
-                    Text("Modelle:").font(.caption).foregroundColor(.secondary)
-                    ForEach(models, id: \.self) { m in
-                        Text(m)
-                            .font(.system(size: 11.5, design: .monospaced))
-                            .padding(.horizontal, 6).padding(.vertical, 2)
-                            .background(Color.koboldSurface)
-                            .cornerRadius(4)
-                    }
-                }
-
-                HStack {
-                    Button("Verbindung testen") {
-                        testProvider(name: provider, key: keyBinding.wrappedValue)
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(keyBinding.wrappedValue.isEmpty)
-
-                    if testingProvider == provider {
-                        ProgressView().controlSize(.small)
-                    }
-                    if !providerTestResult.isEmpty && testingProvider == provider {
-                        Text(providerTestResult)
-                            .font(.caption)
-                            .foregroundColor(providerTestResult.contains("OK") ? .koboldEmerald : .red)
-                    }
-                }
-        }
-    }
-
-    private func testProvider(name: String, key: String) {
-        testingProvider = name
-        providerTestResult = ""
-        Task {
-            do {
-                let result = try await LLMRunner.shared.generate(
-                    messages: [["role": "user", "content": "Say OK"]],
-                    provider: name, model: "", apiKey: key
-                )
-                providerTestResult = result.isEmpty ? "Fehler: Leere Antwort" : "OK — Verbindung erfolgreich"
-            } catch {
-                providerTestResult = "Fehler: \(error.localizedDescription.prefix(80))"
-            }
-            // Clear after 5s
-            try? await Task.sleep(nanoseconds: 5_000_000_000)
-            if testingProvider == name { testingProvider = "" }
-        }
-    }
 
     // MARK: - Berechtigungen
 
@@ -1297,7 +1166,7 @@ struct SettingsView: View {
 
     @ViewBuilder
     private func securitySection() -> some View {
-        sectionTitle("Datenschutz & Sicherheit")
+        sectionTitle("Datenschutz")
 
         // Datenpersistenz
         FuturisticBox(icon: "externaldrive.fill", title: "Datenpersistenz", accent: .koboldGold) {
@@ -1309,23 +1178,6 @@ struct SettingsView: View {
                      ? "Daten bleiben in ~/Library/Application Support/KoboldOS/ erhalten."
                      : "Alle Daten werden beim Deinstallieren der App entfernt.")
                     .font(.caption2).foregroundColor(.secondary)
-        }
-
-        // Safe Mode
-        FuturisticBox(icon: "lock.shield.fill", title: "Safe Mode", accent: .red) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Status: \(viewModel.safeModeActive ? "Aktiv" : "Deaktiviert")")
-                        Text(viewModel.safeModeActive
-                             ? "Eingeschränkter Modus — kritische Tools deaktiviert."
-                             : "Normalbetrieb — alle Tools verfügbar.")
-                            .font(.caption).foregroundColor(.secondary)
-                    }
-                    Spacer()
-                    Circle()
-                        .fill(viewModel.safeModeActive ? Color.red : Color.koboldEmerald)
-                        .frame(width: 10, height: 10)
-                }
         }
 
         // Daemon Auth
@@ -1352,69 +1204,6 @@ struct SettingsView: View {
                     }
                     .buttonStyle(.bordered)
                     .help("Token kopieren")
-                }
-        }
-
-        // Cloud API Provider & Keys
-        Text("Cloud API-Provider").font(.headline).padding(.top, 8)
-
-        // OpenAI
-        providerCard(
-            name: "OpenAI", icon: "brain.head.profile", color: .koboldEmerald,
-            keyBinding: $openaiKey, baseURLBinding: $openaiBaseURL,
-            defaultURL: "https://api.openai.com",
-            models: ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "o1"],
-            provider: "openai"
-        )
-        // Anthropic
-        providerCard(
-            name: "Anthropic", icon: "sparkles", color: .koboldGold,
-            keyBinding: $anthropicKey, baseURLBinding: $anthropicBaseURL,
-            defaultURL: "https://api.anthropic.com",
-            models: ["claude-sonnet-4-20250514", "claude-haiku-4-5-20251001", "claude-opus-4-20250514"],
-            provider: "anthropic"
-        )
-        // Groq
-        providerCard(
-            name: "Groq", icon: "bolt.fill", color: .koboldEmerald,
-            keyBinding: $groqKey, baseURLBinding: $groqBaseURL,
-            defaultURL: "https://api.groq.com",
-            models: ["llama-3.3-70b-versatile", "mixtral-8x7b-32768", "gemma2-9b-it"],
-            provider: "groq"
-        )
-
-        FuturisticBox(icon: "cloud.fill", title: "Cloud API-Keys (Schnellzugriff)", accent: .red) {
-                Text("API-Keys für Cloud-Provider. Werden lokal in UserDefaults gespeichert.")
-                    .font(.caption).foregroundColor(.secondary)
-
-                HStack(spacing: 12) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 4) {
-                            Circle().fill(openaiKey.isEmpty ? Color.red : Color.koboldEmerald).frame(width: 6, height: 6)
-                            Text("OpenAI").font(.caption.bold())
-                        }
-                        SecureField("sk-...", text: $openaiKey)
-                            .textFieldStyle(.roundedBorder)
-                            .font(.system(.caption, design: .monospaced))
-                    }
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 4) {
-                            Circle().fill(anthropicKey.isEmpty ? Color.red : Color.koboldEmerald).frame(width: 6, height: 6)
-                            Text("Anthropic").font(.caption.bold())
-                        }
-                        SecureField("sk-ant-...", text: $anthropicKey)
-                            .textFieldStyle(.roundedBorder)
-                            .font(.system(.caption, design: .monospaced))
-                    }
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 4) {
-                            Circle().fill(groqKey.isEmpty ? Color.red : Color.koboldEmerald).frame(width: 6, height: 6)
-                            Text("Groq").font(.caption.bold())
-                        }
-                        SecureField("gsk_...", text: $groqKey)
-                            .textFieldStyle(.roundedBorder)
-                            .font(.system(.caption, design: .monospaced))
-                    }
                 }
         }
 
@@ -1638,11 +1427,38 @@ struct SettingsView: View {
 
     @ViewBuilder
     private func debugSecuritySection() -> some View {
-        sectionTitle("Debugging & Sicherheit")
+        sectionTitle("Sicherheit")
+
+        // Safe Mode (moved from Datenschutz — belongs in Sicherheit)
+        FuturisticBox(icon: "lock.shield.fill", title: "Safe Mode", accent: .red) {
+            Text("Im Safe Mode werden kritische Tools (Shell, Datei-Löschung) deaktiviert. Nützlich für Tests oder eingeschränkte Umgebungen.")
+                .font(.caption2).foregroundColor(.secondary)
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Status: \(viewModel.safeModeActive ? "Aktiv" : "Deaktiviert")")
+                    Text(viewModel.safeModeActive
+                         ? "Eingeschränkter Modus — kritische Tools deaktiviert."
+                         : "Normalbetrieb — alle Tools verfügbar.")
+                        .font(.caption).foregroundColor(.secondary)
+                }
+                Spacer()
+                Circle()
+                    .fill(viewModel.safeModeActive ? Color.red : Color.koboldEmerald)
+                    .frame(width: 10, height: 10)
+            }
+        }
+
+        // Live Daemon-Log Viewer (oben, Vollbreite)
+        FuturisticBox(icon: "terminal.fill", title: "Live Daemon-Log", accent: .koboldEmerald) {
+            Text("Echtzeit-Protokoll aller Agent-Aktivitäten, Tool-Aufrufe und Modell-Anfragen.")
+                .font(.caption2).foregroundColor(.secondary)
+            DaemonLogView(viewModel: viewModel)
+                .frame(height: 260)
+        }
 
         HStack(alignment: .top, spacing: 16) {
-            // Logging
-            FuturisticBox(icon: "doc.text.magnifyingglass", title: "Logging", accent: .koboldEmerald) {
+            // Logging Settings
+            FuturisticBox(icon: "doc.text.magnifyingglass", title: "Log-Einstellungen", accent: .koboldEmerald) {
                 HStack {
                     Text("Log-Level").font(.caption.bold()).foregroundColor(.secondary)
                     Spacer()
@@ -1659,27 +1475,38 @@ struct SettingsView: View {
 
                 Toggle("Verbose Logging", isOn: AppStorageToggle("kobold.log.verbose", default: false))
                     .toggleStyle(.switch)
+                Text("Zeigt detaillierte Logs für jeden Agent-Schritt, Tool-Call und LLM-Anfrage.")
+                    .font(.caption2).foregroundColor(.secondary)
                 Toggle("Raw Prompts anzeigen", isOn: AppStorageToggle("kobold.dev.showRawPrompts", default: false))
                     .toggleStyle(.switch)
 
                 HStack(spacing: 8) {
                     Button("Logs exportieren") {
                         let panel = NSSavePanel()
-                        panel.nameFieldStringValue = "kobold-logs.txt"
+                        panel.nameFieldStringValue = "kobold-daemon.log"
                         panel.allowedContentTypes = [.plainText]
                         if panel.runModal() == .OK, let url = panel.url {
-                            let logs = "[KoboldOS Log Export — \(Date())]\n\nLog-Level: \(logLevel)\nExport complete."
-                            try? logs.write(to: url, atomically: true, encoding: .utf8)
+                            let logContent = DaemonLog.shared.entries.map { entry in
+                                "[\(entry.category.rawValue)] \(entry.message)"
+                            }.joined(separator: "\n")
+                            let export = "[KoboldOS Daemon-Log Export — \(Date())]\n\n\(logContent)"
+                            try? export.write(to: url, atomically: true, encoding: .utf8)
                         }
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
 
                     Button("Logs löschen") {
-                        print("[KoboldOS] Logs cleared")
+                        DaemonLog.shared.clear()
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
+
+                    Text("Pfad: \(DaemonLog.shared.logFilePath)")
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundColor(.secondary.opacity(0.6))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
                 }
             }
             .frame(maxHeight: .infinity, alignment: .top)
@@ -1719,10 +1546,16 @@ struct SettingsView: View {
 
             Toggle("Tool-Sandboxing (beschränkt Shell-Befehle)", isOn: $sandboxTools)
                 .toggleStyle(.switch)
+            Text("Erzwingt Blacklist- und Tier-Prüfung für alle Shell-Befehle.")
+                .font(.caption2).foregroundColor(.secondary)
             Toggle("Netzwerk-Einschränkungen (blockt localhost-Zugriffe)", isOn: $networkRestrict)
                 .toggleStyle(.switch)
+            Text("Verhindert dass der Agent auf lokale Dienste (localhost, 127.0.0.1) zugreift.")
+                .font(.caption2).foregroundColor(.secondary)
             Toggle("Bestätigung bei gefährlichen Aktionen (rm, sudo, etc.)", isOn: $confirmDangerous)
                 .toggleStyle(.switch)
+            Text("Agent bittet um Bestätigung bevor er destruktive Befehle ausführt.")
+                .font(.caption2).foregroundColor(.secondary)
 
             GlassDivider()
 
@@ -1735,12 +1568,170 @@ struct SettingsView: View {
 
                 Button("Daemon-Cache leeren") {
                     Task { if let url = URL(string: viewModel.baseURL + "/history/clear") {
-                        var req = viewModel.authorizedRequest(url: url, method: "POST")
+                        let req = viewModel.authorizedRequest(url: url, method: "POST")
                         _ = try? await URLSession.shared.data(for: req)
                     }}
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
+            }
+        }
+    }
+
+    // MARK: - Live Daemon Log View
+
+    struct DaemonLogView: View {
+        @ObservedObject var viewModel: RuntimeViewModel
+        @ObservedObject var log = DaemonLog.shared
+        @State private var autoScroll = true
+        @State private var filterCategory: DaemonLog.Category? = nil
+        @State private var logFetchTimer: Timer? = nil
+        @State private var lastFetchIndex = 0
+
+        var filteredEntries: [DaemonLog.Entry] {
+            guard let cat = filterCategory else { return log.entries }
+            return log.entries.filter { $0.category == cat }
+        }
+
+        var body: some View {
+            VStack(spacing: 6) {
+                // Filter bar
+                HStack(spacing: 6) {
+                    Button(action: { filterCategory = nil }) {
+                        Text("Alle")
+                            .font(.system(size: 10, weight: filterCategory == nil ? .bold : .regular))
+                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(filterCategory == nil ? Color.white.opacity(0.15) : Color.clear)
+                            .cornerRadius(4)
+                    }
+                    .buttonStyle(.plain)
+
+                    ForEach(DaemonLog.Category.allCases, id: \.rawValue) { cat in
+                        Button(action: { filterCategory = filterCategory == cat ? nil : cat }) {
+                            HStack(spacing: 3) {
+                                Image(systemName: DaemonLog.Entry(timestamp: Date(), message: "", category: cat).icon)
+                                    .font(.system(size: 9))
+                                Text(cat.rawValue)
+                                    .font(.system(size: 10, weight: filterCategory == cat ? .bold : .regular))
+                            }
+                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(filterCategory == cat ? Color.white.opacity(0.15) : Color.clear)
+                            .cornerRadius(4)
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    Spacer()
+                    Text("\(log.entries.count) Einträge")
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(.secondary)
+                    Toggle("Auto-Scroll", isOn: $autoScroll)
+                        .toggleStyle(.switch)
+                        .controlSize(.mini)
+                        .font(.system(size: 10))
+                }
+                .foregroundColor(.secondary)
+
+                // Log entries
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 1) {
+                            ForEach(filteredEntries) { entry in
+                                DaemonLogRow(entry: entry)
+                                    .id(entry.id)
+                            }
+                        }
+                        .padding(4)
+                    }
+                    .background(Color.black.opacity(0.3))
+                    .cornerRadius(6)
+                    .onChange(of: log.entries.count) {
+                        if autoScroll, let last = filteredEntries.last {
+                            proxy.scrollTo(last.id, anchor: .bottom)
+                        }
+                    }
+                }
+            }
+            .onAppear { startFetching() }
+            .onDisappear { stopFetching() }
+        }
+
+        private func startFetching() {
+            fetchDaemonLogs()
+            logFetchTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { _ in
+                fetchDaemonLogs()
+            }
+        }
+
+        private func stopFetching() {
+            logFetchTimer?.invalidate()
+            logFetchTimer = nil
+        }
+
+        private func fetchDaemonLogs() {
+            Task {
+                guard let url = URL(string: "\(viewModel.baseURL)/daemon/logs") else { return }
+                var req = viewModel.authorizedRequest(url: url, method: "POST")
+                req.httpBody = try? JSONSerialization.data(withJSONObject: ["since_index": lastFetchIndex])
+                guard let (data, resp) = try? await URLSession.shared.data(for: req),
+                      (resp as? HTTPURLResponse)?.statusCode == 200,
+                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+
+                if let totalCount = json["total_count"] as? Int {
+                    lastFetchIndex = totalCount
+                }
+                if let logs = json["logs"] as? [[String: Any]] {
+                    for entry in logs {
+                        let event = entry["event"] as? String ?? ""
+                        let detail = entry["detail"] as? String ?? ""
+                        let msg = event.isEmpty ? detail : "\(event): \(detail)"
+                        let cat: DaemonLog.Category
+                        if event.contains("Tool") { cat = .tool }
+                        else if event.contains("SSE") || event.contains("Model") { cat = .agent }
+                        else if event.contains("Fehler") || event.contains("Error") { cat = .error }
+                        else { cat = .system }
+                        DaemonLog.shared.add(msg, category: cat)
+                    }
+                }
+            }
+        }
+    }
+
+    struct DaemonLogRow: View {
+        let entry: DaemonLog.Entry
+        private static let timeFmt: DateFormatter = {
+            let f = DateFormatter()
+            f.dateFormat = "HH:mm:ss"
+            return f
+        }()
+
+        var body: some View {
+            HStack(spacing: 6) {
+                Text(Self.timeFmt.string(from: entry.timestamp))
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(.secondary.opacity(0.6))
+                    .frame(width: 55, alignment: .leading)
+                Image(systemName: entry.icon)
+                    .font(.system(size: 9))
+                    .foregroundColor(iconColor)
+                    .frame(width: 14)
+                Text(entry.message)
+                    .font(.system(size: 10.5, design: .monospaced))
+                    .foregroundColor(.primary.opacity(0.85))
+                    .lineLimit(2)
+                Spacer()
+            }
+            .padding(.vertical, 1)
+            .padding(.horizontal, 4)
+        }
+
+        private var iconColor: Color {
+            switch entry.category {
+            case .agent: return .blue
+            case .tool: return .orange
+            case .network: return .green
+            case .error: return .red
+            case .system: return .secondary
             }
         }
     }
@@ -1895,7 +1886,7 @@ struct SettingsView: View {
 
                     HStack(spacing: 8) {
                         Text("Port:").font(.system(size: 13.5)).foregroundColor(.secondary)
-                        TextField("8081", value: $a2aPort, format: .number)
+                        TextField("8081", value: $a2aPort, format: .number.grouping(.never))
                             .textFieldStyle(.roundedBorder)
                             .frame(width: 70)
                             .font(.system(.caption, design: .monospaced))
@@ -2075,9 +2066,6 @@ struct SettingsView: View {
 
         settingsSaveButton(section: "A2A")
 
-        // MCP Server (Model Context Protocol)
-        mcpServersSection()
-            .onAppear { Task { await loadMCPServers() } }
     }
 
     // MARK: - Brand Logos (SwiftUI drawn)
@@ -2285,6 +2273,8 @@ struct SettingsView: View {
                     Text("256K").tag(262144)
                 }
                 .pickerStyle(.menu)
+                Text("Stelle sicher, dass dein Ollama-Modell den gewählten Kontext unterstützt (num_ctx). Modelle mit weniger Kontext ignorieren ältere Nachrichten.")
+                    .font(.caption2).foregroundColor(.secondary)
 
                 Toggle("Auto-Komprimierung", isOn: $contextAutoCompress)
                     .toggleStyle(.switch).tint(.koboldEmerald)
@@ -2487,6 +2477,8 @@ struct SettingsView: View {
         // Core Memory blocks
         HStack(alignment: .top, spacing: 16) {
             FuturisticBox(icon: "ruler.fill", title: "Speicherlimits", accent: .koboldGold) {
+                    Text("Max. Zeichenanzahl pro Core-Memory-Block. Größere Blöcke = mehr Kontext, aber höherer Token-Verbrauch.")
+                        .font(.caption).foregroundColor(.secondary)
                     HStack {
                         Text("Persona-Block").font(.system(size: 15.5))
                         Spacer()
@@ -2720,7 +2712,7 @@ struct SettingsView: View {
                     HStack(spacing: 12) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Port").font(.system(size: 12.5, weight: .medium)).foregroundColor(.secondary)
-                            TextField("Port", value: $webAppPort, format: .number)
+                            TextField("Port", value: $webAppPort, format: .number.grouping(.never))
                                 .textFieldStyle(.roundedBorder)
                                 .frame(width: 70)
                         }
@@ -3382,96 +3374,6 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - MCP Server Settings (inside Verbindungen)
-
-    @State private var mcpServers: [(name: String, command: String, status: String)] = []
-    @State private var mcpNewName: String = ""
-    @State private var mcpNewCommand: String = ""
-    @State private var mcpNewArgs: String = ""
-
-    @ViewBuilder
-    private func mcpServersSection() -> some View {
-        sectionTitle("MCP Server (Model Context Protocol)")
-
-        FuturisticBox(icon: "server.rack", title: "MCP Server", accent: .koboldCyan) {
-            Text("Verbinde externe Tool-Server via MCP. Tools werden automatisch dem Agent zur Verfügung gestellt.")
-                .font(.caption).foregroundColor(.secondary)
-
-            if mcpServers.isEmpty {
-                Text("Keine MCP-Server konfiguriert")
-                    .font(.system(size: 13.5)).foregroundColor(.secondary.opacity(0.6))
-                    .padding(.vertical, 8)
-            } else {
-                ForEach(Array(mcpServers.enumerated()), id: \.offset) { _, server in
-                    HStack(spacing: 10) {
-                        Circle()
-                            .fill(server.status == "connected" ? Color.koboldEmerald : Color.orange)
-                            .frame(width: 7, height: 7)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(server.name).font(.system(size: 13.5, weight: .medium))
-                            Text(server.command).font(.system(size: 11.5, design: .monospaced)).foregroundColor(.secondary)
-                        }
-                        Spacer()
-                        Text(server.status).font(.system(size: 11.5)).foregroundColor(.secondary)
-                        Button(action: {
-                            let name = server.name
-                            Task {
-                                try? await MCPConfigManager.shared.removeConfig(name)
-                                await loadMCPServers()
-                            }
-                        }) {
-                            Image(systemName: "trash").font(.system(size: 12.5)).foregroundColor(.red.opacity(0.7))
-                        }.buttonStyle(.plain)
-                    }
-                    .padding(.vertical, 4)
-                    Divider().opacity(0.3)
-                }
-            }
-
-            // Add new server
-            Divider().opacity(0.3)
-            Text("Server hinzufügen").font(.system(size: 12.5, weight: .semibold)).foregroundColor(.secondary)
-            HStack(spacing: 8) {
-                TextField("Name", text: $mcpNewName)
-                    .textFieldStyle(.roundedBorder).frame(width: 100)
-                TextField("Befehl (z.B. npx)", text: $mcpNewCommand)
-                    .textFieldStyle(.roundedBorder).frame(width: 120)
-                TextField("Argumente (kommagetrennt)", text: $mcpNewArgs)
-                    .textFieldStyle(.roundedBorder)
-                Button("Hinzufügen") {
-                    guard !mcpNewName.isEmpty, !mcpNewCommand.isEmpty else { return }
-                    let args = mcpNewArgs.components(separatedBy: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-                    let name = mcpNewName
-                    let cmd = mcpNewCommand
-                    Task {
-                        let config = MCPClient.ServerConfig(name: name, command: cmd, args: args, env: [:])
-                        try? await MCPConfigManager.shared.saveConfig(config)
-                        // Connect server immediately (tools register on next agent call)
-                        try? await MCPConfigManager.shared.mcpClient.connectServer(config)
-                        await MainActor.run {
-                            mcpNewName = ""
-                            mcpNewCommand = ""
-                            mcpNewArgs = ""
-                        }
-                        await loadMCPServers()
-                    }
-                }
-                .disabled(mcpNewName.isEmpty || mcpNewCommand.isEmpty)
-            }
-            .font(.system(size: 12.5))
-        }
-    }
-
-    private func loadMCPServers() async {
-        let mgr = MCPConfigManager.shared
-        let configs = await mgr.loadConfigs()
-        let status = await mgr.getStatus()
-        mcpServers = configs.map { config in
-            let connected = status.first(where: { $0.name == config.name })?.connected ?? false
-            return (name: config.name, command: config.command, status: connected ? "connected" : "disconnected")
-        }
-    }
-
     // MARK: - Sprache & Audio (TTS / STT / Sounds)
 
     @AppStorage("kobold.tts.voice") private var ttsVoice: String = "de-DE"
@@ -3487,6 +3389,8 @@ struct SettingsView: View {
         // Systemsounds
         HStack(alignment: .top, spacing: 16) {
             FuturisticBox(icon: "speaker.wave.2.fill", title: "Systemsounds", accent: .koboldGold) {
+                    Text("Abspielen von Sound-Effekten bei Tool-Ausführung, Fehlern und Abschluss.")
+                        .font(.caption).foregroundColor(.secondary)
                     Toggle("Sounds aktivieren", isOn: $soundsEnabled)
                         .toggleStyle(.switch)
                     if soundsEnabled {
@@ -3857,6 +3761,8 @@ struct SettingsView: View {
         sectionTitle("Agent-Persönlichkeit")
 
         FuturisticBox(icon: "bubble.left.and.bubble.right.fill", title: "Kommunikation", accent: .koboldGold) {
+                Text("Bestimmt den Grundton und die Sprache der Agent-Antworten.")
+                    .font(.caption).foregroundColor(.secondary)
 
                 HStack(spacing: 20) {
                     VStack(alignment: .leading, spacing: 4) {
@@ -4107,7 +4013,7 @@ struct SettingsView: View {
                     )
                 VStack(alignment: .leading, spacing: 4) {
                     Text("KoboldOS").font(.title.bold())
-                    Text("Alpha v0.3.1").font(.title3).foregroundColor(.koboldGold)
+                    Text("Alpha v0.3.2").font(.title3).foregroundColor(.koboldGold)
                     Text("Dein lokaler KI-Assistent für macOS")
                         .font(.subheadline).foregroundColor(.secondary)
                 }
@@ -4117,7 +4023,7 @@ struct SettingsView: View {
         }
 
         FuturisticBox(icon: "info.circle", title: "Build-Info", accent: .koboldGold) {
-                infoRow("Version", "Alpha v0.3.1")
+                infoRow("Version", "Alpha v0.3.2")
                 infoRow("Build", "2026-02-23")
                 infoRow("Swift", "6.0")
                 infoRow("Plattform", "macOS 14+ (Sonoma)")
@@ -4161,24 +4067,6 @@ struct SettingsView: View {
         .foregroundColor(.koboldEmerald)
     }
 
-    private func cloudModels(for provider: String) -> [String] {
-        switch provider {
-        case "openai":    return ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "o1", "o3-mini"]
-        case "anthropic": return ["claude-sonnet-4-20250514", "claude-haiku-4-5-20251001", "claude-opus-4-20250514"]
-        case "groq":      return ["llama-3.3-70b-versatile", "mixtral-8x7b-32768", "gemma2-9b-it"]
-        default:          return []
-        }
-    }
-
-    private func providerBadgeColor(_ provider: String) -> Color {
-        switch provider {
-        case "openai":    return .green
-        case "anthropic": return .orange
-        case "groq":      return .blue
-        default:          return .gray
-        }
-    }
-
     private func loadModels() {
         guard !isLoadingModels else { return }
         isLoadingModels = true
@@ -4213,7 +4101,7 @@ struct SettingsView: View {
         panel.allowedContentTypes = [.plainText]
         panel.nameFieldStringValue = "koboldos-logs.txt"
         if panel.runModal() == .OK, let url = panel.url {
-            let logs = "KoboldOS Alpha v0.2.5 — Logs\nPID: \(ProcessInfo.processInfo.processIdentifier)\nUptime: \(Date())\n"
+            let logs = "KoboldOS Alpha v0.3.2 — Logs\nPID: \(ProcessInfo.processInfo.processIdentifier)\nUptime: \(Date())\n"
             try? logs.write(to: url, atomically: true, encoding: .utf8)
         }
     }

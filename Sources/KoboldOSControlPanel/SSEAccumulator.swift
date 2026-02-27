@@ -163,6 +163,10 @@ actor SSEAccumulator {
         let steps = pendingSteps
         pendingSteps = []
         allThinkingSteps.append(contentsOf: steps)
+        // Limit accumulated steps to prevent unbounded memory growth
+        if allThinkingSteps.count > 2000 {
+            allThinkingSteps = Array(allThinkingSteps.suffix(1500))
+        }
 
         let thoughts = pendingThoughtNotifications
         pendingThoughtNotifications = []

@@ -159,8 +159,8 @@ class ProactiveEngine: ObservableObject {
     private var idleExecutionsThisHour: Int = 0
     private var lastHourReset: Date = Date()
 
-    private var checkTimer: Timer?
-    private var heartbeatTimer: Timer?
+    private var checkTask: Task<Void, Never>?
+    private var heartbeatTask: Task<Void, Never>?
     private let rulesKey = "kobold.proactive.rules"
     private let goalsKey = "kobold.proactive.goals"
     private let idleTasksKey = "kobold.proactive.idleTasksList"
@@ -178,12 +178,12 @@ class ProactiveEngine: ObservableObject {
         loadIdleTasks()
     }
 
-    /// Call on app termination to prevent timer leak
+    /// Call on app termination to prevent task leak
     func cleanup() {
-        checkTimer?.invalidate()
-        checkTimer = nil
-        heartbeatTimer?.invalidate()
-        heartbeatTimer = nil
+        checkTask?.cancel()
+        checkTask = nil
+        heartbeatTask?.cancel()
+        heartbeatTask = nil
     }
 
     // MARK: - Rules Persistence
@@ -304,49 +304,50 @@ class ProactiveEngine: ObservableObject {
 
     func startPeriodicCheck(viewModel: RuntimeViewModel) {
         guard isEnabled else { return }
-        checkTimer?.invalidate()
-        heartbeatTimer?.invalidate()
-        let interval = TimeInterval(max(1, checkIntervalMinutes) * 60)
-        checkTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self, weak viewModel] _ in
-            Task { @MainActor in
-                guard let self, let viewModel else { return }
-                self.generateSuggestions(viewModel: viewModel)
+        checkTask?.cancel()
+        heartbeatTask?.cancel()
+        let interval = UInt64(max(1, checkIntervalMinutes)) * 60_000_000_000
+        checkTask = Task { [weak self, weak viewModel] in
+            // Initial check after 15 seconds
+            try? await Task.sleep(nanoseconds: 15_000_000_000)
+            if let self, let viewModel, !Task.isCancelled {
+                await MainActor.run { self.generateSuggestions(viewModel: viewModel) }
+            }
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: interval)
+                guard !Task.isCancelled, let self, let viewModel else { break }
+                await MainActor.run { self.generateSuggestions(viewModel: viewModel) }
             }
         }
-        // Heartbeat timer
         if heartbeatEnabled {
-            let hbInterval = TimeInterval(max(10, heartbeatIntervalSec))
-            heartbeatTimer = Timer.scheduledTimer(withTimeInterval: hbInterval, repeats: true) { [weak self, weak viewModel] _ in
-                Task { @MainActor in
-                    guard let self, let viewModel else { return }
-                    self.heartbeat(viewModel: viewModel)
+            let hbNanos = UInt64(max(10, heartbeatIntervalSec)) * 1_000_000_000
+            heartbeatTask = Task { [weak self, weak viewModel] in
+                while !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: hbNanos)
+                    guard !Task.isCancelled, let self, let viewModel else { break }
+                    await MainActor.run { self.heartbeat(viewModel: viewModel) }
                 }
             }
-        }
-        // Initial check after 15 seconds
-        Task { [weak self, weak viewModel] in
-            try? await Task.sleep(nanoseconds: 15_000_000_000)
-            guard let self, let viewModel else { return }
-            self.generateSuggestions(viewModel: viewModel)
         }
     }
 
     func stopPeriodicCheck() {
-        checkTimer?.invalidate()
-        checkTimer = nil
-        heartbeatTimer?.invalidate()
-        heartbeatTimer = nil
+        checkTask?.cancel()
+        checkTask = nil
+        heartbeatTask?.cancel()
+        heartbeatTask = nil
     }
 
     func restartHeartbeat(viewModel: RuntimeViewModel) {
-        heartbeatTimer?.invalidate()
-        heartbeatTimer = nil
+        heartbeatTask?.cancel()
+        heartbeatTask = nil
         guard heartbeatEnabled, isEnabled else { return }
-        let hbInterval = TimeInterval(max(10, heartbeatIntervalSec))
-        heartbeatTimer = Timer.scheduledTimer(withTimeInterval: hbInterval, repeats: true) { [weak self, weak viewModel] _ in
-            Task { @MainActor in
-                guard let self, let viewModel else { return }
-                self.heartbeat(viewModel: viewModel)
+        let hbNanos = UInt64(max(10, heartbeatIntervalSec)) * 1_000_000_000
+        heartbeatTask = Task { [weak self, weak viewModel] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: hbNanos)
+                guard !Task.isCancelled, let self, let viewModel else { break }
+                await MainActor.run { self.heartbeat(viewModel: viewModel) }
             }
         }
     }

@@ -91,7 +91,7 @@ enum TerminalFormatter {
     static func banner() -> String {
         let art = """
 
-         \u{1F432} KoboldOS v0.2.6
+         \u{1F432} KoboldOS v0.3.2
          Lokaler KI-Agent für macOS
          /help für Befehle, /quit zum Beenden
 

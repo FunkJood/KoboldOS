@@ -106,7 +106,7 @@ extension RuntimeViewModel {
         return appSupport.appendingPathComponent("KoboldOS/teams.json")
     }
 
-    private var teamMessagesDir: URL {
+    private var teamMessagesDirExt: URL {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         return appSupport.appendingPathComponent("KoboldOS/team_messages")
     }
@@ -160,8 +160,9 @@ extension RuntimeViewModel {
     func sendTeamAgentMessage(prompt: String, profile: String) async -> String {
         guard let url = URL(string: baseURL + "/agent") else { return "URL-Fehler" }
 
-        let provider = UserDefaults.standard.string(forKey: "kobold.provider") ?? "ollama"
-        let model = UserDefaults.standard.string(forKey: "kobold.model.\(profile)") ?? UserDefaults.standard.string(forKey: "kobold.model") ?? "llama3.2"
+        let provider = "ollama"
+        let agentModel = await ModelConfigManager.shared.getModel(for: profile)
+        let model = agentModel.model
         let apiKey = UserDefaults.standard.string(forKey: "kobold.provider.\(provider).key") ?? ""
 
         let payload: [String: Any] = [

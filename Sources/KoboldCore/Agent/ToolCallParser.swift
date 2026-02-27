@@ -94,9 +94,19 @@ public struct ToolCallParser: Sendable {
             // Try to find a user-facing text field
             if let t = json["text"] as? String { return t }
             if let t = json["content"] as? String { return t }
+            if let t = json["response"] as? String { return t }
+            if let t = json["message"] as? String { return t }
+            if let t = json["answer"] as? String { return t }
             if let args = json["tool_args"] as? [String: Any], let t = args["text"] as? String { return t }
             if let args = json["arguments"] as? [String: Any], let t = args["text"] as? String { return t }
             if let args = json["args"] as? [String: Any], let t = args["text"] as? String { return t }
+            // Handle string-encoded tool_args
+            for key in ["tool_args", "args", "arguments"] {
+                if let str = json[key] as? String,
+                   let data = str.data(using: .utf8),
+                   let inner = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let t = inner["text"] as? String { return t }
+            }
             // Last resort: return thoughts if available
             if let thoughts = json["thoughts"] as? [String], !thoughts.isEmpty {
                 return thoughts.joined(separator: " ")
@@ -145,12 +155,35 @@ public struct ToolCallParser: Sendable {
 
         // Extract arguments — try multiple key names
         var args: [String: String] = [:]
-        let argsObj: [String: Any]? =
+        var argsObj: [String: Any]? =
             json["tool_args"] as? [String: Any] ??
             json["parameters"] as? [String: Any] ??
             json["arguments"] as? [String: Any] ??
             json["args"] as? [String: Any] ??
             json["input"] as? [String: Any]
+
+        // Handle string-encoded tool_args (common with Qwen and other local models)
+        if argsObj == nil {
+            for key in ["tool_args", "args", "arguments", "parameters", "input"] {
+                if let str = json[key] as? String,
+                   let data = str.data(using: .utf8),
+                   let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    argsObj = parsed
+                    break
+                }
+            }
+        }
+
+        // Fallback: if tool_args is a plain string (not JSON), use it as "text" directly
+        // This handles: {"tool_name":"response","tool_args":"Hallo, wie kann ich helfen?"}
+        if argsObj == nil {
+            for key in ["tool_args", "args", "arguments", "parameters", "input"] {
+                if let str = json[key] as? String, !str.isEmpty {
+                    args["text"] = str
+                    break
+                }
+            }
+        }
 
         if let argsObj {
             for (key, value) in argsObj {

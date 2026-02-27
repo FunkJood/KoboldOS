@@ -22,7 +22,7 @@ let package = Package(
             dependencies: [
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
                 "KoboldCore",
-                .target(name: "WebGUI", condition: .when(platforms: [.linux]))
+                // WebGUI entfernt (kein Linux-Support)
             ],
             path: "Sources/KoboldCLI",
             swiftSettings: [
@@ -70,21 +70,8 @@ let package = Package(
                 "Agent/BaseAgent.swift",
                 "Agent/CodingAgent.swift",
                 "Agent/AgentMessageBus.swift",
-                "Agent/ToolEngine.swift",
-                "Agent/OllamaAgent.swift",
             ]
         ),
-        // MARK: - Web GUI (Linux/Docker support)
-        .target(
-            name: "WebGUI",
-            dependencies: [
-                "KoboldCore",
-                .product(name: "ArgumentParser", package: "swift-argument-parser")
-            ],
-            path: "Sources/WebGUI",
-            swiftSettings: [.define("WEB_GUI")]
-        ),
-
         // MARK: - Tests
         .testTarget(
             name: "KoboldCoreTests",

@@ -6,10 +6,13 @@ import KoboldCore
 
 extension Notification.Name {
     static let koboldNavigate = Notification.Name("koboldNavigateTo")
+    static let koboldNavigateSettings = Notification.Name("koboldNavigateSettings")
+    static let koboldShowMainWindow = Notification.Name("koboldShowMainWindow")
     static let koboldShutdownSave = Notification.Name("koboldShutdownSave")
     static let koboldWorkflowChanged = Notification.Name("koboldWorkflowChanged")
     static let koboldProjectsChanged = Notification.Name("koboldProjectsChanged")
     static let koboldWorkflowRun = Notification.Name("koboldWorkflowRun")
+    static let koboldLateStartup = Notification.Name("koboldLateStartup")
 }
 
 // MARK: - App Entry Point
@@ -25,7 +28,7 @@ struct KoboldOSApp: App {
                 .environmentObject(runtimeManager)
                 .environmentObject(l10n)
                 .onAppear {
-                    runtimeManager.startDaemon()
+                    // Daemon wird bereits in AppDelegate.applicationDidFinishLaunching gestartet
                     // Auto-check for updates on launch
                     if UserDefaults.standard.bool(forKey: "kobold.autoCheckUpdates") {
                         Task {
@@ -52,10 +55,6 @@ struct KoboldOSApp: App {
                 Button("Chat") {
                     NotificationCenter.default.post(name: .koboldNavigate, object: SidebarTab.chat)
                 }.keyboardShortcut("1", modifiers: .command)
-
-                Button("Dashboard") {
-                    NotificationCenter.default.post(name: .koboldNavigate, object: SidebarTab.dashboard)
-                }.keyboardShortcut("2", modifiers: .command)
 
                 Button("Gedächtnis") {
                     NotificationCenter.default.post(name: .koboldNavigate, object: SidebarTab.memory)
@@ -95,32 +94,49 @@ struct KoboldOSApp: App {
 
 // MARK: - App Delegate
 
-class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        // NEVER quit when window closes — always minimize to menu bar / dock
-        return false
+        return true  // Fenster zu = App beenden (kein MenuBar mehr)
     }
 
     // Held for process lifetime — prevents App Nap and requests high scheduler priority.
     private var activityToken: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Request maximum CPU access: disable App Nap, set latency-critical scheduling.
-        // This allows macOS to schedule KoboldOS on multiple CPU cores at high priority
-        // instead of throttling it when the window is not in the foreground.
+        // Globale Permission-Defaults registrieren.
+        UserDefaults.standard.register(defaults: [
+            "kobold.autonomyLevel": 2,
+            "kobold.perm.shell": true,
+            "kobold.perm.fileWrite": true,
+            "kobold.perm.createFiles": true,
+            "kobold.perm.deleteFiles": false,
+            "kobold.perm.network": true,
+            "kobold.perm.confirmAdmin": true,
+            "kobold.perm.modifyMemory": true,
+            "kobold.perm.notifications": true,
+            "kobold.perm.calendar": true,
+            "kobold.perm.contacts": false,
+            "kobold.perm.mail": false,
+            "kobold.perm.playwright": false,
+            "kobold.perm.screenControl": false,
+            "kobold.perm.selfCheck": false,
+            "kobold.perm.installPkgs": false,
+            "kobold.shell.powerTier": true,
+            "kobold.shell.normalTier": true,
+        ])
+
+        // Disable App Nap for LLM inference performance.
         activityToken = ProcessInfo.processInfo.beginActivity(
             options: [
-                .userInitiatedAllowingIdleSystemSleep, // high QoS, allows idle sleep
-                .latencyCritical,                      // lowest scheduler latency
-                .automaticTerminationDisabled,          // don't auto-terminate
-                .suddenTerminationDisabled,             // don't sudden-terminate
+                .userInitiatedAllowingIdleSystemSleep,
+                .latencyCritical,
             ],
             reason: "KoboldOS Agent Inference — requires full CPU access"
         )
         print("[AppDelegate] High-performance activity token acquired")
 
-        // CRITICAL: Start daemon IMMEDIATELY on launch — don't wait for onAppear
+        // Start daemon
         RuntimeManager.shared.startDaemon()
         print("[AppDelegate] Daemon start triggered")
 
@@ -132,64 +148,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             print("[AppDelegate] Telegram bot auto-started")
         }
 
-        // Initialize TTS Manager (listens for speak notifications from agent)
+        // Initialize TTS Manager
         _ = TTSManager.shared
 
-        // Re-embed any memories that don't have a vector yet (incremental, background)
-        Task.detached(priority: .background) {
-            // Brief delay so the UI is fully up before we start embedding
-            try? await Task.sleep(nanoseconds: 3_000_000_000)
-            let store = MemoryStore()
-            // Allow actor-isolated loadFromDisk() Task to finish
-            try? await Task.sleep(nanoseconds: 500_000_000)
-            let entries = await store.allEntries()
-            await EmbeddingStore.shared.reembedMissing(entries: entries)
+        // Post late startup notification for background tasks
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
+            NotificationCenter.default.post(name: .koboldLateStartup, object: nil)
         }
-
-        // Set window delegate on main window once it appears (handles close → hide)
-        DispatchQueue.main.async { [weak self] in
-            if let window = NSApp.windows.first(where: {
-                $0.className != "NSStatusBarWindow" && !$0.className.contains("Popover")
-            }) {
-                window.delegate = self
-            }
-        }
-    }
-
-    // MARK: - NSWindowDelegate — intercept close to hide instead
-
-    @MainActor
-    func windowShouldClose(_ sender: NSWindow) -> Bool {
-        // Save data before hiding
-        NotificationCenter.default.post(name: .koboldShutdownSave, object: nil)
-        // Hide the window (keeps it alive, just invisible)
-        sender.orderOut(nil)
-        // Switch to accessory mode (hides Dock icon, menu bar stays)
-        NSApp.setActivationPolicy(.accessory)
-        return false  // Prevent actual window close
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         NotificationCenter.default.post(name: .koboldShutdownSave, object: nil)
         ProactiveEngine.shared.cleanup()
         RuntimeManager.shared.cleanup()
-    }
-
-    func applicationDidBecomeActive(_ notification: Notification) {
-        NSApp.setActivationPolicy(.regular)
-    }
-
-    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if !flag {
-            NSApp.setActivationPolicy(.regular)
-            NSApp.activate(ignoringOtherApps: true)
-            // Re-show the hidden main window
-            if let window = NSApp.windows.first(where: {
-                $0.className != "NSStatusBarWindow" && !$0.className.contains("Popover")
-            }) {
-                window.makeKeyAndOrderFront(nil)
-            }
-        }
-        return true
     }
 }

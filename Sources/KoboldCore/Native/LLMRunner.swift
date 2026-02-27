@@ -74,6 +74,16 @@ public actor LLMRunner {
     // llama-server defaults (llama.cpp --server listens on 8081 by default)
     private var llamaServerURL: String = "http://localhost:8081"
 
+    // Dedicated URLSession — NOT .shared, so parallel workers don't serialize on one connection pool
+    private let httpSession: URLSession = {
+        let cfg = URLSessionConfiguration.default
+        cfg.httpMaximumConnectionsPerHost = 8
+        cfg.timeoutIntervalForRequest = 300
+        cfg.timeoutIntervalForResource = 600
+        cfg.waitsForConnectivity = false
+        return URLSession(configuration: cfg)
+    }()
+
     public init() {
         Task { await self.autoDetect() }
     }
@@ -106,19 +116,32 @@ public actor LLMRunner {
 
     private func isOllamaAvailable() async -> Bool {
         guard let url = URL(string: "http://localhost:11434/api/tags"),
-              let (data, _) = try? await URLSession.shared.data(from: url),
+              let (data, _) = try? await httpSession.data(from: url),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let models = json["models"] as? [[String: Any]],
               !models.isEmpty else {
             return false
         }
-        let stored = UserDefaults.standard.string(forKey: "kobold.ollamaModel") ?? ""
         let names = models.compactMap { $0["name"] as? String }
-        // Prefer local models over cloud models for reliability
-        let localModels = names.filter { !$0.contains("cloud") }
-        let fallback = localModels.first ?? names.first ?? ""
-        ollamaModel = stored.isEmpty ? fallback : stored
-        print("[LLMRunner] Ollama model: \(ollamaModel) (stored: '\(stored)', available: \(names.count))")
+
+        // Priority: 1) General agent config model, 2) kobold.ollamaModel, 3) First available
+        var chosen = ""
+        if let configData = UserDefaults.standard.data(forKey: "kobold.agentConfigs"),
+           let jsonArray = try? JSONSerialization.jsonObject(with: configData) as? [[String: Any]],
+           let generalConfig = jsonArray.first(where: { ($0["id"] as? String) == "general" }),
+           let generalModel = generalConfig["modelName"] as? String,
+           !generalModel.isEmpty {
+            chosen = generalModel
+        }
+        if chosen.isEmpty {
+            chosen = UserDefaults.standard.string(forKey: "kobold.ollamaModel") ?? ""
+        }
+        if chosen.isEmpty {
+            chosen = names.first ?? ""
+        }
+        ollamaModel = chosen
+        if !chosen.isEmpty { UserDefaults.standard.set(chosen, forKey: "kobold.ollamaModel") }
+        print("[LLMRunner] Ollama model: \(ollamaModel) (available: \(names.count), source: \(chosen == names.first ? "first-available" : "agent-config"))")
         return !ollamaModel.isEmpty
     }
 
@@ -126,7 +149,7 @@ public actor LLMRunner {
         let port = UserDefaults.standard.integer(forKey: "kobold.llamaServerPort")
         llamaServerURL = "http://localhost:\(port == 0 ? 8081 : port)"
         guard let url = URL(string: llamaServerURL + "/health"),
-              let (data, _) = try? await URLSession.shared.data(from: url),
+              let (data, _) = try? await httpSession.data(from: url),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return false
         }
@@ -185,8 +208,8 @@ public actor LLMRunner {
         // num_ctx tells Ollama how large the KV-cache should be; without this it uses the
         // model's compiled default (often 2k–32k) regardless of what the user configured.
         let storedCtx = UserDefaults.standard.integer(forKey: "kobold.context.windowSize")
-        var ollamaOptions: [String: Any] = ["num_predict": 8192]
-        if storedCtx > 0 { ollamaOptions["num_ctx"] = storedCtx }
+        let effectiveCtx = storedCtx > 0 ? storedCtx : 32768
+        let ollamaOptions: [String: Any] = ["num_predict": 16384, "num_ctx": effectiveCtx]
 
         let body: [String: Any] = [
             "model": ollamaModel,
@@ -198,12 +221,14 @@ public actor LLMRunner {
             throw LLMError.generationFailed("Could not serialize request body")
         }
 
-        // Retry-Logik: Bei HTTP 500 bis zu 2 Retries mit 2s Pause
+        // Retry-Logik: Bei HTTP 500 bis zu 2 Retries mit Exponential Backoff + Jitter
         var lastError: Error?
         for attempt in 0..<3 {
             if attempt > 0 {
-                print("[LLMRunner] Ollama Retry \(attempt)/2 nach 2s Pause...")
-                try await Task.sleep(nanoseconds: 2_000_000_000)
+                let baseDelay: UInt64 = UInt64(attempt) * 2_000_000_000 // 2s, 4s
+                let jitter = UInt64.random(in: 0...500_000_000) // 0-500ms Jitter
+                print("[LLMRunner] Ollama Retry \(attempt)/2 nach \(attempt * 2)s + Jitter...")
+                try await Task.sleep(nanoseconds: baseDelay + jitter)
             }
 
             var req = URLRequest(url: url)
@@ -215,7 +240,7 @@ public actor LLMRunner {
             do {
                 let startTime = Date()
                 print("[LLMRunner] Ollama POST attempt=\(attempt) model=\(ollamaModel) msgCount=\(messages.count) bodySize=\(httpBody.count)bytes")
-                let (data, resp) = try await URLSession.shared.data(for: req)
+                let (data, resp) = try await httpSession.data(for: req)
                 let elapsed = Date().timeIntervalSince(startTime)
                 print("[LLMRunner] Ollama response in \(String(format: "%.1f", elapsed))s dataSize=\(data.count)bytes")
 
@@ -310,7 +335,7 @@ public actor LLMRunner {
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
         req.timeoutInterval = 120
 
-        let (data, _) = try await URLSession.shared.data(for: req)
+        let (data, _) = try await httpSession.data(for: req)
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let choices = json["choices"] as? [[String: Any]],
               let first = choices.first,
@@ -379,7 +404,7 @@ public actor LLMRunner {
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
         req.timeoutInterval = 120
 
-        let (data, resp) = try await URLSession.shared.data(for: req)
+        let (data, resp) = try await httpSession.data(for: req)
         guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else {
             let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
             let errBody = String(data: data, encoding: .utf8) ?? ""
@@ -430,7 +455,7 @@ public actor LLMRunner {
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
         req.timeoutInterval = 120
 
-        let (data, resp) = try await URLSession.shared.data(for: req)
+        let (data, resp) = try await httpSession.data(for: req)
         guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else {
             let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
             let errBody = String(data: data, encoding: .utf8) ?? ""
@@ -467,7 +492,7 @@ public actor LLMRunner {
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
         req.timeoutInterval = 60
 
-        let (data, resp) = try await URLSession.shared.data(for: req)
+        let (data, resp) = try await httpSession.data(for: req)
         guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else {
             let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
             let errBody = String(data: data, encoding: .utf8) ?? ""
@@ -521,7 +546,7 @@ public actor LLMRunner {
 
     public func listOllamaModels() async -> [String] {
         guard let url = URL(string: "http://localhost:11434/api/tags"),
-              let (data, _) = try? await URLSession.shared.data(from: url),
+              let (data, _) = try? await httpSession.data(from: url),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let models = json["models"] as? [[String: Any]] else { return [] }
         return models.compactMap { $0["name"] as? String }

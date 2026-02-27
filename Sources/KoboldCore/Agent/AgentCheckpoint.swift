@@ -49,8 +49,12 @@ public actor CheckpointStore {
     private let storeDir: URL
 
     init() {
-        storeDir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-            .appendingPathComponent("KoboldOS/checkpoints")
+        guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+            storeDir = FileManager.default.temporaryDirectory.appendingPathComponent("KoboldOS/checkpoints")
+            try? FileManager.default.createDirectory(at: storeDir, withIntermediateDirectories: true)
+            return
+        }
+        storeDir = appSupport.appendingPathComponent("KoboldOS/checkpoints")
         try? FileManager.default.createDirectory(at: storeDir, withIntermediateDirectories: true)
     }
 

@@ -9,7 +9,7 @@ import AppKit
 final class UpdateManager: ObservableObject {
     static let shared = UpdateManager()
 
-    static let currentVersion = "0.3.1"
+    static let currentVersion = "0.3.2"
 
     @Published var state: UpdateState = .idle
     @Published var latestVersion: String?

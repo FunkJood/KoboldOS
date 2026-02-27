@@ -115,13 +115,11 @@ class RuntimeManager: ObservableObject {
                 return
             }
             healthStatus = "OK"
-            MenuBarController.shared.updateStatusIcon(healthy: true)
             if !didPlayBootSound {
                 didPlayBootSound = true
                 SoundManager.shared.play(.boot)
             }
         } catch {
-            MenuBarController.shared.updateStatusIcon(healthy: false)
             if daemonTask != nil {
                 if healthStatus == "Starting" { return }
                 healthStatus = "Unreachable"

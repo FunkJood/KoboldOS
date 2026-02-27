@@ -85,10 +85,10 @@ public struct SelfAwarenessTool: Tool {
     // MARK: - State
 
     private func getAppState() -> String {
-        let version = "v0.3.1 Alpha"
+        let version = "v0.3.2 Alpha"
         let agentName = UserDefaults.standard.string(forKey: "kobold.agent.name") ?? "Kobold"
         let personality = UserDefaults.standard.string(forKey: "kobold.personality.soul") ?? "(Standard)"
-        let model = UserDefaults.standard.string(forKey: "kobold.selectedModel") ?? "qwen2.5:14b"
+        let model = UserDefaults.standard.string(forKey: "kobold.ollamaModel") ?? "unbekannt"
         let heartbeat = UserDefaults.standard.bool(forKey: "kobold.proactive.heartbeatEnabled")
         let terminalPerm = UserDefaults.standard.bool(forKey: "kobold.permission.appTerminal")
         let browserPerm = UserDefaults.standard.bool(forKey: "kobold.permission.appBrowser")

@@ -43,7 +43,7 @@ public struct WorkflowManageTool: Tool, Sendable {
                 ),
                 "agent_type": ToolSchemaProperty(
                     type: "string",
-                    description: "Agent type for node: instructor, coder, web, planner, utility"
+                    description: "Agent type for node: general, coder, web"
                 ),
                 "model_override": ToolSchemaProperty(
                     type: "string",

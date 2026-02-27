@@ -8,15 +8,25 @@ public actor SubAgentStepRelay {
     public static let shared = SubAgentStepRelay()
 
     private var continuations: [String: AsyncStream<AgentStep>.Continuation] = [:]
+    /// Track registration time to clean up stale entries
+    private var registrationTimes: [String: Date] = [:]
 
     /// Register a parent agent's stream continuation so sub-agents can forward steps to it.
     public func register(agentId: String, continuation: AsyncStream<AgentStep>.Continuation) {
         continuations[agentId] = continuation
+        registrationTimes[agentId] = Date()
+        // Clean up stale continuations (older than 15 min — prevents memory leaks from crashed agents)
+        let staleThreshold = Date().addingTimeInterval(-900)
+        for (id, time) in registrationTimes where time < staleThreshold {
+            continuations.removeValue(forKey: id)
+            registrationTimes.removeValue(forKey: id)
+        }
     }
 
     /// Unregister when streaming ends.
     public func unregister(agentId: String) {
         continuations.removeValue(forKey: agentId)
+        registrationTimes.removeValue(forKey: agentId)
     }
 
     /// Forward a step from a sub-agent to the parent's stream.
@@ -33,10 +43,10 @@ private actor SubAgentCache {
     private var agents: [String: AgentLoop] = [:]
     private var activeCount: Int = 0
 
-    /// Max concurrent sub-agents, configurable via Settings (default 10)
+    /// Max concurrent sub-agents, configurable via Settings (default 2 for local Ollama)
     private var maxConcurrent: Int {
         let v = UserDefaults.standard.integer(forKey: "kobold.subagent.maxConcurrent")
-        return v > 0 ? v : 10
+        return v > 0 ? v : 2
     }
 
     func get(_ profile: String) -> AgentLoop? { agents[profile] }
@@ -61,8 +71,7 @@ enum SubAgentProfile {
         switch profile.lowercased() {
         case "coder", "developer":   return .coder       // Code schreiben, Dateien bearbeiten, Bugs fixen
         case "researcher", "web":    return .web          // Websuche, Analyse, Informationen sammeln
-        case "planner":              return .planner      // Pläne erstellen, Aufgaben strukturieren
-        case "instructor":           return .instructor   // Andere Agenten koordinieren
+        case "instructor":           return .general       // Legacy-Alias für general
         case "reviewer":             return .coder        // Code-Review mit Coder-Tools
         case "utility":              return .general      // Allgemeine Aufgaben (Shell, Dateien, Rechner)
         default:                     return .general
@@ -71,7 +80,7 @@ enum SubAgentProfile {
 }
 
 // MARK: - DelegateTaskTool (call_subordinate — AgentZero-Muster)
-// Allows the instructor to spawn sub-agents with specific profiles.
+// Allows the general agent to spawn sub-agents with specific profiles.
 // Sub-agents now stream their steps live to the parent's UI.
 
 public struct DelegateTaskTool: Tool, Sendable {
@@ -91,8 +100,8 @@ public struct DelegateTaskTool: Tool, Sendable {
             properties: [
                 "profile": ToolSchemaProperty(
                     type: "string",
-                    description: "Agent-Profil: coder (Code/Dateien), web (Recherche/APIs/Browser), planner (Pläne), reviewer (Code-Review), utility (Shell/Rechner). Standard: general",
-                    enumValues: ["coder", "web", "planner", "reviewer", "utility", "general"]
+                    description: "Agent-Profil: coder (Code/Dateien), web (Recherche/APIs/Browser), reviewer (Code-Review), utility (Shell/Rechner). Standard: general",
+                    enumValues: ["coder", "web", "reviewer", "utility", "general"]
                 ),
                 "message": ToolSchemaProperty(
                     type: "string",
@@ -148,64 +157,90 @@ public struct DelegateTaskTool: Tool, Sendable {
         // Run sub-agent with STREAMING — forward steps live to parent UI
         let parentId = parentAgentId
         let timeoutSecs = UserDefaults.standard.integer(forKey: "kobold.subagent.timeout")
-        let effectiveTimeout = timeoutSecs > 0 ? timeoutSecs : 600  // Default 10 Min statt 5
+        let effectiveTimeout = timeoutSecs > 0 ? timeoutSecs : 600  // Default 10 Min
 
         // Use runStreaming to get live steps
         let stream = await subAgent.runStreaming(userMessage: message, agentType: agentType, providerConfig: providerConfig)
 
-        var stepsSummary = ""
-        var finalOutput = ""
-        var stepCount = 0
-        var success = true
-
-        // Timeout: cancel current task after limit
-        let currentTask = Task<Void, Never> { [weak subAgent = Optional(subAgent)] in
-            try? await Task.sleep(nanoseconds: UInt64(effectiveTimeout) * 1_000_000_000)
-            // Timeout reached — subAgent stream will end naturally when cancelled
-            _ = subAgent
+        // Proper timeout: race stream iteration against timeout using withThrowingTaskGroup
+        // All mutable state lives inside the task closure to satisfy Sendable requirements
+        struct SubAgentResult: Sendable {
+            var stepsSummary: String = ""
+            var finalOutput: String = ""
+            var stepCount: Int = 0
+            var success: Bool = true
         }
 
-        // Iterate stream directly (no separate Task needed — we're already async)
-        for await step in stream {
-            if Task.isCancelled { break }
-            stepCount += 1
+        let capturedParentId = parentId
+        let capturedProfile = profile
+        var subResult: SubAgentResult
+        do {
+            subResult = try await withThrowingTaskGroup(of: SubAgentResult.self) { group in
+                group.addTask {
+                    var result = SubAgentResult()
+                    var lastRelayTime: Date = .distantPast
+                    for await step in stream {
+                        if Task.isCancelled { break }
+                        result.stepCount += 1
 
-            // Forward step to parent's SSE stream (live UI update)
-            if let parentId = parentId {
-                let taggedStep = AgentStep(
-                    stepNumber: step.stepNumber,
-                    type: step.type,
-                    content: step.content,
-                    toolCallName: step.toolCallName,
-                    toolResultSuccess: step.toolResultSuccess,
-                    timestamp: step.timestamp,
-                    subAgentName: profile,
-                    confidence: step.confidence,
-                    checkpointId: step.checkpointId
-                )
-                await SubAgentStepRelay.shared.forward(parentAgentId: parentId, step: taggedStep)
-            }
+                        // Forward step to parent's SSE stream (rate-limited to prevent 100% CPU)
+                        if let pid = capturedParentId {
+                            let now = Date()
+                            if now.timeIntervalSince(lastRelayTime) >= 0.5 || step.type == .finalAnswer || step.type == .error {
+                                lastRelayTime = now
+                                let taggedStep = AgentStep(
+                                    stepNumber: step.stepNumber,
+                                    type: step.type,
+                                    content: step.content,
+                                    toolCallName: step.toolCallName,
+                                    toolResultSuccess: step.toolResultSuccess,
+                                    timestamp: step.timestamp,
+                                    subAgentName: capturedProfile,
+                                    confidence: step.confidence,
+                                    checkpointId: step.checkpointId
+                                )
+                                await SubAgentStepRelay.shared.forward(parentAgentId: pid, step: taggedStep)
+                            }
+                        }
 
-            // Collect for summary
-            switch step.type {
-            case .think:
-                stepsSummary += "[\(profile)] \(step.content.prefix(200))\n"
-            case .toolCall:
-                stepsSummary += "[\(profile)] \(step.toolCallName ?? "tool"): \(step.content.prefix(150))\n"
-            case .toolResult:
-                let icon = (step.toolResultSuccess ?? true) ? "+" : "x"
-                stepsSummary += "[\(profile)] \(icon) \(step.toolCallName ?? "tool"): \(step.content.prefix(200))\n"
-                if step.toolResultSuccess == false { success = false }
-            case .finalAnswer:
-                finalOutput += step.content
-            case .error:
-                stepsSummary += "[\(profile)] Fehler: \(step.content.prefix(200))\n"
-                success = false
-            default:
-                break
+                        switch step.type {
+                        case .think:
+                            result.stepsSummary += "[\(capturedProfile)] \(step.content.prefix(200))\n"
+                        case .toolCall:
+                            result.stepsSummary += "[\(capturedProfile)] \(step.toolCallName ?? "tool"): \(step.content.prefix(150))\n"
+                        case .toolResult:
+                            let icon = (step.toolResultSuccess ?? true) ? "+" : "x"
+                            result.stepsSummary += "[\(capturedProfile)] \(icon) \(step.toolCallName ?? "tool"): \(step.content.prefix(200))\n"
+                            if step.toolResultSuccess == false { result.success = false }
+                        case .finalAnswer:
+                            result.finalOutput += step.content
+                        case .error:
+                            result.stepsSummary += "[\(capturedProfile)] Fehler: \(step.content.prefix(200))\n"
+                            result.success = false
+                        default:
+                            break
+                        }
+                    }
+                    return result
+                }
+                // Timeout task — cancels the stream iteration when time runs out
+                group.addTask {
+                    try await Task.sleep(nanoseconds: UInt64(effectiveTimeout) * 1_000_000_000)
+                    throw CancellationError()
+                }
+                guard let first = try await group.next() else {
+                    return SubAgentResult(finalOutput: "Kein Ergebnis", success: false)
+                }
+                group.cancelAll()
+                return first
             }
+        } catch {
+            subResult = SubAgentResult(finalOutput: "Sub-Agent Timeout nach \(effectiveTimeout)s ohne Ergebnis.", success: false)
         }
-        currentTask.cancel()
+        let stepsSummary = subResult.stepsSummary
+        let finalOutput = subResult.finalOutput
+        let stepCount = subResult.stepCount
+        let success = subResult.success
 
         return """
         [Sub-Agent: \(profile) (\(agentType.rawValue))]
@@ -301,7 +336,7 @@ public struct DelegateParallelTool: Tool, Sendable {
         }
 
         let maxParallelRaw = UserDefaults.standard.integer(forKey: "kobold.subagent.maxConcurrent")
-        let maxParallel = maxParallelRaw > 0 ? maxParallelRaw : 10
+        let maxParallel = maxParallelRaw > 0 ? maxParallelRaw : 2
         let cappedTasks = Array(tasks.prefix(maxParallel))
         if tasks.count > maxParallel {
             print("[DelegateParallel] Capped \(tasks.count) tasks to \(maxParallel)")
@@ -315,45 +350,64 @@ public struct DelegateParallelTool: Tool, Sendable {
         let parTimeoutSecs = UserDefaults.standard.integer(forKey: "kobold.subagent.timeout")
         let effectiveTimeout = UInt64(parTimeoutSecs > 0 ? parTimeoutSecs : 600) * 1_000_000_000
 
-        let results = await withTaskGroup(of: (Int, String, String).self, returning: [(Int, String, String)].self) { group in
-            for (index, task) in cappedTasks.enumerated() {
-                let profile = task["profile"] ?? "general"
-                let message = task["message"] ?? ""
+        // Run parallel sub-agents with global timeout
+        var results: [(Int, String, String)] = []
+        do {
+            results = try await withThrowingTaskGroup(of: (Int, String, String).self, returning: [(Int, String, String)].self) { group in
+                for (index, task) in cappedTasks.enumerated() {
+                    let profile = task["profile"] ?? "general"
+                    let message = task["message"] ?? ""
 
-                group.addTask {
-                    let agentType = SubAgentProfile.agentType(for: profile)
-                    let subAgent = AgentLoop(agentID: "par-\(profile)-\(index)-\(UUID().uuidString.prefix(4))")
-                    if let parent = parentMem {
-                        await subAgent.coreMemory.inheritFrom(parent)
-                    }
-
-                    // Use streaming for live UI updates
-                    let stream = await subAgent.runStreaming(userMessage: message, agentType: agentType, providerConfig: parentConfig)
-
-                    var finalOutput = ""
-                    for await step in stream {
-                        if Task.isCancelled { break }
-                        // Forward to parent UI
-                        if let pid = parentId {
-                            let tagged = AgentStep(
-                                stepNumber: step.stepNumber, type: step.type,
-                                content: step.content, toolCallName: step.toolCallName,
-                                toolResultSuccess: step.toolResultSuccess,
-                                subAgentName: "\(profile)[\(index + 1)]"
-                            )
-                            await SubAgentStepRelay.shared.forward(parentAgentId: pid, step: tagged)
+                    group.addTask {
+                        let agentType = SubAgentProfile.agentType(for: profile)
+                        let subAgent = AgentLoop(agentID: "par-\(profile)-\(index)-\(UUID().uuidString.prefix(4))")
+                        if let parent = parentMem {
+                            await subAgent.coreMemory.inheritFrom(parent)
                         }
-                        if step.type == .finalAnswer { finalOutput += step.content }
-                    }
-                    return (index, profile, finalOutput)
-                }
-            }
 
-            var collected: [(Int, String, String)] = []
-            for await result in group {
-                collected.append(result)
+                        let stream = await subAgent.runStreaming(userMessage: message, agentType: agentType, providerConfig: parentConfig)
+
+                        var finalOutput = ""
+                        var lastRelay: Date = .distantPast
+                        for await step in stream {
+                            if Task.isCancelled { break }
+                            // Rate-limited relay (max 1 per 500ms) to prevent UI flood
+                            if let pid = parentId {
+                                let now = Date()
+                                if now.timeIntervalSince(lastRelay) >= 0.5 || step.type == .finalAnswer || step.type == .error {
+                                    lastRelay = now
+                                    let tagged = AgentStep(
+                                        stepNumber: step.stepNumber, type: step.type,
+                                        content: step.content, toolCallName: step.toolCallName,
+                                        toolResultSuccess: step.toolResultSuccess,
+                                        subAgentName: "\(profile)[\(index + 1)]"
+                                    )
+                                    await SubAgentStepRelay.shared.forward(parentAgentId: pid, step: tagged)
+                                }
+                            }
+                            if step.type == .finalAnswer { finalOutput += step.content }
+                        }
+                        return (index, profile, finalOutput)
+                    }
+                }
+
+                // Global timeout task — cancels all parallel agents
+                group.addTask {
+                    try await Task.sleep(nanoseconds: effectiveTimeout)
+                    throw CancellationError()
+                }
+
+                var collected: [(Int, String, String)] = []
+                for try await result in group {
+                    collected.append(result)
+                }
+                return collected.sorted { $0.0 < $1.0 }
             }
-            return collected.sorted { $0.0 < $1.0 }
+        } catch {
+            // Timeout — return whatever partial results we have
+            if results.isEmpty {
+                results = [(0, "timeout", "Parallele Sub-Agenten Timeout nach \(effectiveTimeout / 1_000_000_000)s")]
+            }
         }
 
         // Format output

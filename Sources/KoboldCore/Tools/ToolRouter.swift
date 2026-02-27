@@ -13,7 +13,7 @@ public actor ToolRouter {
     /// Tools that run without timeout (sub-agent delegation, etc.)
     private let noTimeoutTools: Set<String> = ["call_subordinate", "delegate_parallel"]
 
-    /// Critical tools that must never be auto-disabled (instructor core tools)
+    /// Critical tools that must never be auto-disabled (general agent core tools)
     private let neverDisableTools: Set<String> = [
         "response", "call_subordinate", "delegate_parallel",
         "core_memory_read", "core_memory_append", "core_memory_replace",

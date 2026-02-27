@@ -75,6 +75,26 @@ public actor SkillLoader {
 
     // MARK: - Build Prompt Injection
 
+    /// Sucht relevante Skills per Keyword-Match und gibt passende Snippets zurück
+    public func relevantSkills(query: String) async -> String {
+        guard !query.isEmpty else { return "" }
+        let skills = await loadSkills()
+        let enabled = skills.filter { $0.isEnabled }
+        guard !enabled.isEmpty else { return "" }
+
+        let queryLower = query.lowercased()
+        let keywords = queryLower.split(separator: " ").map(String.init)
+
+        let matches = enabled.filter { skill in
+            let content = (skill.name + " " + skill.content).lowercased()
+            return keywords.contains(where: { content.contains($0) })
+        }
+
+        guard !matches.isEmpty else { return "" }
+        let snippets = matches.prefix(3).map { "### Skill: \($0.name)\n\($0.content)" }.joined(separator: "\n\n")
+        return "\n\n## Relevante Skills\n\(snippets)"
+    }
+
     /// Returns a prompt string with all enabled skills appended, ready for system prompt injection.
     public func enabledSkillsPrompt() async -> String {
         let skills = await loadSkills()
@@ -86,7 +106,7 @@ public actor SkillLoader {
 
     // MARK: - Default Skills
 
-    private let currentSkillsVersion = "v0.2.6"
+    private let currentSkillsVersion = "v0.3.2"
 
     private func createDefaultSkillsIfNeeded() {
         let marker = skillsDir.appendingPathComponent(".defaults_installed")
@@ -227,9 +247,9 @@ public actor SkillLoader {
             ## Profile
             - **coder**: Code schreiben, Debugging, Architektur
             - **web**: Recherche, Web-Suche, APIs, Reports
-            - **planner**: Aufgabenzerlegung, Projektplanung
             - **reviewer**: Code-Review, Qualitätsprüfung
             - **utility**: System-Aufgaben, Dateien, Shell
+            - **general**: Allgemeine Aufgaben (Standard)
 
             Tipps:
             - Gib Sub-Agenten klare, spezifische Aufgaben
@@ -403,7 +423,7 @@ public actor SkillLoader {
             ## Kurzzeit-Memory (short_term)
             Aktueller Kontext der Session:
             ```json
-            {"tool_name": "core_memory_append", "tool_args": {"label": "short_term", "content": "Arbeitet gerade an KoboldOS v0.1.7 Bugfixes"}}
+            {"tool_name": "core_memory_append", "tool_args": {"label": "short_term", "content": "Arbeitet gerade an einem neuen Feature"}}
             ```
 
             ## Wissens-Memory (knowledge)

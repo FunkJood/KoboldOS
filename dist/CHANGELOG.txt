@@ -2,6 +2,19 @@
 KOBOLDOS — CHANGELOG
 ══════════════════════════════════════════════
 
+VERSION 0.3.2 ALPHA (2026-02-27)
+─────────────────────────────────
+• Settings Overhaul: Tabs reorganisiert, Beschreibungen, Provider entfernt
+• Berechtigungen: Persistent defaults, Autonomie-Level Fix, Agent fragt nicht mehr
+• Freeze-Fixes: Timer-Guards, Timeout, isAgentLoadingInCurrentChat
+• Context-Bar: Persistent pro Chat, formatierte Token-Anzeige, Komprimieren-Button
+• TTS-Speaker an jeder Assistant-Nachricht
+• Ollama + Embedding Status bei Start prüfen
+• Telegram-Bot: Persistente History
+• Skills-Suche: Relevante Skills per Query im System-Prompt
+• Aufgeräumt: docker, linux, MCP, MenuBar, ImageGen, LlamaService entfernt
+• ~50.185 Lines of Code
+
 VERSION 0.2.8 ALPHA (2026-02-23)
 ─────────────────────────────────
 • Teams: Echtes 3-Runden-Diskursmodell (Analyse → Diskussion → Synthese)

@@ -180,12 +180,7 @@ class ModelDownloadManager: ObservableObject {
                 sdModelInstalled = true
                 isDownloadingSD = false
 
-                await ImageGenManager.shared.loadModelFromRoot()
-                if ImageGenManager.shared.isModelLoaded {
-                    sdStatus = "SD-Modell geladen und bereit!"
-                } else {
-                    sdStatus = "Installiert (Laden fehlgeschlagen: \(ImageGenManager.shared.loadError ?? "unbekannt"))"
-                }
+                sdStatus = "SD-Modell installiert."
             } catch {
                 lastError = error.localizedDescription
                 sdStatus = "Fehler beim Download"

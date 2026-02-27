@@ -2,7 +2,7 @@
 
 **KoboldOS** is a native macOS application that runs a self-contained AI agent system locally on your Mac. It wraps an Ollama-backed LLM in a full agent loop with tools, persistent memory, a scheduling system, and a polished SwiftUI control panel — no cloud required.
 
-**Current version: Alpha v0.3.16**
+**Current version: Alpha v0.3.2**
 
 ---
 

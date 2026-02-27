@@ -87,7 +87,10 @@ public struct ShellTool: Tool, Sendable {
     // Autonomy level is the PRIMARY control. Tier toggles can ADDITIONALLY enable tiers.
     // Level 1 = Safe only, Level 2 = Safe+Normal, Level 3 = Power (all allowed)
     private var autonomyLevel: Int {
-        min(max(UserDefaults.standard.integer(forKey: "kobold.autonomyLevel"), 1), 3)
+        let raw = UserDefaults.standard.integer(forKey: "kobold.autonomyLevel")
+        // raw == 0 bedeutet: nie gesetzt → Default Normal (2), nicht Safe (1)
+        let level = raw == 0 ? 2 : raw
+        return min(max(level, 1), 3)
     }
 
     private var isPowerTier: Bool {

@@ -34,10 +34,4 @@ final class MenuBarController: NSObject, ObservableObject {
     }
 }
 
-// MARK: - Notifications (kept for existing references)
-
-extension Notification.Name {
-    static let koboldShowMainWindow = Notification.Name("koboldShowMainWindow")
-    static let koboldMenuBarSendMessage = Notification.Name("koboldMenuBarSendMessage")
-    static let koboldNavigateSettings = Notification.Name("koboldNavigateSettings")
-}
+// Notification.Name extensions defined in main.swift — no duplicates here

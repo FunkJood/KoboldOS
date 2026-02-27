@@ -187,6 +187,10 @@ public struct FileTool: Tool, Sendable {
             throw ToolError.executionFailed("Content too large (> 5MB limit)")
         }
 
+        let fileName = (path as NSString).lastPathComponent
+        let isNewFile = !FileManager.default.fileExists(atPath: path)
+        let oldContent: String? = isNewFile ? nil : try? String(contentsOfFile: path, encoding: .utf8)
+
         // Create parent directories if needed
         let dir = (path as NSString).deletingLastPathComponent
         try FileManager.default.createDirectory(
@@ -199,7 +203,69 @@ public struct FileTool: Tool, Sendable {
         try content.write(toFile: tmp, atomically: false, encoding: .utf8)
         try FileManager.default.moveItem(atPath: tmp, toPath: path)
 
-        return "Written \(content.utf8.count) bytes to: \(path)"
+        let newLines = content.components(separatedBy: "\n")
+        var output = "Written \(content.utf8.count) bytes to: \(path)"
+
+        // Generate diff for UI display (Claude Code-style)
+        if let old = oldContent {
+            let diff = generateUnifiedDiff(old: old, new: content, fileName: fileName)
+            if !diff.isEmpty {
+                output += "\n__DIFF__\n\(diff)"
+            }
+        } else {
+            // New file — show first lines as additions
+            let preview = newLines.prefix(30).map { "+\($0)" }.joined(separator: "\n")
+            let more = newLines.count > 30 ? "\n@@ ... +\(newLines.count - 30) more lines @@" : ""
+            output += "\n__DIFF__\n+++ b/\(fileName) (new file, \(newLines.count) lines)\n\(preview)\(more)"
+        }
+
+        return output
+    }
+
+    // MARK: - Unified Diff Generator (for Claude Code-style display)
+
+    private func generateUnifiedDiff(old: String, new: String, fileName: String) -> String {
+        let oldLines = old.components(separatedBy: "\n")
+        let newLines = new.components(separatedBy: "\n")
+        if oldLines == newLines { return "" }
+
+        // Use system /usr/bin/diff for reliable unified output (runs in <1ms)
+        let tmpDir = NSTemporaryDirectory()
+        let id = UUID().uuidString
+        let oldFile = tmpDir + "kobold_diff_a_\(id)"
+        let newFile = tmpDir + "kobold_diff_b_\(id)"
+        defer {
+            try? FileManager.default.removeItem(atPath: oldFile)
+            try? FileManager.default.removeItem(atPath: newFile)
+        }
+
+        guard let _ = try? old.write(toFile: oldFile, atomically: true, encoding: .utf8),
+              let _ = try? new.write(toFile: newFile, atomically: true, encoding: .utf8) else {
+            return ""
+        }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/diff")
+        process.arguments = ["-u", "-U3",
+                             "--label", "a/\(fileName)",
+                             "--label", "b/\(fileName)",
+                             oldFile, newFile]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+
+        guard let _ = try? process.run() else { return "" }
+        process.waitUntilExit()
+
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        guard let diffOutput = String(data: data, encoding: .utf8), !diffOutput.isEmpty else { return "" }
+
+        // Limit output to prevent huge diffs from bloating the chat
+        let lines = diffOutput.components(separatedBy: "\n")
+        if lines.count > 120 {
+            return lines.prefix(120).joined(separator: "\n") + "\n@@ ... \(lines.count - 120) more diff lines @@"
+        }
+        return diffOutput
     }
 
     private func listDirectory(at path: String) throws -> String {

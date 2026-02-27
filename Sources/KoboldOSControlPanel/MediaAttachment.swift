@@ -4,7 +4,11 @@ import Foundation
 
 // MARK: - MediaAttachment
 
-struct MediaAttachment: Identifiable, Sendable {
+struct MediaAttachment: Identifiable, Sendable, Equatable {
+    static func == (lhs: MediaAttachment, rhs: MediaAttachment) -> Bool {
+        lhs.id == rhs.id
+    }
+
     let id: UUID
     enum MediaType: Sendable { case image, video, audio, file }
     let mediaType: MediaType

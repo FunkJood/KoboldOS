@@ -94,7 +94,7 @@ struct SlashCommandHandler {
             if let type = args.first {
                 print(TerminalFormatter.success("Agent-Typ: \(type)"))
             } else {
-                print(TerminalFormatter.info("Verfügbare Typen: general, coder, web, planner, instructor"))
+                print(TerminalFormatter.info("Verfügbare Typen: general, coder, web"))
             }
             return true
 

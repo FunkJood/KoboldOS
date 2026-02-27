@@ -87,8 +87,8 @@ public actor ToolRegistry {
 
     // MARK: - Execute with error tracking
 
-    /// Tools that run without timeout (sub-agent delegation)
-    private let noTimeoutTools: Set<String> = ["call_subordinate", "delegate_parallel"]
+    /// Tools that use extended timeout (sub-agent delegation — 10 min instead of 60s)
+    private let extendedTimeoutTools: Set<String> = ["call_subordinate", "delegate_parallel"]
 
     public func execute(call: ToolCall, timeout: TimeInterval = 60) async -> ToolResult {
         let name = call.name
@@ -110,14 +110,13 @@ public actor ToolRegistry {
 
         do {
             let result: String
-            if noTimeoutTools.contains(name) {
-                // Delegation tools: no timeout — sub-agents manage their own execution
-                result = try await tool.execute(arguments: call.arguments)
-            } else {
+            // Extended timeout for delegation tools (10 min), normal timeout for others
+            let effectiveTimeout = extendedTimeoutTools.contains(name) ? 600.0 : timeout
+            do {
                 result = try await withThrowingTaskGroup(of: String.self) { group in
                     group.addTask { try await tool.execute(arguments: call.arguments) }
                     group.addTask {
-                        try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+                        try await Task.sleep(nanoseconds: UInt64(effectiveTimeout * 1_000_000_000))
                         throw ToolError.timeout
                     }
                     guard let output = try await group.next() else {

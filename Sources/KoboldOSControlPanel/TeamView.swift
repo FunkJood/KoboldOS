@@ -1461,14 +1461,12 @@ struct NodeInspector: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Agent-Typ").font(.caption).foregroundColor(.secondary)
                     Picker("", selection: Binding(
-                        get: { node.agentType ?? "instructor" },
-                        set: { node.agentType = $0 == "instructor" ? nil : $0 }
+                        get: { node.agentType ?? "general" },
+                        set: { node.agentType = $0 == "general" ? nil : $0 }
                     )) {
-                        Text("Instructor").tag("instructor")
+                        Text("General").tag("general")
                         Text("Coder").tag("coder")
                         Text("Web").tag("web")
-                        Text("Planner").tag("planner")
-                        Text("Utility").tag("utility")
                     }
                     .pickerStyle(.menu)
                 }

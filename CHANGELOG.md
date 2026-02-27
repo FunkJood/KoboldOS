@@ -1,5 +1,46 @@
 # KoboldOS Changelog
 
+## Alpha v0.3.2 — 2026-02-27
+
+### UI & Settings Overhaul
+- **Tab "Modelle" entfernt**: Ollama-Status + Worker-Pool in "Agenten" integriert
+- **Context-Bar**: Formatierte Token-Anzeige (32K statt 32768), Komprimieren-Button, persistent sichtbar pro Chat
+- **TTS-Speaker-Button**: Lautsprecher-Icon an jeder Assistant-Nachricht (hover)
+- **Settings-Beschreibungen**: Erklärende Texte zu allen wichtigen Toggles und Pickern
+- **Tabs reorganisiert**: "Datenschutz" + "Sicherheit" statt alte Namen, Provider-Picker entfernt (nur Ollama)
+- **AgentsView**: Aktive Sessions entfernt, Tool Routing einklappbar
+
+### Berechtigungen & Autonomie
+- **Permission-Defaults**: `UserDefaults.register(defaults:)` in AppDelegate — alle 17 Keys haben korrekte Defaults ab Start
+- **Autonomie-Level Fix**: Default Normal (2) statt Safe (1) bei nie gesetztem Wert (ShellTool + AgentLoop)
+- **Agent-Prompt**: Level 2+ bekommt "nutze Tools selbstständig ohne nachzufragen"
+- **ToolEngine-Rules**: "confirm with the user first" entfernt — Permissions vom System verwaltet
+
+### Freeze-Fixes
+- **isAgentLoadingInCurrentChat**: Computed Property statt undefined
+- **Timer-Guards**: MemoryView 15s + isLoading-Guard, ThinkingPanel isLive-Guard, Connectivity 4s Timeout
+
+### Startup-Checks
+- **Ollama**: HTTP-Check bei Start (GET /api/tags), Status grün/rot
+- **Embedding**: Prüft ob nomic-embed-text verfügbar ist
+
+### Telegram-Bot
+- **Persistente History**: JSON auf Disk, überlebt Neustarts
+- **Source-Tag**: "telegram" wird beim Daemon-Call mitgesendet
+
+### Skills-Integration
+- **SkillLoader.relevantSkills()**: Keyword-Match durchsucht Skills pro Query
+- **AgentLoop**: Relevante Skills werden in System-Prompt injiziert
+
+### Aufräumen
+- **Entfernt**: docker/, linux/, WebGUI, MCP (3 Dateien + alle Referenzen), MenuBarController, ImageGenManager, LlamaService
+- **Versionsnummern**: Alle auf v0.3.2 vereinheitlicht
+
+### Statistik
+- ~50.185 Lines of Code (Swift)
+
+---
+
 ## Alpha v0.3.16 — 2026-02-25
 
 ### Sub-Agent Live-Streaming

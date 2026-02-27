@@ -74,6 +74,7 @@ public actor DaemonListener {
 
     public func start() async {
         print("🌐 DaemonListener starting on :\(port)")
+        startTaskScheduler()
         await runServer()
     }
 
@@ -100,7 +101,7 @@ public actor DaemonListener {
                     continuation.yield(client)
                 }
             }
-            t.qualityOfService = .userInteractive
+            t.qualityOfService = .utility  // Was .userInteractive — starved UI thread
             t.start()
         }
 
@@ -137,14 +138,21 @@ public actor DaemonListener {
 
         // Body size check
         if let b = body, b.count > bodyLimitBytes {
-            client.write(httpResponse(status: "413 Payload Too Large", body: "{\"error\":\"Body exceeds 1MB limit\"}"))
+            client.write(httpResponse(status: "413 Payload Too Large", body: "{\"error\":\"Body exceeds 10MB limit\"}"))
             return
         }
 
         // Auth check — /health and /.well-known/agent.json are public
-        if path != "/health" && path != "/.well-known/agent.json" && !authToken.isEmpty {
-            let provided = headers["authorization"]?.replacingOccurrences(of: "Bearer ", with: "") ?? ""
-            if provided != authToken {
+        if path != "/health" && path != "/.well-known/agent.json" {
+            let authHeader = headers["authorization"] ?? ""
+            // Case-insensitive "Bearer " prefix removal
+            let provided: String
+            if authHeader.lowercased().hasPrefix("bearer ") {
+                provided = String(authHeader.dropFirst(7)).trimmingCharacters(in: .whitespaces)
+            } else {
+                provided = authHeader
+            }
+            if !authToken.isEmpty && provided != authToken {
                 client.write(httpResponse(status: "401 Unauthorized", body: "{\"error\":\"Invalid or missing auth token\"}"))
                 return
             }
@@ -152,7 +160,7 @@ public actor DaemonListener {
 
         // Rate limiting
         if isRateLimited(path: path) {
-            client.write(httpResponse(status: "429 Too Many Requests", body: "{\"error\":\"Rate limit exceeded (60/min)\"}"))
+            client.write(httpResponse(status: "429 Too Many Requests", body: "{\"error\":\"Rate limit exceeded (\(rateLimitMax)/min)\"}"))
             return
         }
 
@@ -197,7 +205,7 @@ public actor DaemonListener {
         case "/health":
             return jsonOK([
                 "status": "ok",
-                "version": "0.3.1",
+                "version": "0.3.2",
                 "pid": Int(ProcessInfo.processInfo.processIdentifier),
                 "uptime": Int(Date().timeIntervalSince(startTime))
             ])
@@ -206,6 +214,14 @@ public actor DaemonListener {
             guard method == "POST", let body else { return jsonError("No body") }
             chatRequests += 1
             return await handleAgent(body: body)
+
+        case "/agent/compress":
+            guard method == "POST" else { return jsonError("POST required") }
+            let pool = AgentWorkerPool.shared
+            let agent = await pool.acquire()
+            let remaining = await agent.compressContext()
+            Task.detached { await pool.release(agent) }
+            return jsonOK(["success": true, "messages_remaining": remaining])
 
         case "/chat":
             guard method == "POST", let body else { return jsonError("No body") }
@@ -228,6 +244,19 @@ public actor DaemonListener {
         case "/metrics/reset":
             chatRequests = 0; toolCalls = 0; errors = 0; tokensTotal = 0; startTime = Date(); latencySamples = []
             return jsonOK(["ok": true])
+
+        case "/daemon/logs":
+            // Return trace timeline + request log for live log viewer in Security tab
+            let since = (try? JSONSerialization.jsonObject(with: body ?? Data()) as? [String: Any])?["since_index"] as? Int ?? 0
+            let logsToSend = since < traceTimeline.count ? Array(traceTimeline.suffix(from: since)) : []
+            let recentRequests = requestLog.suffix(50).map { (ts, path, status) -> [String: Any] in
+                ["timestamp": DaemonListener.isoFormatter.string(from: ts), "path": path, "status": status]
+            }
+            return jsonOK([
+                "logs": logsToSend,
+                "total_count": traceTimeline.count,
+                "requests": recentRequests
+            ])
 
         case "/memory":
             if let agent = agentLoop {
@@ -357,11 +386,10 @@ public actor DaemonListener {
         let agentTypeStr = json["agent_type"] as? String ?? "general"
         let type: AgentType
         switch agentTypeStr {
-        case "coder":      type = .coder
-        case "researcher", "web": type = .web
-        case "planner":           type = .planner
-        case "instructor":        type = .instructor
-        default:                  type = .instructor
+        case "general", "instructor": type = .general
+        case "coder":                  type = .coder
+        case "researcher", "web":      type = .web
+        default:                       type = .general
         }
         let images = json["images"] as? [String] ?? []
 
@@ -441,11 +469,10 @@ public actor DaemonListener {
         let agentTypeStr = json["agent_type"] as? String ?? "general"
         let type: AgentType
         switch agentTypeStr {
-        case "coder":             type = .coder
-        case "researcher", "web": type = .web
-        case "planner":           type = .planner
-        case "instructor":        type = .instructor
-        default:                  type = .instructor
+        case "general", "instructor": type = .general
+        case "coder":                  type = .coder
+        case "researcher", "web":      type = .web
+        default:                       type = .general
         }
 
         // Extract provider config
@@ -489,15 +516,19 @@ public actor DaemonListener {
             await agent.injectConversationHistory(conversationHistory)
         }
 
-        print("[Daemon] SSE START: \"\(String(message.prefix(60)))\" type=\(agentTypeStr) provider=\(provider) model=\(model.isEmpty ? "default" : model) history=\(conversationHistory.count) msgs pool=\(await pool.statusDescription)")
+        let modelDisplay = model.isEmpty ? (UserDefaults.standard.string(forKey: "kobold.ollamaModel") ?? "default") : model
+        print("[Daemon] SSE START: \"\(String(message.prefix(60)))\" type=\(agentTypeStr) provider=\(provider) model=\(modelDisplay) history=\(conversationHistory.count) msgs pool=\(await pool.statusDescription)")
 
-        addTrace(event: "Chat (SSE)", detail: String(message.prefix(80)))
+        addTrace(event: "SSE Start", detail: "[\(agentTypeStr)] \(modelDisplay) — \(String(message.prefix(60)))")
+        addTrace(event: "Model", detail: "\(provider)/\(modelDisplay) (Kontext: \(conversationHistory.count) Msgs)")
 
-        // Write SSE headers
+        // Write SSE headers — Connection: close tells URLSession the response ends at EOF
+        // (no Content-Length or chunked needed). This prevents URLSession from buffering.
         let sseHeaders = "HTTP/1.1 200 OK\r\n" +
             "Content-Type: text/event-stream\r\n" +
-            "Cache-Control: no-cache\r\n" +
-            "Connection: keep-alive\r\n" +
+            "Cache-Control: no-cache, no-store\r\n" +
+            "Connection: close\r\n" +
+            "X-Accel-Buffering: no\r\n" +
             "X-Content-Type-Options: nosniff\r\n\r\n"
         client.write(sseHeaders)
 
@@ -506,6 +537,10 @@ public actor DaemonListener {
         setsockopt(client.fd, SOL_SOCKET, SO_NOSIGPIPE, &yes, socklen_t(MemoryLayout<Int32>.size))
         // Disable Nagle's algorithm for instant SSE delivery (no TCP buffering)
         setsockopt(client.fd, IPPROTO_TCP, TCP_NODELAY, &yes, socklen_t(MemoryLayout<Int32>.size))
+
+        // Heartbeat: send immediate event to confirm SSE connection is live
+        // URLSession needs at least one data frame to start delivering bytes.lines
+        _ = client.tryWrite("event: step\ndata: {\"type\":\"think\",\"content\":\"Verbunden, Agent startet...\",\"tool\":\"\",\"success\":true,\"step\":0}\n\n")
 
         // Stream steps with provider config
         let providerConfig = LLMProviderConfig(provider: provider, model: model, apiKey: apiKey, temperature: temperature)
@@ -519,7 +554,9 @@ public actor DaemonListener {
                 addTrace(event: "Tool: \(step.toolCallName ?? "unknown")", detail: String(step.content.prefix(60)))
             }
             // Include checkpoint steps in SSE for UI visibility
-            let eventData = "event: step\ndata: \(step.toJSON())\n\n"
+            // Escape literal newlines in JSON to prevent SSE event injection
+            let safeJSON = step.toJSON().replacingOccurrences(of: "\n", with: "\\n").replacingOccurrences(of: "\r", with: "\\r")
+            let eventData = "event: step\ndata: \(safeJSON)\n\n"
             // Detect client disconnect — stop streaming if write fails
             if !client.tryWrite(eventData) {
                 print("[Daemon] SSE CLIENT DISCONNECTED after \(stepCount) steps — aborting stream")
@@ -534,7 +571,7 @@ public actor DaemonListener {
         }
 
         print("[Daemon] SSE DONE: \(stepCount) steps streamed")
-        addTrace(event: "Antwort (SSE)", detail: "\(stepCount) Schritte")
+        addTrace(event: "SSE Fertig", detail: "\(stepCount) Schritte gestreamt [\(agentTypeStr)/\(modelDisplay)]")
 
         // End event
         client.write("event: done\ndata: {}\n\n")
@@ -555,7 +592,7 @@ public actor DaemonListener {
     // MARK: - Vision Handler (images → Ollama multimodal)
 
     private func handleVision(message: String, images: [String]) async -> String {
-        let model = UserDefaults.standard.string(forKey: "kobold.ollamaModel") ?? "llava"
+        let model = await ModelConfigManager.shared.getModel(for: "general").model
         let payload: [String: Any] = [
             "model": model,
             "messages": [[
@@ -597,7 +634,7 @@ public actor DaemonListener {
             return jsonError("Missing 'message' field")
         }
 
-        let model = UserDefaults.standard.string(forKey: "kobold.ollamaModel") ?? "llama3.2"
+        let model = await ModelConfigManager.shared.getModel(for: "general").model
         let payload: [String: Any] = [
             "model": model,
             "messages": [["role": "user", "content": message]],
@@ -709,6 +746,92 @@ public actor DaemonListener {
         }
     }
 
+    // MARK: - Task Scheduler (Cron)
+
+    private var taskSchedulerRunning = false
+    private var lastTaskCheckMinute: Int = -1
+
+    /// Starts a background loop that checks every 60s if any scheduled task is due.
+    private func startTaskScheduler() {
+        guard !taskSchedulerRunning else { return }
+        taskSchedulerRunning = true
+        Task.detached { [weak self] in
+            while true {
+                try? await Task.sleep(nanoseconds: 60_000_000_000) // 60s
+                guard let self else { break }
+                await self.checkScheduledTasks()
+            }
+        }
+        print("[TaskScheduler] Started — checking every 60s")
+    }
+
+    private func checkScheduledTasks() async {
+        let now = Date()
+        let cal = Calendar.current
+        let minute = cal.component(.minute, from: now)
+        // Avoid double-check within the same minute
+        guard minute != lastTaskCheckMinute else { return }
+        lastTaskCheckMinute = minute
+
+        let tasks = loadTasks()
+        for task in tasks {
+            guard task["enabled"] as? Bool == true,
+                  let schedule = task["schedule"] as? String, !schedule.isEmpty,
+                  let prompt = task["prompt"] as? String, !prompt.isEmpty,
+                  let taskId = task["id"] as? String else { continue }
+
+            if cronMatches(expression: schedule, date: now) {
+                addTrace(event: "TaskScheduler", detail: "Starte: \(task["name"] as? String ?? taskId)")
+                // Build a request body and run via handleAgent
+                let body: [String: Any] = ["message": prompt, "agent_type": "general", "source": "scheduler"]
+                if let data = try? JSONSerialization.data(withJSONObject: body) {
+                    _ = await handleAgent(body: data)
+                }
+                // Update last_run timestamp
+                var allTasks = loadTasks()
+                if let idx = allTasks.firstIndex(where: { $0["id"] as? String == taskId }) {
+                    allTasks[idx]["last_run"] = DaemonListener.isoFormatter.string(from: Date())
+                    saveTasks(allTasks)
+                }
+            }
+        }
+    }
+
+    /// Simple cron matcher: "min hour dom month dow" — supports *, */N, and exact values.
+    private func cronMatches(expression: String, date: Date) -> Bool {
+        let parts = expression.split(separator: " ").map(String.init)
+        guard parts.count == 5 else { return false }
+        let cal = Calendar.current
+        let fields = [
+            cal.component(.minute, from: date),
+            cal.component(.hour, from: date),
+            cal.component(.day, from: date),
+            cal.component(.month, from: date),
+            cal.component(.weekday, from: date) - 1 // cron: 0=Sun
+        ]
+        for (pattern, value) in zip(parts, fields) {
+            if !cronFieldMatches(pattern: pattern, value: value) { return false }
+        }
+        return true
+    }
+
+    private func cronFieldMatches(pattern: String, value: Int) -> Bool {
+        if pattern == "*" { return true }
+        // */N step
+        if pattern.hasPrefix("*/"), let step = Int(pattern.dropFirst(2)), step > 0 {
+            return value % step == 0
+        }
+        // Comma-separated values: "1,3,5"
+        let values = pattern.split(separator: ",").compactMap { Int($0) }
+        if !values.isEmpty { return values.contains(value) }
+        // Range: "1-5"
+        if pattern.contains("-") {
+            let rangeParts = pattern.split(separator: "-").compactMap { Int($0) }
+            if rangeParts.count == 2 { return value >= rangeParts[0] && value <= rangeParts[1] }
+        }
+        return false
+    }
+
     // MARK: - Workflows API (uses shared WorkflowDefinition Codable model)
 
     private var workflowsFileURL: URL {
@@ -767,7 +890,7 @@ public actor DaemonListener {
     private func buildAgentCard() -> [String: Any] {
         [
             "name": "KoboldOS",
-            "version": "0.3.1",
+            "version": "0.3.2",
             "description": "Native macOS AI Agent Runtime — local-first, privacy-focused",
             "capabilities": [
                 "streaming": true,
@@ -776,7 +899,7 @@ public actor DaemonListener {
                           "archival_memory_search", "archival_memory_insert",
                           "calendar", "contacts",
                           "call_subordinate", "delegate_parallel"],
-                "agent_types": ["general", "coder", "web", "planner", "instructor"],
+                "agent_types": ["general", "coder", "web"],
                 "memory": true,
                 "sub_agents": true,
                 "vision": true,
@@ -1170,13 +1293,18 @@ private class ClientSocket: @unchecked Sendable {
         }
     }
 
-    /// Non-blocking write attempt — returns false if client is gone (used for SSE keepalive)
+    /// Write attempt that sends ALL data — returns false if client is gone (used for SSE streaming)
     func tryWrite(_ response: String) -> Bool {
         guard let data = response.data(using: .utf8) else { return false }
         return data.withUnsafeBytes { ptr -> Bool in
             guard let base = ptr.baseAddress else { return false }
-            let sent = Darwin.send(fd, base, data.count, 0)
-            return sent > 0
+            var totalSent = 0
+            while totalSent < data.count {
+                let sent = Darwin.send(fd, base.advanced(by: totalSent), data.count - totalSent, 0)
+                if sent <= 0 { return false } // Client disconnected
+                totalSent += sent
+            }
+            return true
         }
     }
 

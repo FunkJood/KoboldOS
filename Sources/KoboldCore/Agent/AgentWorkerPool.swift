@@ -63,17 +63,15 @@ public actor AgentWorkerPool {
     }
 
     /// Release a worker back to the pool after a request completes.
-    /// If another request is waiting, it gets a fresh worker immediately.
+    /// If another request is waiting, reuse the worker immediately.
     public func release(_ worker: AgentLoop) {
         activeCount = max(0, activeCount - 1)
         if let waiter = waiters.first {
             waiters.removeFirst()
             activeCount += 1
-            // Fresh worker avoids state leakage between sessions
-            let runner = LLMRunner()
-            let freshWorker = AgentLoop(agentID: "worker-fresh-\(UUID().uuidString.prefix(8))", llmRunner: runner)
-            print("[AgentWorkerPool] queued request unblocked with fresh worker")
-            waiter.resume(returning: freshWorker)
+            // Reuse existing worker (LLMRunner instance stays warm, avoids allocation overhead)
+            print("[AgentWorkerPool] queued request unblocked with reused worker")
+            waiter.resume(returning: worker)
         } else {
             idleWorkers.append(worker)
             print("[AgentWorkerPool] worker returned to pool (\(activeCount)/\(maxWorkers) active)")

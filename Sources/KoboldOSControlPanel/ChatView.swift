@@ -16,15 +16,15 @@ struct ChatView: View {
     @State private var scrollDebounceTask: Task<Void, Never>?
     /// Number of messages visible from the end — grows when user taps "load more"
     @State private var visibleMessageCount: Int = 80
+    /// Window update interval in nanoseconds (default: 1.5 seconds)
+    @AppStorage("kobold.window.updateInterval") private var updateIntervalNanos: Int = 1_500_000_000
 
     /// Human-readable agent display name for the chat header badge
     var agentDisplayName: String {
         switch agentType {
-        case "coder":      return "Coder"
-        case "web": return "Web"
-        case "planner":    return "Planner"
-        case "instructor": return "Instructor"
-        default:           return "Allgemein"
+        case "coder": return "Coder"
+        case "web":   return "Web"
+        default:      return "General"
         }
     }
 
@@ -86,12 +86,6 @@ struct ChatView: View {
                 .onChange(of: viewModel.messages.count) { debouncedScroll(proxy: proxy) }
                 .onChange(of: viewModel.agentLoading) { debouncedScroll(proxy: proxy) }
                 .onChange(of: viewModel.currentSessionId) { visibleMessageCount = 80 }
-                .onChange(of: viewModel.activeThinkingSteps.count) {
-                    // Auto-scroll during live thinking to follow generation
-                    if viewModel.isAgentLoadingInCurrentChat {
-                        debouncedScroll(proxy: proxy)
-                    }
-                }
             }
 
             // Sticky Checklist
@@ -127,8 +121,7 @@ struct ChatView: View {
                 .background(Color.koboldGold.opacity(0.08))
             }
 
-            // Context Usage Bar (above input)
-            if viewModel.contextPromptTokens > 0 || viewModel.agentLoading {
+            // Context Usage Bar (above input) — immer sichtbar pro Chat
                 HStack(spacing: 8) {
                     Image(systemName: "text.line.last.and.arrowtriangle.forward")
                         .font(.system(size: 12.5))
@@ -141,7 +134,7 @@ struct ChatView: View {
                                 .fill(viewModel.contextUsagePercent > 0.8
                                       ? Color.orange.opacity(0.7)
                                       : Color.green.opacity(0.5))
-                                .frame(width: geo.size.width * min(1.0, viewModel.contextUsagePercent))
+                                .frame(width: geo.size.width * min(1.0, max(0, viewModel.contextUsagePercent)))
                         }
                     }
                     .frame(height: 6)
@@ -149,14 +142,29 @@ struct ChatView: View {
                         .font(.system(size: 12.5, weight: .medium, design: .monospaced))
                         .foregroundColor(viewModel.contextUsagePercent > 0.8 ? .orange : .secondary)
                         .frame(width: 36)
-                    Text("\(viewModel.contextPromptTokens)/\(viewModel.contextWindowSize)")
+                    Text("\(formatTokenCount(viewModel.contextPromptTokens))/\(formatTokenCount(viewModel.contextWindowSize))")
                         .font(.system(size: 11.5, design: .monospaced))
                         .foregroundColor(.secondary)
+                    // Komprimieren-Button
+                    Button(action: { compressContext() }) {
+                        HStack(spacing: 3) {
+                            Image(systemName: "arrow.down.right.and.arrow.up.left")
+                                .font(.system(size: 10))
+                            Text("Komp.")
+                                .font(.system(size: 10.5))
+                        }
+                        .foregroundColor(.secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.white.opacity(0.08))
+                        .cornerRadius(4)
+                    }
+                    .buttonStyle(.plain)
+                    .opacity(viewModel.contextUsagePercent > 0.5 ? 1.0 : 0.4)
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 5)
                 .background(Color.black.opacity(0.15))
-            }
 
             GlassDivider()
 
@@ -201,20 +209,32 @@ struct ChatView: View {
         case .toolResult(let name, let success, let output):
             if name == "shell" {
                 TerminalResultBubble(command: "", output: output, success: success)
+            } else if name == "file" && output.contains("\n__DIFF__\n") {
+                DiffResultBubble(output: output, success: success)
             } else {
                 ToolResultBubble(toolName: name, output: output, success: success)
             }
         case .thought(let text):
-            ThoughtBubble(text: text, thinkingLabel: l10n.language.thinking)
+            if showAgentSteps {
+                ThoughtBubble(text: text, thinkingLabel: l10n.language.thinking)
+            }
         case .agentStep(let n, let desc):
-            AgentStepBubble(stepNumber: n, description: desc)
+            if showAgentSteps {
+                AgentStepBubble(stepNumber: n, description: desc)
+            }
         case .subAgentSpawn(let profile, let task):
-            SubAgentSpawnBubble(profile: profile, task: task)
+            if showAgentSteps {
+                SubAgentSpawnBubble(profile: profile, task: task)
+            }
         case .subAgentResult(let profile, let output, let success):
-            SubAgentResultBubble(profile: profile, output: output, success: success)
+            if showAgentSteps {
+                SubAgentResultBubble(profile: profile, output: output, success: success)
+            }
         case .thinking(let entries):
-            let isNewest = (msg.id == viewModel.messages.last(where: { if case .thinking = $0.kind { return true }; return false })?.id)
-            ThinkingPanelBubble(entries: entries, isLive: false, isNewest: isNewest)
+            if showAgentSteps {
+                let isNewest = (msg.id == viewModel.messages.last(where: { if case .thinking = $0.kind { return true }; return false })?.id)
+                ThinkingPanelBubble(entries: entries, isLive: false, isNewest: isNewest)
+            }
         case .interactive(let text, let options):
             InteractiveBubble(
                 text: text, options: options,
@@ -325,46 +345,22 @@ struct ChatView: View {
 
     private static let exampleSets: [[String]] = [
         [
-            "Räum meinen Desktop auf und sortiere nach Dateityp",
-            "Sende eine Telegram-Nachricht an mich: Bin gleich da",
-            "Welche Prozesse fressen gerade am meisten CPU?",
-            "Generiere ein Bild von einem Drachen auf einer Burg",
+            "Was kannst du alles?",
+            "Räum meinen Desktop auf",
+            "Wie viel Speicherplatz habe ich noch?",
+            "Hilf mir beim Brainstorming",
         ],
         [
-            "Finde alle Dateien über 1 GB auf meinem Mac",
-            "Erstelle ein Python-Skript das PDFs zusammenführt",
-            "Öffne die letzten 5 Screenshots vom Desktop",
-            "Lies mir die letzte Telegram-Nachricht vor",
+            "Welches Modell nutzt du gerade?",
+            "Zeig mir was auf meinem Desktop liegt",
+            "Erstelle ein kleines Python-Skript",
+            "Schreibe eine kurze Nachricht per Telegram",
         ],
         [
-            "Erstelle ein Backup von ~/Documents nach ~/Backups",
-            "Installiere ffmpeg über Homebrew",
-            "Komprimiere alle PNGs auf dem Desktop zu einem ZIP",
-            "Starte den Webserver und erstelle einen Tunnel",
-        ],
-        [
-            "Lösche alle .DS_Store Dateien rekursiv",
-            "Zeig mir die Git-History von diesem Projekt",
-            "Konvertiere alle HEIC-Fotos auf dem Desktop zu JPG",
-            "Schreibe ein Shell-Skript das mein System aufräumt",
-        ],
-        [
-            "Wie viel Speicherplatz ist noch frei?",
-            "Sende per Telegram meine IP-Adresse",
-            "Erstelle einen Cronjob der täglich Logs aufräumt",
-            "Finde alle offenen Ports auf meinem Mac",
-        ],
-        [
-            "Lade dieses YouTube-Video herunter",
-            "Erstelle ein Bild im Anime-Stil von einer Katze",
-            "Scanne mein WLAN und zeig alle verbundenen Geräte",
-            "Schreibe eine Google-Mail an tim@example.com",
-        ],
-        [
-            "Führe dieses Python-Skript aus und zeig mir die Ausgabe",
-            "Ändere mein Wallpaper auf ein zufälliges von Unsplash",
-            "Prüfe ob meine Webseite erreichbar ist",
-            "Fasse die letzte Datei zusammen die ich bearbeitet hab",
+            "Fasse diese Webseite zusammen",
+            "Suche im Internet nach aktuellen Nachrichten",
+            "Welche Programme laufen gerade?",
+            "Erzähl mir einen Witz",
         ],
     ]
 
@@ -502,7 +498,7 @@ struct ChatView: View {
                 .buttonStyle(.plain)
                 .help("Datei anhängen")
 
-                // Brain toggle — show/hide agent steps
+                // Brain toggle — show/hide agent steps (thinking boxes)
                 Button(action: { showAgentSteps.toggle() }) {
                     Image(systemName: showAgentSteps ? "brain.fill" : "brain")
                         .font(.system(size: 17.5))
@@ -513,6 +509,18 @@ struct ChatView: View {
                 }
                 .buttonStyle(.plain)
                 .help(showAgentSteps ? "Agent-Schritte ausblenden" : "Agent-Schritte einblenden")
+
+                // Clear chat — keep session, remove content and reset context
+                Button(action: { clearCurrentChat() }) {
+                    Image(systemName: "trash")
+                        .font(.system(size: 15))
+                        .foregroundColor(.secondary)
+                        .frame(width: 32, height: 32)
+                        .background(Color.koboldSurface.opacity(0.4))
+                        .cornerRadius(8)
+                }
+                .buttonStyle(.plain)
+                .help("Chat leeren (Session bleibt erhalten)")
 
                 // Font size controls
                 Button(action: { chatFontSize = max(12, chatFontSize - 1) }) {
@@ -661,7 +669,7 @@ struct ChatView: View {
     private func debouncedScroll(proxy: ScrollViewProxy) {
         scrollDebounceTask?.cancel()
         scrollDebounceTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 150_000_000) // 150ms debounce
+            try? await Task.sleep(nanoseconds: UInt64(updateIntervalNanos)) // Configurable debounce
             guard !Task.isCancelled else { return }
             if viewModel.isAgentLoadingInCurrentChat {
                 proxy.scrollTo("loading", anchor: .bottom)
@@ -669,5 +677,40 @@ struct ChatView: View {
                 proxy.scrollTo(last.id, anchor: .bottom)
             }
         }
+    }
+
+    /// Formatiert Token-Zahlen als menschenlesbare Größen: 32768 → "32K", 1048576 → "1M"
+    private func formatTokenCount(_ n: Int) -> String {
+        if n >= 1_048_576 {
+            let m = n / 1_048_576
+            return "\(m)M"
+        }
+        if n >= 1024 {
+            let k = n / 1024
+            return "\(k)K"
+        }
+        return "\(n)"
+    }
+
+    /// Chat leeren: Messages entfernen, Session behalten, Context zurücksetzen
+    private func clearCurrentChat() {
+        let sessionId = viewModel.currentSessionId
+        viewModel.clearChatHistory()
+        // Reset context usage display
+        viewModel.updateContextUsage(for: sessionId, promptTokens: 0, completionTokens: 0, windowSize: viewModel.contextWindowSize)
+        viewModel.syncAgentStateToUI()
+    }
+
+    /// Kontext komprimieren — direkt im ViewModel (nicht über Daemon, da frischer Worker leere conversationMessages hat)
+    private func compressContext() {
+        let sessionId = viewModel.currentSessionId
+        viewModel.appendCompressMessage(for: sessionId)
+        // Compact directly: trim messages, keep last 20, replace older with summary
+        viewModel.compactVisibleMessages(for: sessionId, keepLast: 20)
+        let remaining = viewModel.messages.count
+        viewModel.appendCompressResult(remaining: remaining, for: sessionId)
+        // Reset context usage to reflect compressed state
+        viewModel.updateContextUsage(for: sessionId, promptTokens: remaining * 80, completionTokens: 0, windowSize: viewModel.contextWindowSize)
+        viewModel.syncAgentStateToUI()
     }
 }
