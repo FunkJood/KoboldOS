@@ -26,6 +26,8 @@ final class STTManager: ObservableObject {
 
     var autoTranscribe: Bool { UserDefaults.standard.bool(forKey: "kobold.stt.autoTranscribe") }
     var modelSize: String { UserDefaults.standard.string(forKey: "kobold.stt.model") ?? "base" }
+    /// STT-Sprache: "auto", "de", "en", "fr", "es" etc. — Whisper Language Code
+    var sttLanguage: String { UserDefaults.standard.string(forKey: "kobold.stt.language") ?? "de" }
 
     private init() {
         Task { await loadModelIfAvailable() }
@@ -50,11 +52,16 @@ final class STTManager: ObservableObject {
             isModelLoaded = false
             return
         }
-        whisper = Whisper(fromFileURL: url)
+        let params = WhisperParams(strategy: .greedy)
+        // Sprache aus Einstellungen setzen (Default: Deutsch statt Auto → verhindert falsche Spracherkennung)
+        if let lang = WhisperLanguage(rawValue: sttLanguage) {
+            params.language = lang
+        }
+        whisper = Whisper(fromFileURL: url, withParams: params)
         if whisper != nil {
             isModelLoaded = true
             currentModelName = size
-            print("[STT] Model '\(size)' loaded")
+            print("[STT] Model '\(size)' loaded (language: \(sttLanguage))")
         } else {
             print("[STT] Failed to load model from \(url.path)")
             isModelLoaded = false
@@ -112,6 +119,11 @@ final class STTManager: ObservableObject {
         isTranscribing = true
         defer { isTranscribing = false }
 
+        // Sprache vor jeder Transkription aktualisieren (falls in Settings geändert)
+        if let lang = WhisperLanguage(rawValue: sttLanguage) {
+            whisper.params.language = lang
+        }
+
         do {
             // Convert audio to PCM float array (16kHz mono)
             let audioData = try await convertToPCM(url: audioURL)
@@ -132,23 +144,24 @@ final class STTManager: ObservableObject {
     // MARK: - Audio Conversion (to 16kHz PCM float)
 
     private func convertToPCM(url: URL) async throws -> [Float] {
-        // Use ffmpeg if available, otherwise try AVFoundation
-        let pcmURL = FileManager.default.temporaryDirectory.appendingPathComponent("whisper_input_\(UUID().uuidString).wav")
-        defer { try? FileManager.default.removeItem(at: pcmURL) }
+        let data = try Data(contentsOf: url)
 
-        // Try ffmpeg conversion first (handles most formats)
-        // ffmpeg async mit Timeout (blockiert nicht den Main Thread)
+        // AudioRecordingManager schreibt bereits 16kHz mono WAV → direkt parsen (kein ffmpeg!)
+        // Nur bei fremden Formaten (nicht .wav) als Fallback ffmpeg nutzen
+        if url.pathExtension.lowercased() == "wav" {
+            return parseWAVToFloats(data)
+        }
+
+        // Fallback für Nicht-WAV-Formate (z.B. Telegram-Sprachnachrichten)
+        let pcmURL = FileManager.default.temporaryDirectory.appendingPathComponent("whisper_\(UUID().uuidString.prefix(6)).wav")
+        defer { try? FileManager.default.removeItem(at: pcmURL) }
         _ = try? await AsyncProcess.run(
             executable: "/usr/bin/env",
             arguments: ["ffmpeg", "-i", url.path, "-ar", "16000", "-ac", "1", "-f", "wav", "-y", pcmURL.path],
-            timeout: 30
+            timeout: 15
         )
-
-        let dataURL = FileManager.default.fileExists(atPath: pcmURL.path) ? pcmURL : url
-        let data = try Data(contentsOf: dataURL)
-
-        // Parse WAV header and extract PCM samples
-        return parseWAVToFloats(data)
+        let convertedData = FileManager.default.fileExists(atPath: pcmURL.path) ? try Data(contentsOf: pcmURL) : data
+        return parseWAVToFloats(convertedData)
     }
 
     private func parseWAVToFloats(_ data: Data) -> [Float] {

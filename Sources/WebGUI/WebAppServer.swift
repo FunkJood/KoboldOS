@@ -568,7 +568,7 @@ final class WebAppServer: @unchecked Sendable {
           border-radius: 6px; transition: var(--transition);
         }
         .mem-card .mem-delete:hover { color: var(--red); background: rgba(255,69,58,0.1); }
-        .mem-stats { display: flex; gap: 12px; margin-bottom: 16px; }
+        .mem-stats { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }
         .mem-stat {
           flex: 1; text-align: center; padding: 12px;
           background: var(--bg-secondary); border: 0.5px solid var(--separator);
@@ -1017,7 +1017,7 @@ final class WebAppServer: @unchecked Sendable {
               '<div class="mem-stat"><div class="num" style="color:var(--teal)">'+byType.kurzzeit+'</div><div class="lbl">Kurzzeit</div></div>'+
               '<div class="mem-stat"><div class="num" style="color:var(--accent)">'+byType.langzeit+'</div><div class="lbl">Langzeit</div></div>'+
               '<div class="mem-stat"><div class="num" style="color:var(--orange)">'+byType.wissen+'</div><div class="lbl">Wissen</div></div>'+
-              '<div class="mem-stat"><div class="num">'+memoryEntries.length+'</div><div class="lbl">Gesamt</div></div>';
+              '<div class="mem-stat" style="flex-basis:100%;text-align:center"><div class="num">'+memoryEntries.length+'</div><div class="lbl">Gesamt</div></div>';
             renderTagBar();filterMemory();
           }catch(e){
             document.getElementById('memEntries').innerHTML='<div class="empty-state"><i data-lucide="alert-circle"></i><p>Fehler beim Laden</p></div>';

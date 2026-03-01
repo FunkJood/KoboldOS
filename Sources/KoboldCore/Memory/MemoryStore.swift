@@ -21,21 +21,44 @@ public struct SnapshotInfo: Sendable, Codable {
 public struct MemoryEntry: Sendable, Codable {
     public let id: String
     public var text: String
-    public var memoryType: String   // "kurzzeit", "langzeit", "wissen"
+    public var memoryType: String   // "kurzzeit", "langzeit", "wissen", "lösungen", "fehler"
     public let timestamp: Date
     public var tags: [String]
 
-    public init(id: String = UUID().uuidString, text: String, memoryType: String = "kurzzeit", timestamp: Date = Date(), tags: [String] = []) {
+    // Emotional valence (Circumplex Model — Russell 1980)
+    public var valence: Float       // -1.0 (negativ/Fehler) bis +1.0 (positiv/Erfolg)
+    public var arousal: Float       // 0.0 (unwichtig) bis 1.0 (kritisch)
+
+    // Error-Solution linkage
+    public var linkedEntryId: String?  // Verknüpft Fehler↔Lösung
+    public var source: String?         // "auto_error", "auto_solution", "agent", "user", "consolidation"
+
+    public init(
+        id: String = UUID().uuidString,
+        text: String,
+        memoryType: String = "kurzzeit",
+        timestamp: Date = Date(),
+        tags: [String] = [],
+        valence: Float = 0.0,
+        arousal: Float = 0.5,
+        linkedEntryId: String? = nil,
+        source: String? = nil
+    ) {
         self.id = id
         self.text = text
         self.memoryType = memoryType
         self.timestamp = timestamp
         self.tags = tags
+        self.valence = valence
+        self.arousal = arousal
+        self.linkedEntryId = linkedEntryId
+        self.source = source
     }
 
-    // Backward-compatible decoding (old entries without memoryType)
+    // Backward-compatible decoding (old entries without new fields)
     enum CodingKeys: String, CodingKey {
         case id, text, memoryType, timestamp, tags
+        case valence, arousal, linkedEntryId, source
     }
 
     public init(from decoder: Decoder) throws {
@@ -45,6 +68,10 @@ public struct MemoryEntry: Sendable, Codable {
         memoryType = try container.decodeIfPresent(String.self, forKey: .memoryType) ?? "kurzzeit"
         timestamp = try container.decode(Date.self, forKey: .timestamp)
         tags = try container.decodeIfPresent([String].self, forKey: .tags) ?? []
+        valence = try container.decodeIfPresent(Float.self, forKey: .valence) ?? 0.0
+        arousal = try container.decodeIfPresent(Float.self, forKey: .arousal) ?? 0.5
+        linkedEntryId = try container.decodeIfPresent(String.self, forKey: .linkedEntryId)
+        source = try container.decodeIfPresent(String.self, forKey: .source)
     }
 }
 
@@ -52,6 +79,10 @@ public struct MemoryEntry: Sendable, Codable {
 // Fully local — all data stored in ~/Library/Application Support/KoboldOS/Memory/
 
 public actor MemoryStore {
+
+    /// Singleton — ALLE Komponenten (DaemonListener, AgentLoop, ConsciousnessEngine)
+    /// nutzen dieselbe Instanz, damit GUI und Agent immer die gleichen Daten sehen.
+    public static let shared = MemoryStore()
 
     private var localEntries: [MemoryEntry] = []
 
@@ -115,9 +146,21 @@ public actor MemoryStore {
 
     // MARK: - Add
 
-    public func add(text: String, memoryType: String = "kurzzeit", tags: [String] = []) async throws -> MemoryEntry {
+    public func add(
+        text: String,
+        memoryType: String = "kurzzeit",
+        tags: [String] = [],
+        valence: Float = 0.0,
+        arousal: Float = 0.5,
+        linkedEntryId: String? = nil,
+        source: String? = nil
+    ) async throws -> MemoryEntry {
         ensureLoaded()
-        let entry = MemoryEntry(text: text, memoryType: memoryType, tags: tags)
+        let entry = MemoryEntry(
+            text: text, memoryType: memoryType, tags: tags,
+            valence: valence, arousal: arousal,
+            linkedEntryId: linkedEntryId, source: source
+        )
         localEntries.append(entry)
         try saveEntry(entry)
         // Async embedding — does not block the caller
@@ -242,14 +285,95 @@ public actor MemoryStore {
 
     // MARK: - Stats
 
-    public func stats() async -> (total: Int, byType: [String: Int], tagCount: Int) {
+    public func stats() async -> (total: Int, byType: [String: Int], tagCount: Int, avgValence: Float) {
         var byType: [String: Int] = [:]
         var allTags: Set<String> = []
+        var valenceSum: Float = 0
         for entry in localEntries {
             byType[entry.memoryType, default: 0] += 1
             for tag in entry.tags { allTags.insert(tag.lowercased()) }
+            valenceSum += entry.valence
         }
-        return (total: localEntries.count, byType: byType, tagCount: allTags.count)
+        let avgValence = localEntries.isEmpty ? 0.0 : valenceSum / Float(localEntries.count)
+        return (total: localEntries.count, byType: byType, tagCount: allTags.count, avgValence: avgValence)
+    }
+
+    // MARK: - Emotionally-Weighted Search (Consciousness-aware)
+
+    /// Search with emotional boost: high valence + arousal entries surface faster
+    public func emotionalSearch(query: String = "", type: String? = nil, tags: [String]? = nil, limit: Int = 5) async throws -> [MemoryEntry] {
+        ensureLoaded()
+        var candidates = localEntries
+
+        if let type = type, !type.isEmpty {
+            candidates = candidates.filter { $0.memoryType == type }
+        }
+        if let tags = tags, !tags.isEmpty {
+            let searchTags = Set(tags.map { $0.lowercased() })
+            candidates = candidates.filter { entry in
+                let entryTags = Set(entry.tags.map { $0.lowercased() })
+                return !searchTags.isDisjoint(with: entryTags)
+            }
+        }
+        guard !candidates.isEmpty else { return [] }
+
+        if query.isEmpty {
+            // Sort by emotional weight (high arousal + recent first)
+            return Array(candidates.sorted { a, b in
+                let aWeight = a.arousal * 0.7 + min(1.0, Float(-a.timestamp.timeIntervalSinceNow / 86400)) * 0.3
+                let bWeight = b.arousal * 0.7 + min(1.0, Float(-b.timestamp.timeIntervalSinceNow / 86400)) * 0.3
+                return aWeight > bWeight
+            }.prefix(limit))
+        }
+
+        // TF-IDF search with emotional boost
+        let texts = candidates.map { $0.text + " " + $0.tags.joined(separator: " ") + " " + $0.memoryType }
+        let results = VectorSearch.search(query: query, entries: texts, limit: min(limit * 2, candidates.count))
+
+        // Apply emotional weight: score * (1 + |valence| * arousal * 0.5)
+        let boosted = results.map { result -> (index: Int, score: Double) in
+            let entry = candidates[result.index]
+            let emotionalBoost = 1.0 + Double(abs(entry.valence) * entry.arousal * 0.5)
+            return (index: result.index, score: result.score * emotionalBoost)
+        }.sorted { $0.score > $1.score }
+
+        return Array(boosted.prefix(limit).map { candidates[$0.index] })
+    }
+
+    // MARK: - Memory Consolidation (Kurzzeit → Langzeit)
+
+    /// Migrate old short-term entries to long-term memory
+    public func consolidateShortTerm(olderThan hours: Int = 24) async -> Int {
+        ensureLoaded()
+        let cutoff = Date().addingTimeInterval(-Double(hours) * 3600)
+        var count = 0
+        for i in localEntries.indices {
+            if localEntries[i].memoryType == "kurzzeit" && localEntries[i].timestamp < cutoff {
+                localEntries[i].memoryType = "langzeit"
+                localEntries[i].source = "consolidation"
+                try? saveEntry(localEntries[i])
+                count += 1
+            }
+        }
+        return count
+    }
+
+    // MARK: - Unresolved Errors (Fehler without linked Lösung)
+
+    public func unresolvedErrors() async -> [MemoryEntry] {
+        ensureLoaded()
+        let errors = localEntries.filter { $0.memoryType == "fehler" }
+        let solutions = localEntries.filter { $0.memoryType == "lösungen" }
+        let resolvedErrorIds = Set(solutions.compactMap { $0.linkedEntryId })
+        return errors.filter { !resolvedErrorIds.contains($0.id) }
+            .sorted { $0.timestamp > $1.timestamp }
+    }
+
+    // MARK: - Find Linked Entries
+
+    public func linkedEntries(for entryId: String) async -> [MemoryEntry] {
+        ensureLoaded()
+        return localEntries.filter { $0.linkedEntryId == entryId || $0.id == entryId }
     }
 
     // MARK: - Snapshot System

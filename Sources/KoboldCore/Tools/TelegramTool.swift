@@ -39,12 +39,12 @@ public struct TelegramTool: Tool, Sendable {
 
         let token = UserDefaults.standard.string(forKey: "kobold.telegram.token") ?? ""
         guard !token.isEmpty else {
-            return "Error: Kein Telegram-Bot-Token konfiguriert. Bitte in Einstellungen → Verbindungen → Telegram konfigurieren."
+            return "Error: Kein Telegram-Bot-Token konfiguriert. Bitte in Einstellungen → Integrationen → Telegram konfigurieren."
         }
 
         let chatIdStr = arguments["chat_id"] ?? UserDefaults.standard.string(forKey: "kobold.telegram.chatId") ?? ""
         guard !chatIdStr.isEmpty, let chatId = Int64(chatIdStr) else {
-            return "Error: Keine Chat-ID konfiguriert. Bitte in Einstellungen → Verbindungen → Telegram eine Chat-ID eingeben."
+            return "Error: Keine Chat-ID konfiguriert. Bitte in Einstellungen → Integrationen → Telegram eine Chat-ID eingeben."
         }
 
         switch action {

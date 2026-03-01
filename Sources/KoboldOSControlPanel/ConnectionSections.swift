@@ -1,4 +1,5 @@
 import SwiftUI
+import WebKit
 import KoboldCore
 
 // MARK: - Connection Sections (Extension auf SettingsView)
@@ -194,33 +195,71 @@ extension SettingsView {
 
     @ViewBuilder
     func whatsappConnectionSection() -> some View {
+        let webLinked = UserDefaults.standard.bool(forKey: "kobold.whatsapp.webLinked")
         connectionCard(
             logo: AnyView(Image(systemName: "phone.bubble.fill").font(.title2).foregroundColor(.green)),
             name: "WhatsApp",
-            subtitle: "Business API (Meta)",
-            isConnected: WhatsAppOAuth.shared.isConnected,
+            subtitle: "Web-Verknüpfung",
+            isConnected: webLinked || WhatsAppOAuth.shared.isConnected,
             connectedDetail: {
                 AnyView(VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Image(systemName: "person.fill").foregroundColor(.secondary)
-                        Text(WhatsAppOAuth.shared.userName).font(.system(size: 13))
+                    if webLinked {
+                        HStack(spacing: 6) {
+                            Image(systemName: "checkmark.circle.fill").foregroundColor(.koboldEmerald)
+                            Text("WhatsApp Web verknüpft").font(.system(size: 13))
+                        }
+                        Button("WhatsApp Web öffnen") {
+                            whatsappShowWebView = true
+                        }
+                        .font(.system(size: 12)).foregroundColor(.koboldEmerald)
                     }
-                    HStack {
-                        Text("Phone Number ID:").font(.system(size: 11)).foregroundColor(.secondary)
-                        TextField("ID", text: Binding(
-                            get: { UserDefaults.standard.string(forKey: "kobold.whatsapp.phoneNumberId") ?? "" },
-                            set: { UserDefaults.standard.set($0, forKey: "kobold.whatsapp.phoneNumberId") }
-                        )).textFieldStyle(.roundedBorder).font(.system(size: 12)).frame(maxWidth: 200)
+                    if WhatsAppOAuth.shared.isConnected {
+                        HStack(spacing: 6) {
+                            Image(systemName: "server.rack").foregroundColor(.secondary)
+                            Text("Business API: \(WhatsAppOAuth.shared.userName)").font(.system(size: 12)).foregroundColor(.secondary)
+                        }
                     }
-                    Button("Abmelden") { Task { await WhatsAppOAuth.shared.signOut() } }
-                        .font(.system(size: 12)).foregroundColor(.red)
+                    HStack(spacing: 12) {
+                        if webLinked {
+                            Button("Web trennen") {
+                                UserDefaults.standard.set(false, forKey: "kobold.whatsapp.webLinked")
+                                // Clear WhatsApp Web cookies
+                                let dataStore = WKWebsiteDataStore.default()
+                                dataStore.fetchDataRecords(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes()) { records in
+                                    let whatsappRecords = records.filter { $0.displayName.contains("whatsapp") }
+                                    dataStore.removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), for: whatsappRecords) {}
+                                }
+                            }
+                            .font(.system(size: 12)).foregroundColor(.red)
+                        }
+                        if WhatsAppOAuth.shared.isConnected {
+                            Button("API abmelden") { Task { await WhatsAppOAuth.shared.signOut() } }
+                                .font(.system(size: 12)).foregroundColor(.red)
+                        }
+                    }
                 })
             },
             signInButton: {
-                AnyView(VStack(alignment: .leading, spacing: 10) {
-                    DisclosureGroup("Meta App-Konfiguration") {
+                AnyView(VStack(alignment: .leading, spacing: 12) {
+                    // WhatsApp Web linking (primary)
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Scanne den QR-Code mit deinem Handy um WhatsApp Web zu verknüpfen — genau wie auf web.whatsapp.com.")
+                            .font(.system(size: 11)).foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        Button(action: { whatsappShowWebView = true }) {
+                            Label("WhatsApp Web verknüpfen", systemImage: "qrcode")
+                        }
+                        .buttonStyle(.borderedProminent).tint(.green)
+                    }
+
+                    // Optional: Business API (advanced)
+                    DisclosureGroup("Business API (optional)") {
                         VStack(alignment: .leading, spacing: 6) {
-                            Text("App ID (Client ID)").font(.system(size: 11)).foregroundColor(.secondary)
+                            Text("Für programmatischen Zugriff via Meta Business API.")
+                                .font(.system(size: 11)).foregroundColor(.secondary)
+
+                            Text("App ID").font(.system(size: 11)).foregroundColor(.secondary).padding(.top, 4)
                             TextField("Meta App ID", text: Binding(
                                 get: { UserDefaults.standard.string(forKey: "kobold.whatsapp.clientId") ?? "" },
                                 set: { UserDefaults.standard.set($0, forKey: "kobold.whatsapp.clientId") }
@@ -233,20 +272,38 @@ extension SettingsView {
                             )).textFieldStyle(.roundedBorder).font(.system(size: 12))
 
                             Text("Phone Number ID").font(.system(size: 11)).foregroundColor(.secondary)
-                            TextField("WhatsApp Phone Number ID", text: Binding(
+                            TextField("Phone Number ID", text: Binding(
                                 get: { UserDefaults.standard.string(forKey: "kobold.whatsapp.phoneNumberId") ?? "" },
                                 set: { UserDefaults.standard.set($0, forKey: "kobold.whatsapp.phoneNumberId") }
                             )).textFieldStyle(.roundedBorder).font(.system(size: 12))
+
+                            Button(action: { WhatsAppOAuth.shared.signIn() }) {
+                                Label("Business API verbinden", systemImage: "arrow.right.circle.fill")
+                            }
+                            .buttonStyle(.bordered).tint(.green)
+                            .disabled((UserDefaults.standard.string(forKey: "kobold.whatsapp.clientId") ?? "").isEmpty)
                         }
                     }.font(.system(size: 12.5))
-
-                    Button(action: { WhatsAppOAuth.shared.signIn() }) {
-                        Label("Mit WhatsApp verbinden", systemImage: "arrow.right.circle.fill")
-                    }
-                    .buttonStyle(.borderedProminent).tint(.green)
                 })
             }
         )
+        .sheet(isPresented: $whatsappShowWebView) {
+            WhatsAppWebSheet()
+        }
+    }
+
+    /// Generate QR code as NSImage (reusable for any connection)
+    func generateConnectionQR(from string: String) -> NSImage? {
+        guard let data = string.data(using: .ascii),
+              let filter = CIFilter(name: "CIQRCodeGenerator") else { return nil }
+        filter.setValue(data, forKey: "inputMessage")
+        filter.setValue("M", forKey: "inputCorrectionLevel")
+        guard let output = filter.outputImage else { return nil }
+        let scaled = output.transformed(by: CGAffineTransform(scaleX: 10, y: 10))
+        let rep = NSCIImageRep(ciImage: scaled)
+        let img = NSImage(size: rep.size)
+        img.addRepresentation(rep)
+        return img
     }
 
     // MARK: - HuggingFace (Token-basiert)
@@ -290,9 +347,9 @@ extension SettingsView {
         let isConnected = !(UserDefaults.standard.string(forKey: "kobold.twilio.accountSid") ?? "").isEmpty
             && !(UserDefaults.standard.string(forKey: "kobold.twilio.authToken") ?? "").isEmpty
         connectionCard(
-            logo: AnyView(Image(systemName: "message.fill").font(.title2).foregroundColor(.red)),
-            name: "SMS (Twilio)",
-            subtitle: "SMS senden via Twilio",
+            logo: AnyView(Image(systemName: "phone.fill").font(.title2).foregroundColor(.red)),
+            name: "Twilio (SMS & Telefonie)",
+            subtitle: "SMS + Anrufe via Twilio",
             isConnected: isConnected,
             connectedDetail: {
                 AnyView(VStack(alignment: .leading, spacing: 8) {
@@ -307,8 +364,57 @@ extension SettingsView {
                             set: { UserDefaults.standard.set($0, forKey: "kobold.twilio.fromNumber") }
                         )).textFieldStyle(.roundedBorder).font(.system(size: 12)).frame(maxWidth: 180)
                     }
+
+                    Divider()
+
+                    // Telefonie & eingehende SMS
+                    Text("Telefonie & Eingehende SMS").font(.system(size: 11, weight: .bold)).foregroundColor(.secondary)
+
+                    Text("Öffentliche URL (automatisch via Cloudflare Tunnel)").font(.system(size: 10)).foregroundColor(.secondary)
+                    HStack(spacing: 4) {
+                        TextField("Automatisch via Cloudflare Tunnel", text: Binding(
+                            get: { UserDefaults.standard.string(forKey: "kobold.twilio.publicUrl") ?? "" },
+                            set: { UserDefaults.standard.set($0, forKey: "kobold.twilio.publicUrl") }
+                        )).textFieldStyle(.roundedBorder).font(.system(size: 11))
+                        // Status-Indikator
+                        if !(UserDefaults.standard.string(forKey: "kobold.twilio.publicUrl") ?? "").isEmpty {
+                            Image(systemName: "checkmark.circle.fill").foregroundColor(.koboldEmerald).font(.system(size: 12))
+                        }
+                    }
+                    Text("Wird automatisch gesetzt wenn Cloudflare Tunnel aktiv ist (Einstellungen → WebApp-Server)").font(.system(size: 9)).foregroundColor(.secondary.opacity(0.6))
+
+                    // Twilio-Webhook-Konfigurationshinweis
+                    let pubUrl = UserDefaults.standard.string(forKey: "kobold.twilio.publicUrl") ?? ""
+                    if !pubUrl.isEmpty {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Twilio-Konsole Einrichtung (für eingehende Anrufe/SMS):").font(.system(size: 10, weight: .bold)).foregroundColor(.orange)
+                            HStack(spacing: 4) {
+                                Text("Voice-URL:").font(.system(size: 9)).foregroundColor(.secondary)
+                                Text("\(pubUrl)/twilio/voice/webhook").font(.system(size: 9, design: .monospaced)).foregroundColor(.primary).textSelection(.enabled)
+                            }
+                            HStack(spacing: 4) {
+                                Text("SMS-URL:").font(.system(size: 9)).foregroundColor(.secondary)
+                                Text("\(pubUrl)/twilio/sms/webhook").font(.system(size: 9, design: .monospaced)).foregroundColor(.primary).textSelection(.enabled)
+                            }
+                            Text("→ Twilio Console → Phone Numbers → Nummer wählen → Voice/Messaging → Webhook-URL eintragen (HTTP POST)").font(.system(size: 9)).foregroundColor(.secondary.opacity(0.7))
+                        }
+                        .padding(8)
+                        .background(Color.orange.opacity(0.06))
+                        .cornerRadius(6)
+                    }
+
+                    Text("Nummern-Whitelist (E.164, eine pro Zeile)").font(.system(size: 10)).foregroundColor(.secondary)
+                    TextEditor(text: Binding(
+                        get: { UserDefaults.standard.string(forKey: "kobold.twilio.whitelist") ?? "" },
+                        set: { UserDefaults.standard.set($0, forKey: "kobold.twilio.whitelist") }
+                    ))
+                    .font(.system(size: 11, design: .monospaced))
+                    .frame(height: 50)
+                    .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.secondary.opacity(0.2), lineWidth: 1))
+
                     Button("Zugangsdaten entfernen") {
-                        for k in ["kobold.twilio.accountSid", "kobold.twilio.authToken", "kobold.twilio.fromNumber"] {
+                        for k in ["kobold.twilio.accountSid", "kobold.twilio.authToken", "kobold.twilio.fromNumber",
+                                   "kobold.twilio.publicUrl", "kobold.twilio.whitelist"] {
                             UserDefaults.standard.removeObject(forKey: k)
                         }
                     }
@@ -782,6 +888,75 @@ extension SettingsView {
         )
     }
 
+    // MARK: - ElevenLabs ConvAI
+
+    internal var brandLogoElevenLabs: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(LinearGradient(colors: [Color.purple, Color(red: 0.4, green: 0.1, blue: 0.6)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                .frame(width: 32, height: 32)
+            Image(systemName: "waveform.circle.fill")
+                .font(.system(size: 16, weight: .bold))
+                .foregroundColor(.white)
+        }
+    }
+
+    @ViewBuilder
+    func elevenLabsConnectionSection() -> some View {
+        let apiKey = UserDefaults.standard.string(forKey: "kobold.elevenlabs.apiKey") ?? ""
+        let agentId = UserDefaults.standard.string(forKey: "kobold.elevenlabs.convai.agentId") ?? ""
+        let hasConnection = !apiKey.isEmpty
+        connectionCard(
+            logo: AnyView(brandLogoElevenLabs),
+            name: "ElevenLabs",
+            subtitle: "Stimme & Live-Gespräche",
+            isConnected: hasConnection,
+            connectedDetail: {
+                AnyView(VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark.circle.fill").foregroundColor(.koboldEmerald)
+                        Text("API-Key konfiguriert").font(.system(size: 13))
+                    }
+                    if !agentId.isEmpty {
+                        HStack(spacing: 6) {
+                            Image(systemName: "person.wave.2.fill").foregroundColor(.purple)
+                            Text("Agent: \(agentId.prefix(12))...").font(.system(size: 12, design: .monospaced))
+                        }
+                    }
+                    if UserDefaults.standard.bool(forKey: "kobold.elevenlabs.convai.customLLM") {
+                        HStack(spacing: 4) {
+                            Image(systemName: "brain.head.profile").foregroundColor(.purple).font(.system(size: 11))
+                            Text("Custom LLM aktiv").font(.system(size: 11, weight: .medium)).foregroundColor(.purple)
+                        }
+                    }
+                    Text("TTS, Live-Voice und Telefonie über ElevenLabs.")
+                        .font(.system(size: 11)).foregroundColor(.secondary)
+                    Button("API-Key entfernen") {
+                        UserDefaults.standard.removeObject(forKey: "kobold.elevenlabs.apiKey")
+                    }
+                    .font(.system(size: 12)).foregroundColor(.red)
+                })
+            },
+            signInButton: {
+                AnyView(VStack(alignment: .leading, spacing: 8) {
+                    Text("API-Key von elevenlabs.io").font(.system(size: 11)).foregroundColor(.secondary)
+                    SecureField("ElevenLabs API Key", text: Binding(
+                        get: { UserDefaults.standard.string(forKey: "kobold.elevenlabs.apiKey") ?? "" },
+                        set: { UserDefaults.standard.set($0, forKey: "kobold.elevenlabs.apiKey") }
+                    )).textFieldStyle(.roundedBorder).font(.system(size: 12))
+
+                    TextField("Agent-ID (für ConvAI)", text: Binding(
+                        get: { UserDefaults.standard.string(forKey: "kobold.elevenlabs.convai.agentId") ?? "" },
+                        set: { UserDefaults.standard.set($0, forKey: "kobold.elevenlabs.convai.agentId") }
+                    )).textFieldStyle(.roundedBorder).font(.system(size: 12))
+
+                    Text("Erstelle einen Account auf elevenlabs.io und kopiere deinen API-Key. Für Live-Voice erstelle zusätzlich einen ConvAI Agent.")
+                        .font(.system(size: 10)).foregroundColor(.secondary).italic()
+                })
+            }
+        )
+    }
+
     // MARK: - Reddit
 
     internal var brandLogoReddit: some View {
@@ -840,5 +1015,158 @@ extension SettingsView {
                 })
             }
         )
+    }
+}
+
+// MARK: - WhatsApp Web Sheet (WKWebView mit web.whatsapp.com)
+
+struct WhatsAppWebSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var isConnected = false
+    @State private var isLoading = true
+    @State private var pageTitle = "WhatsApp Web"
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header
+            HStack {
+                Image(systemName: "phone.bubble.fill").font(.title3).foregroundColor(.green)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("WhatsApp Web").font(.system(size: 14, weight: .semibold))
+                    if isConnected {
+                        HStack(spacing: 4) {
+                            Image(systemName: "checkmark.circle.fill").font(.system(size: 10)).foregroundColor(.koboldEmerald)
+                            Text("Verknüpft").font(.system(size: 11)).foregroundColor(.koboldEmerald)
+                        }
+                    } else {
+                        Text("Scanne den QR-Code mit deinem Handy").font(.system(size: 11)).foregroundColor(.secondary)
+                    }
+                }
+                Spacer()
+                if isLoading {
+                    ProgressView().controlSize(.small)
+                }
+                Button("Schließen") { dismiss() }
+                    .buttonStyle(.bordered)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(Color.black.opacity(0.15))
+
+            Divider().opacity(0.3)
+
+            // WKWebView
+            WhatsAppWebViewRepresentable(
+                isConnected: $isConnected,
+                isLoading: $isLoading,
+                pageTitle: $pageTitle
+            )
+        }
+        .frame(minWidth: 900, minHeight: 650)
+        .frame(idealWidth: 1000, idealHeight: 750)
+        .onChange(of: isConnected) {
+            if isConnected {
+                UserDefaults.standard.set(true, forKey: "kobold.whatsapp.webLinked")
+            }
+        }
+    }
+}
+
+// MARK: - WhatsApp Web WKWebView (NSViewRepresentable)
+
+struct WhatsAppWebViewRepresentable: NSViewRepresentable {
+    @Binding var isConnected: Bool
+    @Binding var isLoading: Bool
+    @Binding var pageTitle: String
+
+    func makeNSView(context: Context) -> WKWebView {
+        let config = WKWebViewConfiguration()
+        config.websiteDataStore = .default() // Persistent — Session bleibt erhalten
+        config.preferences.setValue(true, forKey: "developerExtrasEnabled")
+        config.defaultWebpagePreferences.allowsContentJavaScript = true
+
+        let wv = WKWebView(frame: .zero, configuration: config)
+        wv.navigationDelegate = context.coordinator
+        // Desktop Chrome User-Agent — WhatsApp Web blockiert mobile UAs
+        wv.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+        wv.allowsBackForwardNavigationGestures = true
+
+        let url = URL(string: "https://web.whatsapp.com")!
+        wv.load(URLRequest(url: url))
+
+        return wv
+    }
+
+    func updateNSView(_ nsView: WKWebView, context: Context) {}
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(isConnected: $isConnected, isLoading: $isLoading, pageTitle: $pageTitle)
+    }
+
+    class Coordinator: NSObject, WKNavigationDelegate {
+        var isConnected: Binding<Bool>
+        var isLoading: Binding<Bool>
+        var pageTitle: Binding<String>
+        private var connectionCheckTask: Task<Void, Never>?
+
+        init(isConnected: Binding<Bool>, isLoading: Binding<Bool>, pageTitle: Binding<String>) {
+            self.isConnected = isConnected
+            self.isLoading = isLoading
+            self.pageTitle = pageTitle
+            super.init()
+        }
+
+        deinit {
+            connectionCheckTask?.cancel()
+        }
+
+        func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+            DispatchQueue.main.async { self.isLoading.wrappedValue = true }
+        }
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            DispatchQueue.main.async {
+                self.isLoading.wrappedValue = false
+                self.pageTitle.wrappedValue = webView.title ?? "WhatsApp Web"
+            }
+            startConnectionCheck(webView: webView)
+        }
+
+        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+            DispatchQueue.main.async { self.isLoading.wrappedValue = false }
+        }
+
+        /// Pollt alle 3 Sekunden ob WhatsApp den QR-Code-Screen verlassen hat
+        /// (= User hat erfolgreich gescannt und ist verknüpft)
+        private func startConnectionCheck(webView: WKWebView) {
+            connectionCheckTask?.cancel()
+            connectionCheckTask = Task { @MainActor [weak self, weak webView] in
+                while !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: 3_000_000_000) // 3s
+                    guard !Task.isCancelled, let webView = webView else { return }
+
+                    // WhatsApp Web zeigt #pane-side (Chat-Liste) wenn verknüpft
+                    // und [data-testid="qrcode"] wenn QR-Code angezeigt wird
+                    let js = """
+                    (() => {
+                        const chatList = document.querySelector('#pane-side') ||
+                                         document.querySelector('[data-testid="chat-list"]') ||
+                                         document.querySelector('[aria-label="Chatliste"]') ||
+                                         document.querySelector('[aria-label="Chat list"]');
+                        return chatList !== null;
+                    })()
+                    """
+                    do {
+                        let result = try await webView.evaluateJavaScript(js)
+                        let connected = (result as? Bool) == true
+                        if connected != self?.isConnected.wrappedValue {
+                            self?.isConnected.wrappedValue = connected
+                        }
+                    } catch {
+                        // JS evaluation kann fehlschlagen wenn Seite noch lädt — ignorieren
+                    }
+                }
+            }
+        }
     }
 }

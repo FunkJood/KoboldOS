@@ -286,25 +286,81 @@ struct AgentsView: View {
 
     /// Tool routing data: which agent gets which tools and why
     private static let toolRoutingDefaults: [(tool: String, role: String, icon: String, defaultAgents: [String], reason: String)] = [
-        ("shell",           "Shell",            "terminal.fill",                    ["general", "coder", "utility"],    "Bash/Zsh-Befehle im Terminal ausführen, Pakete installieren, Prozesse starten"),
-        ("file",            "Dateisystem",      "doc.fill",                         ["general", "coder", "utility"],    "Dateien und Ordner lesen, erstellen, bearbeiten und durchsuchen"),
-        ("browser",         "Browser",          "globe",                            ["general", "web"],                 "Webseiten laden, DOM parsen und Inhalte extrahieren"),
-        ("http",            "Netzwerk",         "network",                          ["general", "web"],                 "REST-APIs aufrufen, Webhooks senden, Daten herunterladen"),
-        ("calendar",        "Kalender",         "calendar",                         ["general", "utility"],             "Termine erstellen, Erinnerungen setzen, Kalender abfragen"),
-        ("contacts",        "Kontakte",         "person.crop.circle",               ["general", "utility"],             "Kontakte nach Name, Nummer oder E-Mail durchsuchen"),
-        ("applescript",     "AppleScript",      "applescript",                      ["general", "utility"],             "macOS-Apps steuern: Mail, Finder, Safari, Messages etc."),
-        ("memory_save",     "Speichern",        "brain.head.profile",               ["general", "coder", "web"],        "Wichtige Fakten, Entscheidungen und Kontext langfristig merken"),
-        ("memory_recall",   "Abruf",            "magnifyingglass",                  ["general", "coder", "web"],        "Gespeicherte Erinnerungen und Wissen semantisch abrufen"),
-        ("task_manage",     "Aufgaben",         "checklist",                        ["general"],                        "Tasks erstellen, planen, zuweisen und als erledigt markieren"),
-        ("workflow_manage", "Workflows",        "arrow.triangle.branch",            ["general"],                        "Automatisierungs-Pipelines erstellen und ausführen"),
-        ("call_subordinate","Delegation",       "person.2.fill",                    ["general"],                        "Teilaufgabe an spezialisierten Sub-Agent delegieren"),
-        ("delegate_parallel","Parallel",        "person.3.fill",                    ["general"],                        "Mehrere Sub-Agents gleichzeitig für parallele Arbeit starten"),
-        ("skill_write",     "Skills",           "square.and.pencil",                ["general", "coder"],               "Wiederverwendbare Fähigkeiten als Code-Snippets speichern"),
-        ("notify",          "Benachrichtigung", "bell.fill",                        ["general", "coder", "web"],        "System-Benachrichtigungen und Push-Alerts an den User senden"),
-        ("calculator",      "Rechner",          "plusminus",                        ["general", "coder", "utility"],    "Mathematische Berechnungen, Einheiten-Umrechnung, Formeln"),
-        ("telegram_send",   "Telegram",         "paperplane.fill",                  ["general"],                        "Nachrichten über Telegram-Bot an Kontakte/Gruppen senden"),
-        ("google_api",      "Google API",       "globe",                            ["general", "web"],                 "Google Suche, Maps, Drive und weitere Google-Dienste nutzen"),
-        ("speak",           "Sprache",          "speaker.wave.2.fill",              ["general"],                        "Text als gesprochene Sprache ausgeben (Text-to-Speech)"),
+        // ── Kern-System ──────────────────────────────────────────
+        ("shell",              "Shell",              "terminal.fill",              ["general", "coder", "utility"],  "Bash/Zsh-Befehle im Terminal ausführen, Pakete installieren, Prozesse starten"),
+        ("file",               "Dateisystem",        "doc.fill",                   ["general", "coder", "utility"],  "Dateien und Ordner lesen, erstellen, bearbeiten und durchsuchen"),
+        ("browser",            "Browser",            "globe",                      ["general", "web"],               "Webseiten laden, DOM parsen und Inhalte extrahieren"),
+        ("calculator",         "Rechner",            "plusminus",                  ["general", "coder", "utility"],  "Mathematische Berechnungen, Einheiten-Umrechnung, Formeln"),
+        ("response",           "Antwort",            "text.bubble.fill",           ["general", "coder", "web"],      "Finale Antwort an den Benutzer formulieren und senden"),
+        ("checklist",          "Checkliste",         "list.bullet.clipboard",      ["general", "coder"],             "Arbeitsfortschritt in strukturierten Checklisten verfolgen"),
+
+        // ── Gedächtnis ───────────────────────────────────────────
+        ("core_memory_read",   "Kern lesen",         "brain",                      ["general", "coder", "web"],      "Persönlichkeit, Fakten und Kontextdaten aus dem Kerngedächtnis lesen"),
+        ("core_memory_append", "Kern schreiben",     "brain.head.profile",         ["general"],                      "Neue Informationen zum Kerngedächtnis hinzufügen"),
+        ("core_memory_replace","Kern ersetzen",      "brain.filled.head.profile",  ["general"],                      "Bestehende Kerngedächtnis-Einträge aktualisieren"),
+        ("archival_memory_search","Archiv suchen",   "archivebox",                 ["general", "coder", "web"],      "Langzeitgedächtnis nach relevanten Informationen durchsuchen"),
+        ("archival_memory_insert","Archiv speichern", "archivebox.fill",           ["general"],                      "Informationen ins Langzeitgedächtnis archivieren"),
+        ("memory_save",        "Merken",             "tray.and.arrow.down.fill",   ["general", "coder", "web"],      "Getaggte Erinnerungen mit Typ und Priorität speichern"),
+        ("memory_recall",      "Erinnern",           "magnifyingglass",            ["general", "coder", "web"],      "Gespeicherte Erinnerungen semantisch abrufen"),
+        ("memory_forget",      "Vergessen",          "trash",                      ["general"],                      "Bestimmte Erinnerungen gezielt löschen"),
+
+        // ── Aufgaben & Workflows ─────────────────────────────────
+        ("task_manage",        "Aufgaben",           "checklist",                  ["general"],                      "Tasks erstellen, planen, zuweisen und als erledigt markieren"),
+        ("workflow_manage",    "Workflows",          "arrow.triangle.branch",      ["general"],                      "Automatisierungs-Pipelines erstellen und ausführen"),
+        ("skill_write",        "Skills",             "square.and.pencil",          ["general", "coder"],             "Wiederverwendbare Fähigkeiten als Code-Snippets speichern"),
+
+        // ── Delegation ───────────────────────────────────────────
+        ("call_subordinate",   "Delegation",         "person.2.fill",              ["general"],                      "Teilaufgabe an spezialisierten Sub-Agent delegieren"),
+        ("delegate_parallel",  "Parallel",           "person.3.fill",              ["general"],                      "Mehrere Sub-Agents gleichzeitig für parallele Arbeit starten"),
+
+        // ── macOS-System ─────────────────────────────────────────
+        ("applescript",        "AppleScript",        "applescript",                ["general", "utility"],           "macOS-Apps steuern: Mail, Finder, Safari, Messages etc."),
+        ("calendar",           "Kalender",           "calendar",                   ["general", "utility"],           "Termine erstellen, Erinnerungen setzen, Kalender abfragen"),
+        ("contacts",           "Kontakte",           "person.crop.circle",         ["general", "utility"],           "Kontakte nach Name, Nummer oder E-Mail durchsuchen"),
+        ("screen_control",     "Bildschirm",         "rectangle.on.rectangle",     ["general"],                      "Screenshots erstellen, Bildschirm analysieren, UI-Elemente erkennen"),
+        ("vision",             "Vision",             "eye.fill",                   ["general"],                      "Bilder und Screenshots mit KI analysieren und beschreiben"),
+        ("self_awareness",     "Selbstprüfung",      "person.fill.questionmark",   ["general"],                      "Eigenen Status, Fähigkeiten und Systeminfos abfragen"),
+        ("settings_read",      "Einstellungen",      "gearshape",                  ["general"],                      "Aktuelle App-Einstellungen und Konfiguration auslesen"),
+        ("secrets",            "Geheimnisse",        "key.fill",                   ["general"],                      "API-Keys und Tokens sicher aus dem Schlüsselbund lesen"),
+
+        // ── Benachrichtigung & Sprache ───────────────────────────
+        ("notify",             "Benachrichtigung",   "bell.fill",                  ["general", "coder", "web"],      "System-Benachrichtigungen und Push-Alerts an den User senden"),
+        ("speak",              "Sprache",            "speaker.wave.2.fill",        ["general"],                      "Text als gesprochene Sprache ausgeben (Text-to-Speech)"),
+
+        // ── App-Integration ──────────────────────────────────────
+        ("app_terminal",       "App-Terminal",       "rectangle.topthird.inset.filled", ["general", "coder"],        "In-App Terminal für interaktive Befehle steuern"),
+        ("app_browser",        "App-Browser",        "macwindow",                  ["general", "web"],               "In-App Browser für Web-Inhalte navigieren und steuern"),
+
+        // ── Kommunikation ────────────────────────────────────────
+        ("telegram_send",      "Telegram",           "paperplane.fill",            ["general"],                      "Nachrichten und Dateien über Telegram-Bot senden"),
+        ("email",              "E-Mail",             "envelope.fill",              ["general"],                      "E-Mails über SMTP/IMAP senden und lesen"),
+        ("whatsapp_api",       "WhatsApp",           "message.fill",               ["general"],                      "WhatsApp-Nachrichten über die Business-API senden"),
+        ("slack_api",          "Slack",              "number.square.fill",         ["general"],                      "Slack-Nachrichten senden, Channels und Threads verwalten"),
+        ("twilio_sms",         "SMS (Twilio)",       "phone.fill",                ["general"],                      "SMS-Nachrichten über Twilio senden"),
+
+        // ── Cloud-Dienste ────────────────────────────────────────
+        ("google_api",         "Google",             "globe",                      ["general", "web"],               "Google Drive, Gmail, Calendar, YouTube und weitere Dienste"),
+        ("microsoft_api",      "Microsoft",          "cloud.fill",                 ["general"],                      "OneDrive, Outlook, Teams und Microsoft 365 Dienste"),
+        ("github_api",         "GitHub",             "chevron.left.forwardslash.chevron.right", ["general", "coder"], "Repos, Issues, PRs und GitHub Actions verwalten"),
+        ("soundcloud_api",     "SoundCloud",         "waveform",                   ["general"],                      "Tracks hochladen, suchen und SoundCloud-Profil verwalten"),
+        ("notion_api",         "Notion",             "doc.text.fill",              ["general"],                      "Notion-Seiten und Datenbanken lesen und bearbeiten"),
+        ("suno_api",           "Suno",               "music.note",                 ["general"],                      "KI-Musik generieren über Suno API"),
+        ("reddit_api",         "Reddit",             "bubble.left.and.bubble.right.fill", ["general", "web"],        "Reddit durchsuchen, Posts lesen und kommentieren"),
+        ("uber_api",           "Uber",               "car.fill",                   ["general"],                      "Uber-Fahrten anfragen, Status prüfen und verwalten"),
+        ("huggingface_api",    "HuggingFace",        "cpu",                        ["general", "coder"],             "KI-Modelle auf HuggingFace für Inference nutzen"),
+        ("lieferando_api",     "Lieferando",         "fork.knife",                 ["general"],                      "Restaurants suchen und Bestellungen über Lieferando"),
+
+        // ── Infrastruktur ──────────────────────────────────────
+        ("cloudflare_tunnel",  "Cloudflare",          "network",                    ["general"],                      "Cloudflare Tunnel erstellen, DNS konfigurieren, starten und verwalten"),
+        ("elevenlabs",         "ElevenLabs",          "waveform.path",              ["general"],                      "Text-to-Speech, Sound-Effekte, Stimmen auflisten und klonen"),
+        ("document_search",    "Dokumente",           "doc.text.magnifyingglass",   ["general", "coder"],             "PDF/Text-Dateien einlesen und semantisch durchsuchen"),
+        ("claude_code",        "Claude Code",         "chevron.left.forwardslash.chevron.right.square", ["coder"],    "Komplexe Programmieraufgaben an Claude Code CLI delegieren"),
+
+        // ── IoT & Feeds ─────────────────────────────────────────
+        ("mqtt",               "MQTT",               "antenna.radiowaves.left.and.right", ["general", "coder"],     "IoT-Geräte über MQTT-Protokoll steuern und überwachen"),
+        ("rss_reader",         "RSS",                "dot.radiowaves.right",       ["general", "web"],               "RSS/Atom-Feeds lesen und News-Quellen abonnieren"),
+        ("webhook",            "Webhook",            "arrow.up.forward.app.fill",  ["general", "coder"],             "Webhooks empfangen und an externe Services senden"),
+        ("caldav",             "CalDAV",             "calendar.badge.clock",       ["general"],                      "Kalender über CalDAV-Protokoll synchronisieren (Nextcloud etc.)"),
     ]
 
     /// Persisted tool routing overrides

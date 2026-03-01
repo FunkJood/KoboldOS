@@ -142,6 +142,28 @@ public actor CoreMemory {
             description: "What the agent can do — read-only reference.",
             readOnly: true
         )
+        // MARK: Consciousness Blocks (auto-updated by ConsciousnessEngine)
+        b["reflection"] = MemoryBlock(
+            label: "reflection",
+            value: "",
+            limit: 1500,
+            description: "Letzte Selbstreflexion — metakognitive Notizen. Wird automatisch vom Bewusstseinssystem aktualisiert.",
+            readOnly: false
+        )
+        b["emotional_state"] = MemoryBlock(
+            label: "emotional_state",
+            value: "Stimmung: neutral, normal (V=0.0, A=0.3)",
+            limit: 500,
+            description: "Aktueller emotionaler Kontext — Valenz (positiv/negativ) und Erregung (Wichtigkeit). Auto-aktualisiert.",
+            readOnly: false
+        )
+        b["self_model"] = MemoryBlock(
+            label: "self_model",
+            value: "Erfolgsrate: 100%\nInteraktionen: 0\nFehler gespeichert: 0\nLösungen gefunden: 0",
+            limit: 1000,
+            description: "Selbstmodell — Leistungskennzahlen, Stärken, Schwächen. Auto-aktualisiert.",
+            readOnly: false
+        )
         return b
     }
 

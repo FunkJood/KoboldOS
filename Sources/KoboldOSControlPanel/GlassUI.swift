@@ -206,11 +206,15 @@ struct GlassChatBubble: View {
                     if isLoading {
                         LoadingDots()
                     } else if isUser {
-                        // User messages: plain text (no markdown rendering needed)
-                        Text(message)
-                            .font(.system(size: CGFloat(chatFontSize)))
-                            .foregroundColor(.white)
-                            .textSelection(.enabled)
+                        // User messages: plain text, collapsible when long (>500 chars)
+                        if message.count > 500 {
+                            CollapsibleUserMessage(text: message, fontSize: chatFontSize)
+                        } else {
+                            Text(message)
+                                .font(.system(size: CGFloat(chatFontSize)))
+                                .foregroundColor(.white)
+                                .textSelection(.enabled)
+                        }
                     } else {
                         // B1: Collapse long assistant messages (>800 chars)
                         if message.count > 800 {
@@ -303,6 +307,35 @@ struct CollapsibleMessageView: View {
                         .font(.system(size: 12.5, weight: .medium))
                 }
                 .foregroundColor(.koboldEmerald)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+}
+
+// MARK: - CollapsibleUserMessage (plain text, no Markdown)
+
+struct CollapsibleUserMessage: View {
+    let text: String
+    let fontSize: Double
+    @State private var isExpanded = false
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 6) {
+            Text(isExpanded ? text : String(text.prefix(300)) + "...")
+                .font(.system(size: CGFloat(fontSize)))
+                .foregroundColor(.white)
+                .textSelection(.enabled)
+            Button(action: {
+                withAnimation(.easeInOut(duration: 0.25)) { isExpanded.toggle() }
+            }) {
+                HStack(spacing: 4) {
+                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text(isExpanded ? "Weniger anzeigen" : "Mehr anzeigen")
+                        .font(.system(size: 12.5, weight: .medium))
+                }
+                .foregroundColor(.white.opacity(0.7))
             }
             .buttonStyle(.plain)
         }
@@ -1409,7 +1442,7 @@ struct ThinkingPanelBubble: View {
                             }
                             .padding(.top, 6)
                         }
-                        .frame(maxHeight: isLive ? 500 : 300)
+                        .frame(maxHeight: isLive ? 220 : 150)
                         .onChange(of: entries.count) {
                             if isLive && !expanded {
                                 withAnimation(.easeInOut(duration: 0.2)) { expanded = true }
@@ -1459,8 +1492,9 @@ struct ThinkingPanelBubble: View {
                     )
                     // REMOVED: .animation(.repeatForever) on border — dual infinite animations caused 100% CPU
             )
-            Spacer(minLength: 80)
         }
+        .frame(maxWidth: 600, alignment: .leading)
+        .fixedSize(horizontal: false, vertical: true)
         .onAppear {
             if isLive {
                 startVerbRotation()
@@ -2025,21 +2059,80 @@ private func markdownAttributedString(_ text: String, isUser: Bool, fontSize: CG
         return cached.value
     }
 
-    let result: AttributedString
+    var result: AttributedString
     do {
-        var attr = try AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))
-        attr.font = .system(size: fontSize)
-        attr.foregroundColor = isUser ? .white : .primary
-        result = attr
+        result = try AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))
+        result.font = .system(size: fontSize)
+        result.foregroundColor = isUser ? .white : .primary
     } catch {
-        var attr = AttributedString(text)
-        attr.font = .system(size: fontSize)
-        attr.foregroundColor = isUser ? .white : .primary
-        result = attr
+        result = AttributedString(text)
+        result.font = .system(size: fontSize)
+        result.foregroundColor = isUser ? .white : .primary
     }
+
+    // Style existing markdown links blue + underline
+    let linkColor: Color = isUser ? .cyan : .blue
+    for run in result.runs {
+        if run.link != nil {
+            let range = run.range
+            result[range].foregroundColor = linkColor
+            result[range].underlineStyle = .single
+        }
+    }
+
+    // Auto-detect raw URLs (https://, http://) and file paths (/Users/, ~/...)
+    autoLinkURLsAndPaths(in: &result, linkColor: linkColor)
 
     markdownCache.setObject(CachedAttributedString(result), forKey: cacheKey)
     return result
+}
+
+/// Detect raw URLs and file paths in text and make them clickable blue links
+private func autoLinkURLsAndPaths(in attrStr: inout AttributedString, linkColor: Color) {
+    let plainText = String(attrStr.characters)
+    guard !plainText.isEmpty else { return }
+
+    // Collect matches: URLs + file paths
+    var matches: [(Range<String.Index>, URL)] = []
+
+    // 1. URLs via NSDataDetector
+    if let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) {
+        let nsRange = NSRange(plainText.startIndex..., in: plainText)
+        for match in detector.matches(in: plainText, range: nsRange) {
+            if let range = Range(match.range, in: plainText), let url = match.url {
+                // Skip if already a markdown link (has .link attribute)
+                if let lower = AttributedString.Index(range.lowerBound, within: attrStr),
+                   let upper = AttributedString.Index(range.upperBound, within: attrStr),
+                   attrStr[lower..<upper].runs.contains(where: { $0.link != nil }) { continue }
+                matches.append((range, url))
+            }
+        }
+    }
+
+    // 2. File paths: /Users/..., /tmp/..., ~/...
+    if let pathRegex = try? NSRegularExpression(pattern: "(?:~|/(?:Users|tmp|var|etc|opt))/[^\\s,;)\"'`]+", options: []) {
+        let nsRange = NSRange(plainText.startIndex..., in: plainText)
+        for match in pathRegex.matches(in: plainText, range: nsRange) {
+            if let range = Range(match.range, in: plainText) {
+                let pathStr = String(plainText[range])
+                let expanded = (pathStr as NSString).expandingTildeInPath
+                let fileURL = URL(fileURLWithPath: expanded)
+                matches.append((range, fileURL))
+            }
+        }
+    }
+
+    // Apply link attributes (reverse order to keep indices stable)
+    for (stringRange, url) in matches.reversed() {
+        guard let lower = AttributedString.Index(stringRange.lowerBound, within: attrStr),
+              let upper = AttributedString.Index(stringRange.upperBound, within: attrStr) else { continue }
+        let attrRange = lower..<upper
+        // Skip if already has a link
+        if attrStr[attrRange].link != nil { continue }
+        attrStr[attrRange].link = url
+        attrStr[attrRange].foregroundColor = linkColor
+        attrStr[attrRange].underlineStyle = .single
+    }
 }
 
 /// Rich text view that renders markdown blocks including code, images, and formatted text
@@ -2143,6 +2236,361 @@ struct RichTextView: View {
         guard text != cachedText else { return }
         cachedText = text
         cachedBlocks = parseRichBlocks(text)
+    }
+}
+
+// MARK: - ElevenLabs Call Monitor Overlay
+
+/// Floating-Panel das bei ausgehenden ElevenLabs-Anrufen erscheint und das Live-Transcript zeigt.
+@available(macOS 14.0, *)
+struct CallMonitorOverlay: View {
+    let toNumber: String
+    let purpose: String
+    @Binding var transcript: String
+    @Binding var callStatus: String
+    @Binding var isVisible: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Header
+            HStack(spacing: 8) {
+                // Pulsierender Indikator
+                Circle()
+                    .fill(statusColor)
+                    .frame(width: 10, height: 10)
+                    .overlay(
+                        Circle()
+                            .stroke(statusColor.opacity(0.5), lineWidth: 2)
+                            .scaleEffect(callStatus == "done" || callStatus == "failed" ? 1.0 : 1.6)
+                            .opacity(callStatus == "done" || callStatus == "failed" ? 0 : 0.6)
+                            .animation(.easeInOut(duration: 1.0).repeatForever(autoreverses: true), value: callStatus)
+                    )
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Ausgehender Anruf")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(.white)
+                    Text("\(toNumber) — \(statusLabel)")
+                        .font(.system(size: 11))
+                        .foregroundColor(.white.opacity(0.6))
+                }
+
+                Spacer()
+
+                Button(action: { isVisible = false }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 16))
+                        .foregroundColor(.white.opacity(0.5))
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(Color.black.opacity(0.3))
+
+            // Zweck
+            HStack(spacing: 6) {
+                Image(systemName: "target")
+                    .font(.system(size: 10))
+                    .foregroundColor(.orange)
+                Text(purpose)
+                    .font(.system(size: 11))
+                    .foregroundColor(.white.opacity(0.8))
+                    .lineLimit(2)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.orange.opacity(0.08))
+
+            Divider().background(Color.white.opacity(0.1))
+
+            // Live-Transcript
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 6) {
+                        if transcript.isEmpty {
+                            HStack(spacing: 8) {
+                                ProgressView()
+                                    .scaleEffect(0.7)
+                                    .progressViewStyle(.circular)
+                                Text("Warte auf Verbindung...")
+                                    .font(.system(size: 12))
+                                    .foregroundColor(.white.opacity(0.4))
+                            }
+                            .padding(.top, 20)
+                        } else {
+                            ForEach(Array(transcriptEntries.enumerated()), id: \.offset) { idx, entry in
+                                HStack(alignment: .top, spacing: 8) {
+                                    Image(systemName: entry.isAgent ? "phone.circle.fill" : "person.circle.fill")
+                                        .font(.system(size: 14))
+                                        .foregroundColor(entry.isAgent ? .cyan : .green)
+                                        .frame(width: 16)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(entry.speaker)
+                                            .font(.system(size: 10, weight: .semibold))
+                                            .foregroundColor(entry.isAgent ? .cyan.opacity(0.7) : .green.opacity(0.7))
+                                        Text(entry.message)
+                                            .font(.system(size: 12))
+                                            .foregroundColor(.white.opacity(0.9))
+                                            .textSelection(.enabled)
+                                    }
+                                }
+                                .id(idx)
+                            }
+                        }
+                        Color.clear.frame(height: 1).id("bottom")
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                }
+                .onChange(of: transcript) {
+                    withAnimation(.easeOut(duration: 0.3)) {
+                        proxy.scrollTo("bottom", anchor: .bottom)
+                    }
+                }
+            }
+            .frame(maxHeight: .infinity)
+
+            // Footer mit Status
+            if callStatus == "done" || callStatus == "failed" || callStatus == "timeout" {
+                Divider().background(Color.white.opacity(0.1))
+                HStack {
+                    Image(systemName: callStatus == "done" ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                        .foregroundColor(callStatus == "done" ? .green : .orange)
+                    Text(callStatus == "done" ? "Anruf beendet" : callStatus == "failed" ? "Anruf fehlgeschlagen" : "Timeout")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.white.opacity(0.8))
+                    Spacer()
+                    Button("Schliessen") { isVisible = false }
+                        .font(.system(size: 11))
+                        .buttonStyle(.plain)
+                        .foregroundColor(.cyan)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(Color.black.opacity(0.3))
+            }
+        }
+        .frame(width: 380, height: 340)
+        .background(
+            RoundedRectangle(cornerRadius: 14)
+                .fill(.ultraThinMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14)
+                        .stroke(statusColor.opacity(0.3), lineWidth: 1)
+                )
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .shadow(color: .black.opacity(0.4), radius: 20, y: 8)
+    }
+
+    private var statusColor: Color {
+        switch callStatus {
+        case "done": return .green
+        case "failed": return .red
+        case "timeout": return .orange
+        default: return .cyan
+        }
+    }
+
+    private var statusLabel: String {
+        switch callStatus {
+        case "done": return "Beendet"
+        case "failed": return "Fehlgeschlagen"
+        case "timeout": return "Timeout"
+        case "in-progress": return "Aktiv"
+        case "initiated": return "Verbindung..."
+        case "processing": return "Verarbeitung..."
+        default: return "Verbindung..."
+        }
+    }
+
+    private struct TranscriptEntry {
+        let speaker: String
+        let message: String
+        let isAgent: Bool
+    }
+
+    private var transcriptEntries: [TranscriptEntry] {
+        transcript.components(separatedBy: "\n").compactMap { line in
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard !trimmed.isEmpty else { return nil }
+            if trimmed.hasPrefix("**Assistent:**") {
+                let msg = trimmed.replacingOccurrences(of: "**Assistent:**", with: "").trimmingCharacters(in: .whitespaces)
+                return TranscriptEntry(speaker: "Assistent", message: msg, isAgent: true)
+            } else if trimmed.hasPrefix("**Gesprächspartner:**") {
+                let msg = trimmed.replacingOccurrences(of: "**Gesprächspartner:**", with: "").trimmingCharacters(in: .whitespaces)
+                return TranscriptEntry(speaker: "Gesprächspartner", message: msg, isAgent: false)
+            } else {
+                return TranscriptEntry(speaker: "System", message: trimmed, isAgent: true)
+            }
+        }
+    }
+}
+
+// MARK: - Tool Approval Request Model
+
+struct ToolApprovalRequest: Identifiable {
+    let id: String          // result_id from AppToolResultWaiter
+    let toolName: String
+    let toolArgs: String    // JSON string for display
+    let riskLevel: String   // "high" or "critical"
+    let toolDescription: String
+    let timestamp: Date
+}
+
+// MARK: - HiTL Tool Approval Overlay
+
+struct ToolApprovalOverlay: View {
+    let request: ToolApprovalRequest
+    let pendingCount: Int
+    let onApprove: () -> Void
+    let onDeny: () -> Void
+    let onDenyAll: () -> Void
+
+    @State private var secondsRemaining: Int = 60
+    @State private var timerTask: Task<Void, Never>?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Header
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(riskColor)
+                    .frame(width: 10, height: 10)
+                    .overlay(
+                        Circle()
+                            .stroke(riskColor.opacity(0.5), lineWidth: 2)
+                            .scaleEffect(request.riskLevel == "critical" ? 1.6 : 1.0)
+                            .opacity(request.riskLevel == "critical" ? 0.6 : 0)
+                            .animation(.easeInOut(duration: 1.0).repeatForever(autoreverses: true), value: secondsRemaining)
+                    )
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Tool-Bestätigung erforderlich")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(.white)
+                    Text("\(request.toolName) — Risiko: \(riskLabel)")
+                        .font(.system(size: 11))
+                        .foregroundColor(.white.opacity(0.6))
+                }
+
+                Spacer()
+
+                // Countdown badge
+                Text("\(secondsRemaining)s")
+                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                    .foregroundColor(secondsRemaining <= 10 ? .red : .white.opacity(0.5))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Color.white.opacity(0.1)))
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(Color.black.opacity(0.3))
+
+            // Tool description
+            HStack(spacing: 6) {
+                Image(systemName: "wrench.and.screwdriver")
+                    .font(.system(size: 10))
+                    .foregroundColor(.cyan)
+                Text(String(request.toolDescription.prefix(120)))
+                    .font(.system(size: 11))
+                    .foregroundColor(.white.opacity(0.8))
+                    .lineLimit(2)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.cyan.opacity(0.08))
+
+            Divider().background(Color.white.opacity(0.1))
+
+            // Arguments display (scrollable, monospaced)
+            ScrollView {
+                Text(formattedArgs)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(.white.opacity(0.85))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(12)
+            }
+            .frame(maxHeight: 120)
+
+            Divider().background(Color.white.opacity(0.1))
+
+            // Action buttons
+            HStack(spacing: 10) {
+                if pendingCount > 1 {
+                    Text("\(pendingCount) ausstehend")
+                        .font(.system(size: 10))
+                        .foregroundColor(.white.opacity(0.4))
+                }
+                Spacer()
+                if pendingCount > 1 {
+                    Button("Alle ablehnen") { onDenyAll() }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 12))
+                        .foregroundColor(.red.opacity(0.8))
+                }
+                Button("Ablehnen") { onDeny() }
+                    .buttonStyle(.bordered)
+                    .tint(.red)
+                    .controlSize(.small)
+                Button("Erlauben") { onApprove() }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.green)
+                    .controlSize(.small)
+                    .keyboardShortcut(.return, modifiers: [])
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+        }
+        .frame(width: 420)
+        .background(
+            RoundedRectangle(cornerRadius: 14)
+                .fill(.ultraThinMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14)
+                        .stroke(riskColor.opacity(0.3), lineWidth: 1)
+                )
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .shadow(color: riskColor.opacity(0.3), radius: 16, y: 6)
+        .onAppear { startCountdown() }
+        .onDisappear { timerTask?.cancel() }
+    }
+
+    private func startCountdown() {
+        timerTask = Task { @MainActor in
+            while secondsRemaining > 0 && !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                if Task.isCancelled { return }
+                secondsRemaining -= 1
+            }
+            if secondsRemaining <= 0 && !Task.isCancelled {
+                onDeny()
+            }
+        }
+    }
+
+    private var riskColor: Color {
+        request.riskLevel == "critical" ? .red : .orange
+    }
+
+    private var riskLabel: String {
+        request.riskLevel == "critical" ? "Kritisch" : "Hoch"
+    }
+
+    private var formattedArgs: String {
+        guard let data = request.toolArgs.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data),
+              let pretty = try? JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys]),
+              let str = String(data: pretty, encoding: .utf8) else {
+            return request.toolArgs
+        }
+        return str
     }
 }
 

@@ -42,7 +42,7 @@ public struct MicrosoftApiTool: Tool {
 
     private func graphRequest(endpoint: String, method: String = "GET", body: String? = nil) async -> String {
         guard var token = await getToken() else {
-            return "Error: Nicht bei Microsoft angemeldet oder Token abgelaufen. Bitte unter Einstellungen → Verbindungen → Microsoft anmelden."
+            return "Error: Nicht bei Microsoft angemeldet oder Token abgelaufen. Bitte unter Einstellungen → Integrationen → Microsoft anmelden."
         }
 
         let urlStr = endpoint.hasPrefix("http") ? endpoint : "https://graph.microsoft.com/v1.0\(endpoint)"
@@ -73,7 +73,7 @@ public struct MicrosoftApiTool: Tool {
                     if retryStatus >= 400 { return "Error: HTTP \(retryStatus): \(retryBody)" }
                     return retryBody
                 } else {
-                    return "Error: Microsoft-Token abgelaufen und Refresh fehlgeschlagen. Bitte erneut anmelden unter Einstellungen → Verbindungen → Microsoft."
+                    return "Error: Microsoft-Token abgelaufen und Refresh fehlgeschlagen. Bitte erneut anmelden unter Einstellungen → Integrationen → Microsoft."
                 }
             }
 

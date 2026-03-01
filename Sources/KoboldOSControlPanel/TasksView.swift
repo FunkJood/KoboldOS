@@ -90,6 +90,7 @@ struct AutomationSuggestion {
 
 struct TasksView: View {
     @ObservedObject var viewModel: RuntimeViewModel
+    @ObservedObject private var proactiveEngine = ProactiveEngine.shared
     @EnvironmentObject var l10n: LocalizationManager
     @State private var tasks: [ScheduledTask] = []
     @State private var isLoading = false
@@ -132,6 +133,13 @@ struct TasksView: View {
 
     // Edit mode
     @State private var editingTask: ScheduledTask? = nil
+
+    // Idle task add form
+    @State private var showIdleAddForm = false
+    @State private var newIdleName = ""
+    @State private var newIdlePrompt = ""
+    @State private var newIdlePriority: GoalEntry.GoalPriority = .medium
+    @State private var newIdleCooldown: Int = 60
 
     enum ScheduleMode: String {
         case once = "Einmalig"
@@ -180,6 +188,9 @@ struct TasksView: View {
                     }
                 }
 
+                // MARK: - Idle Tasks (Ruhezeit-Aufgaben)
+                idleTasksSection
+
             }
             .padding(24)
         }
@@ -189,6 +200,126 @@ struct TasksView: View {
             switch sheet {
             case .addTask: addTaskSheet
             case .editTask: editTaskSheet
+            }
+        }
+    }
+
+    // MARK: - Idle Tasks Section
+
+    var idleTasksSection: some View {
+        FuturisticBox(icon: "moon.zzz.fill", title: "Idle Aufgaben", accent: .indigo) {
+            // Header + Add
+            HStack {
+                Text("Aufgaben für Ruhezeiten").font(.system(size: 13.5, weight: .semibold))
+                Spacer()
+                HStack(spacing: 12) {
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(proactiveEngine.idleTasksEnabled ? Color.indigo : Color.gray)
+                            .frame(width: 7, height: 7)
+                        Text(proactiveEngine.idleTasksEnabled ? "Aktiv" : "Aus")
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundColor(.secondary)
+                    }
+                    Button(action: { withAnimation { showIdleAddForm.toggle() } }) {
+                        Label(showIdleAddForm ? "Abbrechen" : "Hinzufügen", systemImage: showIdleAddForm ? "xmark" : "plus")
+                            .font(.caption)
+                    }.buttonStyle(.bordered).controlSize(.small)
+                }
+            }
+
+            // Add form
+            if showIdleAddForm {
+                VStack(spacing: 8) {
+                    TextField("Name (z.B. 'Downloads aufräumen')", text: $newIdleName)
+                        .textFieldStyle(.roundedBorder)
+                    TextField("Prompt (Anweisung an den Agent)", text: $newIdlePrompt)
+                        .textFieldStyle(.roundedBorder)
+                    HStack {
+                        Picker("Priorität", selection: $newIdlePriority) {
+                            ForEach(GoalEntry.GoalPriority.allCases, id: \.self) { p in
+                                Text(p.rawValue).tag(p)
+                            }
+                        }.pickerStyle(.segmented).frame(maxWidth: 200)
+                        Picker("Cooldown", selection: $newIdleCooldown) {
+                            Text("15m").tag(15); Text("30m").tag(30); Text("1h").tag(60)
+                            Text("6h").tag(360); Text("12h").tag(720); Text("24h").tag(1440)
+                        }.pickerStyle(.segmented).frame(maxWidth: 300)
+                    }
+                    HStack {
+                        Spacer()
+                        Button("Hinzufügen") {
+                            let task = IdleTask(name: newIdleName.trimmingCharacters(in: .whitespaces),
+                                                prompt: newIdlePrompt.trimmingCharacters(in: .whitespaces),
+                                                priority: newIdlePriority,
+                                                cooldownMinutes: newIdleCooldown)
+                            proactiveEngine.addIdleTask(task)
+                            newIdleName = ""; newIdlePrompt = ""; newIdlePriority = .medium; newIdleCooldown = 60
+                            showIdleAddForm = false
+                        }
+                        .buttonStyle(.borderedProminent).tint(.indigo).controlSize(.small)
+                        .disabled(newIdleName.trimmingCharacters(in: .whitespaces).isEmpty || newIdlePrompt.trimmingCharacters(in: .whitespaces).isEmpty)
+                    }
+                }
+                .padding(8)
+                .background(Color.indigo.opacity(0.05))
+                .cornerRadius(8)
+            }
+
+            // Task list or examples
+            if proactiveEngine.idleTasks.isEmpty {
+                VStack(spacing: 6) {
+                    Text("Definiere was der Agent tun soll wenn er nichts zu tun hat.")
+                        .font(.caption).foregroundColor(.secondary).italic()
+                    Text("Schnell hinzufügen:").font(.caption2.bold()).foregroundColor(.secondary)
+                    ForEach(IdleTask.examples, id: \.id) { example in
+                        Button(action: { proactiveEngine.addIdleTask(example) }) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "plus.circle.fill").font(.system(size: 12)).foregroundColor(.indigo)
+                                Text(example.name).font(.system(size: 13)).foregroundColor(.primary)
+                                Spacer()
+                                Text("Cooldown: \(example.cooldownMinutes / 60)h")
+                                    .font(.caption2).foregroundColor(.secondary)
+                            }
+                            .padding(.horizontal, 10).padding(.vertical, 4)
+                            .background(Color.indigo.opacity(0.06)).cornerRadius(6)
+                        }.buttonStyle(.plain)
+                    }
+                }
+            } else {
+                ForEach(Array(proactiveEngine.idleTasks.enumerated()), id: \.element.id) { idx, task in
+                    HStack(spacing: 8) {
+                        Toggle("", isOn: Binding(
+                            get: { guard idx < proactiveEngine.idleTasks.count else { return false }; return proactiveEngine.idleTasks[idx].enabled },
+                            set: { newVal in guard idx < proactiveEngine.idleTasks.count else { return }; proactiveEngine.idleTasks[idx].enabled = newVal; proactiveEngine.saveIdleTasks() }
+                        ))
+                        .toggleStyle(.switch).labelsHidden().controlSize(.mini).tint(.indigo)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(task.name).font(.system(size: 13.5, weight: .medium))
+                            Text(task.prompt).font(.system(size: 12)).foregroundColor(.secondary).lineLimit(1)
+                        }
+                        Spacer()
+                        VStack(alignment: .trailing, spacing: 1) {
+                            Text(task.priority.rawValue)
+                                .font(.system(size: 10.5, weight: .semibold))
+                                .foregroundColor(task.priority == .high ? .orange : .secondary)
+                                .padding(.horizontal, 5).padding(.vertical, 1)
+                                .background(Capsule().fill((task.priority == .high ? Color.orange : Color.secondary).opacity(0.15)))
+                            HStack(spacing: 4) {
+                                Image(systemName: "clock").font(.system(size: 10))
+                                Text("\(task.cooldownMinutes)m").font(.system(size: 11, design: .monospaced))
+                            }.foregroundColor(.secondary)
+                        }
+                        if task.runCount > 0 {
+                            Text("x\(task.runCount)")
+                                .font(.system(size: 11.5, weight: .bold, design: .monospaced))
+                                .foregroundColor(.indigo)
+                        }
+                        Button(action: { proactiveEngine.deleteIdleTask(task.id) }) {
+                            Image(systemName: "trash").font(.system(size: 12)).foregroundColor(.red.opacity(0.6))
+                        }.buttonStyle(.plain)
+                    }
+                }
             }
         }
     }

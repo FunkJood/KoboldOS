@@ -5,33 +5,41 @@ import KoboldCore
 // MARK: - Memory Type
 
 enum MemoryType: String, CaseIterable, Identifiable {
-    case kurzzeit = "Kurzzeit"
+    case kurzzeit  = "Kurzzeit"
     case langzeit  = "Langzeit"
     case wissen    = "Wissen"
+    case lösungen  = "Lösungen"
+    case fehler    = "Fehler"
 
     var id: String { rawValue }
 
     var icon: String {
         switch self {
-        case .kurzzeit: return "bolt.circle.fill"
+        case .kurzzeit:  return "bolt.circle.fill"
         case .langzeit:  return "archivebox.fill"
         case .wissen:    return "book.closed.fill"
+        case .lösungen:  return "lightbulb.fill"
+        case .fehler:    return "exclamationmark.triangle.fill"
         }
     }
 
     var color: Color {
         switch self {
-        case .kurzzeit: return .koboldEmerald
+        case .kurzzeit:  return .koboldEmerald
         case .langzeit:  return .koboldEmerald
         case .wissen:    return .koboldGold
+        case .lösungen:  return .blue
+        case .fehler:    return .red
         }
     }
 
     var apiValue: String {
         switch self {
-        case .kurzzeit: return "kurzzeit"
-        case .langzeit: return "langzeit"
-        case .wissen:   return "wissen"
+        case .kurzzeit:  return "kurzzeit"
+        case .langzeit:  return "langzeit"
+        case .wissen:    return "wissen"
+        case .lösungen:  return "lösungen"
+        case .fehler:    return "fehler"
         }
     }
 
@@ -43,13 +51,19 @@ enum MemoryType: String, CaseIterable, Identifiable {
             return "Dauerhaft — bleibt über alle Sitzungen"
         case .wissen:
             return "Gelerntes Wissen — Lösungen & Fakten"
+        case .lösungen:
+            return "Bewährte Lösungen — was funktioniert hat"
+        case .fehler:
+            return "Bekannte Fehler — was schiefgegangen ist"
         }
     }
 
     static func from(apiValue: String) -> MemoryType {
         switch apiValue {
-        case "langzeit": return .langzeit
-        case "wissen": return .wissen
+        case "langzeit":  return .langzeit
+        case "wissen":    return .wissen
+        case "lösungen":  return .lösungen
+        case "fehler":    return .fehler
         default: return .kurzzeit
         }
     }
@@ -76,6 +90,10 @@ struct TaggedMemoryEntry: Identifiable {
     var memoryType: MemoryType
     var tags: [String]
     var timestamp: Date
+    var valence: Float = 0.0
+    var arousal: Float = 0.5
+    var linkedEntryId: String? = nil
+    var source: String? = nil
 }
 
 // MARK: - Legacy MemoryBlock (for core memory blocks)
@@ -91,9 +109,11 @@ struct MemoryBlock: Identifiable {
         for type_ in MemoryType.allCases {
             let prefix: String
             switch type_ {
-            case .kurzzeit: prefix = "kt."
-            case .langzeit: prefix = "lz."
-            case .wissen: prefix = "ws."
+            case .kurzzeit:  prefix = "kt."
+            case .langzeit:  prefix = "lz."
+            case .wissen:    prefix = "ws."
+            case .lösungen:  prefix = "ls."
+            case .fehler:    prefix = "fe."
             }
             if label.hasPrefix(prefix) {
                 return String(label.dropFirst(prefix.count))
@@ -357,7 +377,7 @@ struct MemoryView: View {
     // MARK: - Memory Type Info
 
     var memoryTypeInfo: some View {
-        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
             ForEach(MemoryType.allCases) { type_ in
                 let count = entries.filter { $0.memoryType == type_ }.count
                 GlassCard(padding: 10, cornerRadius: 10) {
@@ -679,7 +699,11 @@ struct MemoryView: View {
                 let type = item["type"] as? String ?? "kurzzeit"
                 let tags = item["tags"] as? [String] ?? []
                 let ts = (item["timestamp"] as? String).flatMap { fmt.date(from: $0) } ?? Date()
-                return TaggedMemoryEntry(id: id, text: text, memoryType: MemoryType.from(apiValue: type), tags: tags, timestamp: ts)
+                let valence = (item["valence"] as? Double).map { Float($0) } ?? 0.0
+                let arousal = (item["arousal"] as? Double).map { Float($0) } ?? 0.5
+                let linkedId = item["linked_id"] as? String
+                let source = item["source"] as? String
+                return TaggedMemoryEntry(id: id, text: text, memoryType: MemoryType.from(apiValue: type), tags: tags, timestamp: ts, valence: valence, arousal: arousal, linkedEntryId: linkedId, source: source)
             }
 
             // Load tags
@@ -902,6 +926,33 @@ struct TaggedMemoryCard: View {
                             .foregroundColor(.koboldEmerald.opacity(0.8))
                             .padding(.horizontal, 5).padding(.vertical, 2)
                             .background(Capsule().fill(Color.koboldEmerald.opacity(0.1)))
+                    }
+
+                    // Valence indicator
+                    if entry.valence != 0 {
+                        HStack(spacing: 3) {
+                            Circle()
+                                .fill(entry.valence > 0 ? Color.green : Color.red)
+                                .frame(width: 8, height: 8)
+                            Text(String(format: "%.1f", entry.valence))
+                                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                .foregroundColor(entry.valence > 0 ? .green : .red)
+                        }
+                        .padding(.horizontal, 5).padding(.vertical, 2)
+                        .background(Capsule().fill((entry.valence > 0 ? Color.green : Color.red).opacity(0.1)))
+                    }
+
+                    // Linked entry indicator
+                    if let linkedId = entry.linkedEntryId {
+                        HStack(spacing: 3) {
+                            Image(systemName: "link")
+                                .font(.system(size: 10))
+                            Text(String(linkedId.prefix(8)))
+                                .font(.system(size: 11, design: .monospaced))
+                        }
+                        .foregroundColor(.secondary)
+                        .padding(.horizontal, 5).padding(.vertical, 2)
+                        .background(Capsule().fill(Color.white.opacity(0.08)))
                     }
 
                     Spacer()

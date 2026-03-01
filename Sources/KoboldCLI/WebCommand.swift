@@ -18,7 +18,7 @@ struct WebCommand: AsyncParsableCommand {
     @Option(name: .long, help: "Web GUI port") var webPort: Int = 8081
     @Option(name: .long, help: "Username for web auth") var username: String = "admin"
     @Option(name: .long, help: "Password for web auth") var password: String = "admin"
-    @Option(name: .long, help: "Auth token for daemon") var token: String = "kobold-secret"
+    @Option(name: .long, help: "Auth token (auto-detected from GUI if omitted)") var token: String = ""
 
     mutating func run() async throws {
         print("🌐 Starting KoboldOS with Web GUI...")

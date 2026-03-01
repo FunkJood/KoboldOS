@@ -19,6 +19,7 @@ final class SoundManager: ObservableObject {
         case workflowStep   // Workflow-Schritt ausgeführt
         case workflowDone   // Workflow erfolgreich abgeschlossen
         case workflowFail   // Workflow fehlgeschlagen
+        case incomingCall   // Eingehender Anruf
     }
 
     // Sound-Mapping: Event → macOS System-Sound Dateiname
@@ -33,6 +34,7 @@ final class SoundManager: ObservableObject {
         .workflowStep:  "Purr",
         .workflowDone:  "Hero",
         .workflowFail:  "Sosumi",
+        .incomingCall:  "Ping",
     ]
 
     // Throttle: Minimum interval between typing sounds (seconds)

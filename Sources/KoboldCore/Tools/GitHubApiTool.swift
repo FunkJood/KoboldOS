@@ -38,7 +38,7 @@ public struct GitHubApiTool: Tool {
 
     private func apiRequest(endpoint: String, method: String = "GET", body: String? = nil) async -> String {
         guard let token = getToken() else {
-            return "Error: Nicht bei GitHub angemeldet. Bitte unter Einstellungen → Verbindungen → GitHub anmelden."
+            return "Error: Nicht bei GitHub angemeldet. Bitte unter Einstellungen → Integrationen → GitHub anmelden."
         }
 
         let urlStr = endpoint.hasPrefix("http") ? endpoint : "https://api.github.com\(endpoint)"
@@ -60,7 +60,7 @@ public struct GitHubApiTool: Tool {
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             let responseStr = String(data: data.prefix(8192), encoding: .utf8) ?? "(empty)"
             if status == 401 {
-                return "Error: GitHub-Token ungültig oder abgelaufen. Bitte unter Einstellungen → Verbindungen → GitHub neu anmelden."
+                return "Error: GitHub-Token ungültig oder abgelaufen. Bitte unter Einstellungen → Integrationen → GitHub neu anmelden."
             }
             if status >= 400 { return "Error: HTTP \(status): \(responseStr)" }
             return responseStr

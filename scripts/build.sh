@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Build script for KoboldOS
-VERSION="0.3.5.2"
+VERSION="0.3.7"
 echo "Building KoboldOS v${VERSION}..."
 
 # Clean previous builds
@@ -65,7 +65,7 @@ cat > dist/KoboldOSv${VERSION}.app/Contents/Info.plist << EOF
     <key>CFBundleShortVersionString</key>
     <string>${VERSION}</string>
     <key>CFBundleVersion</key>
-    <string>20260227</string>
+    <string>20260302</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <key>NSHighResolutionCapable</key>
@@ -92,6 +92,8 @@ cat > dist/KoboldOSv${VERSION}.app/Contents/Info.plist << EOF
     <true/>
     <key>NSLocalNetworkUsageDescription</key>
     <string>KoboldOS benoetigt lokalen Netzwerkzugriff fuer den Daemon-Server und die WebApp-Fernsteuerung.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>KoboldOS benoetigt Mikrofon-Zugriff fuer bidirektionale Sprachkommunikation im Sprechen-Tab.</string>
     <key>CFBundleURLTypes</key>
     <array>
         <dict>

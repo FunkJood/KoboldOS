@@ -14,7 +14,7 @@ struct MemoryList: AsyncParsableCommand {
     static let configuration = CommandConfiguration(commandName: "list", abstract: "List all memory blocks")
 
     @Option(name: .long, help: "Daemon port") var port: Int = 8080
-    @Option(name: .long, help: "Auth token") var token: String = "kobold-secret"
+    @Option(name: .long, help: "Auth token (auto-detected from GUI if omitted)") var token: String = ""
     @Flag(name: .long, help: "JSON output") var json: Bool = false
 
     mutating func run() async throws {
@@ -47,7 +47,7 @@ struct MemoryGet: AsyncParsableCommand {
 
     @Argument(help: "Block label") var label: String
     @Option(name: .long, help: "Daemon port") var port: Int = 8080
-    @Option(name: .long, help: "Auth token") var token: String = "kobold-secret"
+    @Option(name: .long, help: "Auth token (auto-detected from GUI if omitted)") var token: String = ""
 
     mutating func run() async throws {
         let client = DaemonClient(port: port, token: token)
@@ -70,7 +70,7 @@ struct MemorySet: AsyncParsableCommand {
     @Argument(help: "Block label") var label: String
     @Argument(help: "Content to set") var content: String
     @Option(name: .long, help: "Daemon port") var port: Int = 8080
-    @Option(name: .long, help: "Auth token") var token: String = "kobold-secret"
+    @Option(name: .long, help: "Auth token (auto-detected from GUI if omitted)") var token: String = ""
 
     mutating func run() async throws {
         let client = DaemonClient(port: port, token: token)
@@ -84,7 +84,7 @@ struct MemoryDelete: AsyncParsableCommand {
 
     @Argument(help: "Block label") var label: String
     @Option(name: .long, help: "Daemon port") var port: Int = 8080
-    @Option(name: .long, help: "Auth token") var token: String = "kobold-secret"
+    @Option(name: .long, help: "Auth token (auto-detected from GUI if omitted)") var token: String = ""
 
     mutating func run() async throws {
         let client = DaemonClient(port: port, token: token)
@@ -97,7 +97,7 @@ struct MemorySnapshot: AsyncParsableCommand {
     static let configuration = CommandConfiguration(commandName: "snapshot", abstract: "Create a memory snapshot")
 
     @Option(name: .long, help: "Daemon port") var port: Int = 8080
-    @Option(name: .long, help: "Auth token") var token: String = "kobold-secret"
+    @Option(name: .long, help: "Auth token (auto-detected from GUI if omitted)") var token: String = ""
 
     mutating func run() async throws {
         let client = DaemonClient(port: port, token: token)
@@ -110,7 +110,7 @@ struct MemoryLog: AsyncParsableCommand {
     static let configuration = CommandConfiguration(commandName: "log", abstract: "Show memory version history")
 
     @Option(name: .long, help: "Daemon port") var port: Int = 8080
-    @Option(name: .long, help: "Auth token") var token: String = "kobold-secret"
+    @Option(name: .long, help: "Auth token (auto-detected from GUI if omitted)") var token: String = ""
     @Option(name: .long, help: "Number of versions to show") var limit: Int = 20
 
     mutating func run() async throws {
@@ -138,7 +138,7 @@ struct MemoryDiff: AsyncParsableCommand {
     @Argument(help: "First version ID") var from: String
     @Argument(help: "Second version ID") var to: String
     @Option(name: .long, help: "Daemon port") var port: Int = 8080
-    @Option(name: .long, help: "Auth token") var token: String = "kobold-secret"
+    @Option(name: .long, help: "Auth token (auto-detected from GUI if omitted)") var token: String = ""
 
     mutating func run() async throws {
         let client = DaemonClient(port: port, token: token)
@@ -166,7 +166,7 @@ struct MemoryRollback: AsyncParsableCommand {
 
     @Argument(help: "Version ID") var versionId: String
     @Option(name: .long, help: "Daemon port") var port: Int = 8080
-    @Option(name: .long, help: "Auth token") var token: String = "kobold-secret"
+    @Option(name: .long, help: "Auth token (auto-detected from GUI if omitted)") var token: String = ""
 
     mutating func run() async throws {
         let client = DaemonClient(port: port, token: token)

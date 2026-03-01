@@ -138,11 +138,20 @@ public class RuntimeViewModel: ObservableObject {
             objectWillChange.send()
         }
     }
+    /// Ollama is actively processing a request (checked via /api/ps)
+    public var isOllamaBusy: Bool = false {
+        didSet {
+            guard oldValue != isOllamaBusy else { return }
+            objectWillChange.send()
+        }
+    }
     @Published public var currentViewTab: String = "chat"
-    // F1: notifications — append/clear ändert immer → bleibt funktional @Published-like
+    // F1: notifications — nur senden wenn sichtbar (Sidebar-Badge oder Settings)
     public var notifications: [KoboldNotification] = [] {
         didSet {
             guard oldValue.count != notifications.count else { return }
+            let visibleTabs: Set<String> = ["chat", "settings"]
+            guard visibleTabs.contains(currentViewTab) else { return }
             if perfLogEnabled { kperf("objectWillChange: notifications count=\(notifications.count)") }
             objectWillChange.send()
         }
@@ -211,10 +220,10 @@ public class RuntimeViewModel: ObservableObject {
         set { sessionAgentStates[currentSessionId, default: SessionAgentState()].contextWindowSize = newValue }
     }
 
-    // Topics (für Topic-Badge im Chat-Header) — P1: only notify when chat visible
+    // Topics (für Topic-Badge im Chat-Header + Sidebar expand/collapse)
     public var topics: [ChatTopic] = [] {
         didSet {
-            guard oldValue.count != topics.count, currentViewTab == "chat" else { return }
+            guard oldValue != topics else { return }
             objectWillChange.send()
         }
     }
@@ -285,9 +294,10 @@ public class RuntimeViewModel: ObservableObject {
             "kobold.proactive.quietEnd": 7,
         ])
 
-        // Projekte und Sessions von Disk laden
+        // Projekte, Sessions und Topics von Disk laden
         loadProjects()
         loadSessions()
+        loadTopics()
         // Initiale Session anlegen
         sessionAgentStates[currentSessionId] = SessionAgentState()
         sessionLastAccess[currentSessionId] = Date()
@@ -308,9 +318,15 @@ public class RuntimeViewModel: ObservableObject {
                 let url = self.sessionsURL
                 // Synchroner Write ist OK bei Shutdown — App wartet sowieso
                 var seen = Set<UUID>()
-                let deduped = snapshot.filter { seen.insert($0.id).inserted }
+                let deduped = snapshot
+                    .filter { seen.insert($0.id).inserted }
+                    .filter { !$0.messages.isEmpty || $0.taskId != nil } // Leere Sessions nicht persistieren (Task-Sessions behalten)
                 if let data = try? JSONEncoder().encode(deduped) {
                     try? data.write(to: url, options: .atomic)
+                }
+                // Topics auch synchron speichern bei Shutdown
+                if let topicsData = try? JSONEncoder().encode(self.topics) {
+                    try? topicsData.write(to: self.topicsURL, options: .atomic)
                 }
                 self.cleanup()
             }
@@ -321,6 +337,8 @@ public class RuntimeViewModel: ObservableObject {
         setupMemoryPressureHandler()
         // Notification-Berechtigung anfordern (für Task-Benachrichtigungen)
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+        // Chat-Logs älter als 7 Tage aufräumen
+        KoboldLogger.shared.cleanupChatLogs()
         // Ollama + Embedding bei Start prüfen (nach kurzem Delay für Startup)
         Task { [weak self] in
             try? await Task.sleep(nanoseconds: 2_000_000_000) // 2s warten bis Ollama bereit
@@ -347,14 +365,53 @@ public class RuntimeViewModel: ObservableObject {
                   let loaded = try? JSONDecoder().decode([ChatSession].self, from: data) else {
                 return
             }
+            // Leere Sessions beim Laden bereinigen (Altlasten aus früheren Versionen)
+            // Task-Sessions behalten — die starten leer und werden über SSE befüllt
+            let cleaned = loaded.filter { !$0.messages.isEmpty || $0.taskId != nil }
+            let removed = loaded.count - cleaned.count
             await MainActor.run { [weak self] in
-                self?.sessions = loaded
+                self?.sessions = cleaned
+            }
+            // Bereinigte Version sofort zurückschreiben wenn nötig
+            if removed > 0 {
+                if let cleanData = try? JSONEncoder().encode(cleaned) {
+                    try? cleanData.write(to: url, options: .atomic)
+                }
+                print("[Sessions] \(removed) leere Sessions beim Start entfernt")
             }
         }
     }
     
+    // MARK: - Topics Persistence
+
+    private func loadTopics() {
+        let url = topicsURL
+        Task.detached(priority: .userInitiated) {
+            guard FileManager.default.fileExists(atPath: url.path),
+                  let data = try? Data(contentsOf: url),
+                  let loaded = try? JSONDecoder().decode([ChatTopic].self, from: data) else {
+                return
+            }
+            await MainActor.run { [weak self] in
+                self?.topics = loaded
+            }
+        }
+    }
+
+    public func saveTopics() {
+        let snapshot = topics
+        let url = topicsURL
+        Task.detached(priority: .utility) {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            if let data = try? encoder.encode(snapshot) {
+                try? data.write(to: url, options: .atomic)
+            }
+        }
+    }
+
     // MARK: - API Helpers
-    
+
     public func loadMetrics() async {
         // Placeholder
     }
@@ -374,7 +431,12 @@ public class RuntimeViewModel: ObservableObject {
 
     // MARK: - Messaging
     
-    func sendMessage(_ text: String, targetSessionId: UUID? = nil, agentText: String? = nil, attachments: [MediaAttachment] = []) {
+    /// Voice-Modus: Sendet mit source="voice" → Agent antwortet kurz und natürlich
+    func sendVoiceMessage(_ text: String) {
+        sendMessage(text, source: "voice")
+    }
+
+    func sendMessage(_ text: String, targetSessionId: UUID? = nil, agentText: String? = nil, attachments: [MediaAttachment] = [], source: String? = nil) {
         let userMsg = ChatMessage(kind: .user(text: text), attachments: attachments)
         let sessionId = targetSessionId ?? currentSessionId
         appendMessage(userMsg, for: sessionId)
@@ -391,8 +453,11 @@ public class RuntimeViewModel: ObservableObject {
             }
         }
 
-        // Nutzerverhalten für personalisierte Vorschläge tracken
-        SuggestionService.shared.recordUserActivity(message: text)
+        // Nutzerverhalten für personalisierte Vorschläge tracken (nur echte User-Interaktion, nicht Background/Idle-Tasks)
+        if !isBackgroundSession {
+            SuggestionService.shared.recordUserActivity(message: text)
+            ProactiveEngine.shared.recordUserActivity()
+        }
 
         // Save the prompt for resume
         sessionAgentStates[sessionId, default: SessionAgentState()].lastPrompt = messageForAgent
@@ -400,12 +465,14 @@ public class RuntimeViewModel: ObservableObject {
         // Cancel any existing stream task for this session
         sessionAgentStates[sessionId]?.streamTask?.cancel()
 
+        let isVoiceSource = (source == "voice")
         let streamTask = Task { [weak self] in
             guard let self else { return }
             await MainActor.run {
                 if !isBackgroundSession {
                     self.agentLoading = true
                     self.activeThinkingSteps = []
+                    if !isVoiceSource { SoundManager.shared.play(.send) }
                 }
                 self.streamingSessions.insert(sessionId)
             }
@@ -442,6 +509,9 @@ public class RuntimeViewModel: ObservableObject {
                 "temperature": temperature
             ]
             if !history.isEmpty { body["conversation_history"] = history }
+            // Voice-Source durchreichen (für kurze Antworten)
+            let msgSource = await MainActor.run { source }
+            if let src = msgSource { body["source"] = src }
             guard let bodyData = try? JSONSerialization.data(withJSONObject: body) else {
                 await MainActor.run {
                     self.appendMessage(ChatMessage(kind: .assistant(text: "Fehler beim Erstellen der Anfrage")), for: sessionId)
@@ -457,12 +527,11 @@ public class RuntimeViewModel: ObservableObject {
             DaemonLog.shared.add("SSE connecting to \(url)", category: .network)
             let lines = self.sseLines(for: req)
 
-            // Flush timer for UI updates (stability over responsiveness)
-            // SSEAccumulator collects events in real-time, UI refreshes every 3s
-            // P3: Flush interval 3.0s (was 2.0s) — fewer re-renders per second
+            // Flush timer for UI updates — 500ms für responsive UX
+            // SSEAccumulator sammelt Events, UI aktualisiert alle 500ms
             let flushTask = Task { [weak self] in
                 while !Task.isCancelled {
-                    try? await Task.sleep(nanoseconds: 3_000_000_000)
+                    try? await Task.sleep(nanoseconds: 500_000_000)
                     guard let self, !Task.isCancelled else { break }
                     let flush = await accumulator.takePendingFlush()
                     if !flush.steps.isEmpty || flush.contextPromptTokens != nil {
@@ -565,6 +634,7 @@ public class RuntimeViewModel: ObservableObject {
                 if let error = finalResult.error, !error.isEmpty {
                     self.appendMessage(ChatMessage(kind: .assistant(text: "Fehler: \(error)")), for: sessionId)
                     self.addNotification(title: "Agent-Fehler", message: String(error.prefix(100)), type: .error, navigationTarget: "chat")
+                    if !isVoiceSource { SoundManager.shared.play(.error) }
                 } else if !finalResult.thinkingSteps.isEmpty {
                     self.appendMessage(ChatMessage(kind: .thinking(entries: finalResult.thinkingSteps)), for: sessionId)
                 }
@@ -572,6 +642,7 @@ public class RuntimeViewModel: ObservableObject {
                 // 3. Final answer
                 if !finalResult.finalAnswer.isEmpty && finalResult.error == nil {
                     self.appendMessage(ChatMessage(kind: .assistant(text: finalResult.finalAnswer)), for: sessionId)
+                    if !isBackgroundSession && !isVoiceSource { SoundManager.shared.play(.success) }
                 }
 
                 // 4. Interactive + embed messages
@@ -602,6 +673,11 @@ public class RuntimeViewModel: ObservableObject {
                         title: "Task abgeschlossen",
                         body: String(finalResult.finalAnswer.prefix(120)),
                         sessionId: sessionId
+                    )
+                    // Telegram: Task-Antwort weiterleiten (nur wenn Priorität hoch genug)
+                    self.forwardTaskResultToTelegram(
+                        taskSession: taskSession,
+                        answer: finalResult.finalAnswer
                     )
                 } else if finalResult.toolStepCount >= 5 && !finalResult.finalAnswer.isEmpty {
                     self.addNotification(
@@ -752,6 +828,11 @@ public class RuntimeViewModel: ObservableObject {
         return appSupport.appendingPathComponent("KoboldOS/sessions.json")
     }
 
+    public var topicsURL: URL {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        return appSupport.appendingPathComponent("KoboldOS/topics.json")
+    }
+
     public var teamMessagesDir: URL {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         return appSupport.appendingPathComponent("KoboldOS/teams")
@@ -776,6 +857,32 @@ public class RuntimeViewModel: ObservableObject {
             if messages.count > maxMessagesPerSession {
                 messages = Array(messages.suffix(maxMessagesPerSession - 100))
             }
+        }
+        // Chat-History-Log: Jede Nachricht in tägliche Log-Datei schreiben
+        let sessionTitle = sessions.first(where: { $0.id == sessionId })?.title ?? "Chat"
+        switch message.kind {
+        case .user(let text):
+            kchat("User", session: sessionTitle, message: text)
+        case .assistant(let text):
+            kchat("Assistant", session: sessionTitle, message: text)
+        case .thinking:
+            break // Thinking nicht loggen (zu viel Rauschen)
+        case .toolCall(let name, let args):
+            kchat("Tool", session: sessionTitle, message: "\(name)(\(String(args.prefix(200))))")
+        case .toolResult(let name, _, let output):
+            kchat("ToolResult", session: sessionTitle, message: "\(name): \(String(output.prefix(300)))")
+        case .thought:
+            break
+        case .agentStep(let n, let desc):
+            kchat("AgentStep", session: sessionTitle, message: "#\(n): \(desc)")
+        case .subAgentSpawn(let profile, let task):
+            kchat("SubAgent", session: sessionTitle, message: "Spawn \(profile): \(String(task.prefix(200)))")
+        case .subAgentResult(let profile, let output, let success):
+            kchat("SubAgent", session: sessionTitle, message: "\(profile) \(success ? "✓" : "✗"): \(String(output.prefix(200)))")
+        case .interactive:
+            break // Interaktive Prompts nicht loggen
+        case .image(let path, let caption):
+            kchat("Image", session: sessionTitle, message: "\(path) — \(caption)")
         }
     }
 
@@ -809,21 +916,25 @@ public class RuntimeViewModel: ObservableObject {
 
     private func debouncedSave() {
         saveDebounceTask?.cancel()
-        // P12: Snapshot auf MainActor bauen (schnelle Array-Copy), dann ALLES off-MainActor.
-        // Vorher: Task { } lief implizit auf MainActor → 3s sleep + self.sessions-Zugriff blockierten MainActor.
-        // Jetzt: Snapshot sofort, dann Task.detached → MainActor ist frei für UI-Rendering.
-        var snapshot = self.sessions
-        for (sid, pending) in self.pendingMessages where !pending.isEmpty {
-            if let idx = snapshot.firstIndex(where: { $0.id == sid }) {
-                snapshot[idx].messages = pending.map { $0.toCodable() }
-            }
-        }
+        // P12: Nur leichte Referenzen auf MainActor kopieren, teure .map/.encode auf Background.
+        let sessionsCopy = self.sessions
+        let pendingCopy = self.pendingMessages
+        let currentId = self.currentSessionId
         let url = self.sessionsURL
         saveDebounceTask = Task.detached(priority: .utility) {
             try? await Task.sleep(nanoseconds: 3_000_000_000) // 3s debounce — auf Background-Thread!
             guard !Task.isCancelled else { return }
+            // Teure .toCodable()-Transformation jetzt OFF-MainActor
+            var snapshot = sessionsCopy
+            for (sid, pending) in pendingCopy where !pending.isEmpty {
+                if let idx = snapshot.firstIndex(where: { $0.id == sid }) {
+                    snapshot[idx].messages = pending.map { $0.toCodable() }
+                }
+            }
             var seen = Set<UUID>()
-            let deduped = snapshot.filter { seen.insert($0.id).inserted }
+            let deduped = snapshot
+                .filter { seen.insert($0.id).inserted }
+                .filter { !$0.messages.isEmpty || $0.id == currentId || $0.taskId != nil } // Leere Sessions nicht persistieren (Task-Sessions behalten)
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             if let data = try? encoder.encode(deduped) {
@@ -850,15 +961,15 @@ public class RuntimeViewModel: ObservableObject {
 
         // 4. Messages der neuen Session laden (pendingMessages hat Vorrang, dann ChatSession)
         //    Falls Session offloaded war (pendingMessages leer), lädt aus sessions[].messages
-        //    WICHTIG: Nur letzte 50 Messages sofort laden — der Rest ist via "Mehr laden" erreichbar
+        //    WICHTIG: Nur letzte 10 Messages sofort laden — der Rest ist via "Mehr laden" erreichbar
         //    Das verhindert UI-Freeze beim Öffnen langer alter Chats
         if let pending = pendingMessages[sessionId], !pending.isEmpty {
-            messages = pending.count > 50 ? Array(pending.suffix(50)) : pending
+            messages = pending.count > 10 ? Array(pending.suffix(10)) : pending
             // Volle Messages bleiben in pendingMessages für conversationHistory
         } else if let session = sessions.first(where: { $0.id == sessionId }), !session.messages.isEmpty {
             let allMessages = session.messages.map { $0.toChatMessage() }
             pendingMessages[sessionId] = allMessages
-            messages = allMessages.count > 50 ? Array(allMessages.suffix(50)) : allMessages
+            messages = allMessages.count > 10 ? Array(allMessages.suffix(10)) : allMessages
         } else {
             messages = []
             pendingMessages[sessionId] = []
@@ -877,6 +988,11 @@ public class RuntimeViewModel: ObservableObject {
     public func newSession() {
         // 1. Aktuelle Session speichern
         upsertCurrentSession()
+
+        // 1b. Alte leere Sessions sofort aus dem Array entfernen (verhindert Akkumulation)
+        // Task-Sessions behalten — die starten leer und werden über SSE befüllt
+        let oldId = currentSessionId
+        sessions.removeAll { $0.messages.isEmpty && $0.taskId == nil && $0.id != oldId && pendingMessages[$0.id]?.isEmpty != false }
 
         // 2. ChatSession erstellen und in sessions einfügen (damit Sidebar sofort zeigt)
         let session = ChatSession(id: UUID(), title: "Neuer Chat", messages: [])
@@ -937,16 +1053,19 @@ public class RuntimeViewModel: ObservableObject {
     public func toggleTopicExpanded(_ topic: ChatTopic) {
         if let idx = topics.firstIndex(where: { $0.id == topic.id }) {
             topics[idx].isExpanded.toggle()
+            saveTopics()
         }
     }
 
     public func deleteTopic(_ topic: ChatTopic) {
         topics.removeAll { $0.id == topic.id }
+        saveTopics()
     }
 
     public func updateTopic(_ topic: ChatTopic) {
         if let idx = topics.firstIndex(where: { $0.id == topic.id }) {
             topics[idx] = topic
+            saveTopics()
         }
     }
 
@@ -963,6 +1082,7 @@ public class RuntimeViewModel: ObservableObject {
     public func createTopic(name: String, color: String) {
         let topic = ChatTopic(name: name, color: color)
         topics.append(topic)
+        saveTopics()
     }
 
     public func newSession(topicId: UUID) {
@@ -1008,7 +1128,7 @@ public class RuntimeViewModel: ObservableObject {
             sessionLastAccess[currentSessionId] = Date()
             messages = []
         }
-        NotificationCenter.default.post(name: .koboldNavigate, object: SidebarTab.chat)
+        NotificationCenter.default.post(name: .koboldNavigate, object: SidebarTab.tasks)
     }
 
     // MARK: - Ollama Controls
@@ -1134,13 +1254,21 @@ public class RuntimeViewModel: ObservableObject {
                 // P5: Nur mutieren wenn sich der Wert ÄNDERT (vermeidet unnötiges objectWillChange)
                 if !self.isConnected { self.isConnected = true }
                 if !wasConnected {
-                    addNotification(title: "Daemon verbunden", message: "KoboldOS Daemon ist online", type: .success)
+                    addNotification(title: "Daemon verbunden", message: "KoboldOS Daemon ist online", type: .success, navigationTarget: "settings")
                 }
-            } else { if self.isConnected { self.isConnected = false } }
+                // Read active_streams from same response (no extra request!)
+                let activeStreams = json["active_streams"] as? Int ?? 0
+                let busy = activeStreams > 0
+                if self.isOllamaBusy != busy { self.isOllamaBusy = busy }
+            } else {
+                if self.isConnected { self.isConnected = false }
+                if self.isOllamaBusy { self.isOllamaBusy = false }
+            }
         } catch {
             if self.isConnected { self.isConnected = false }
+            if self.isOllamaBusy { self.isOllamaBusy = false }
             if wasConnected {
-                addNotification(title: "Daemon offline", message: "Verbindung zum Daemon verloren", type: .warning)
+                addNotification(title: "Daemon offline", message: "Verbindung zum Daemon verloren", type: .warning, navigationTarget: "settings")
             }
         }
     }
@@ -1162,7 +1290,7 @@ public class RuntimeViewModel: ObservableObject {
             sessions[idx].messages = []
             sessions[idx].createdAt = Date()
         }
-        topics = []
+        // Topics bleiben persistent — nur aktive Auswahl zurücksetzen
         activeTopicId = nil
         debouncedSave()
     }
@@ -1199,7 +1327,7 @@ public class RuntimeViewModel: ObservableObject {
                 pendingMessages[currentSessionId] = []
                 messages = []
                 chatMode = .normal
-                topics = []
+                // Topics bleiben persistent — nur aktive Auswahl zurücksetzen
                 activeTopicId = nil
                 agentLoading = false
             }
@@ -1284,9 +1412,8 @@ public class RuntimeViewModel: ObservableObject {
     private func setupMemoryPressureHandler() {
         let source = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical], queue: .main)
         source.setEventHandler { [weak self] in
-            Task { @MainActor in
-                self?.handleMemoryPressure()
-            }
+            // queue: .main → handler läuft bereits auf Main Thread, kein Task-Nesting nötig
+            self?.handleMemoryPressure()
         }
         source.resume()
         memoryPressureSource = source
@@ -1362,6 +1489,7 @@ public class RuntimeViewModel: ObservableObject {
         // P6: append statt insert(at:0) — O(1) statt O(n) Array-Shuffle
         notifications.append(notif)
         unreadNotificationCount += 1
+        SoundManager.shared.play(.notification)
         // Max 50 Notifications behalten
         if notifications.count > 50 {
             notifications = Array(notifications.prefix(50))
@@ -1374,9 +1502,9 @@ public class RuntimeViewModel: ObservableObject {
 
     // MARK: - Task Execution (Scheduled + Idle)
 
-    /// Task im Hintergrund ausführen — erstellt Task-Session, sendet Message dorthin.
-    /// navigate=true → wechselt UI zur Task-Session (für Cron-Tasks).
-    /// navigate=false → läuft unsichtbar, Notification wenn fertig (für Idle-Tasks).
+    /// Task ausführen — erstellt Task-Session, sendet Message dorthin.
+    /// navigate=true → wechselt UI zur Task-Session (für Cron-Tasks + Idle-Tasks).
+    /// navigate=false → läuft unsichtbar im Hintergrund, Notification wenn fertig.
     public func executeTask(taskId: String, taskName: String, prompt: String, navigate: Bool) {
         // 1. Task-Session finden oder erstellen
         let sessionId: UUID
@@ -1402,7 +1530,7 @@ public class RuntimeViewModel: ObservableObject {
             currentSessionId = sessionId
             messages = pendingMessages[sessionId] ?? []
             objectWillChange.send()
-            NotificationCenter.default.post(name: .koboldNavigate, object: SidebarTab.chat)
+            NotificationCenter.default.post(name: .koboldNavigate, object: SidebarTab.tasks)
             sendMessage(prompt)
         } else {
             // Hintergrund: Nachricht in Task-Session senden ohne UI zu stören
@@ -1411,6 +1539,35 @@ public class RuntimeViewModel: ObservableObject {
     }
 
     /// macOS System-Notification (Banner oben rechts) + Klick navigiert zur Session
+    /// Forwards a task result to Telegram — only if the task's priority meets the configured minimum.
+    private func forwardTaskResultToTelegram(taskSession: ChatSession?, answer: String) {
+        let telegramToken = UserDefaults.standard.string(forKey: "kobold.telegram.token") ?? ""
+        let telegramMinPriority = UserDefaults.standard.string(forKey: "kobold.proactive.idle.telegramMinPriority") ?? "high"
+        guard !telegramToken.isEmpty, telegramMinPriority != "off" else { return }
+
+        // Look up task priority from stored idle tasks
+        var taskPriorityInt = 1 // default: medium
+        if let tid = taskSession?.taskId,
+           let data = UserDefaults.standard.data(forKey: "kobold.proactive.idleTasksList") {
+            let tasks = (try? JSONDecoder().decode([IdleTask].self, from: data)) ?? []
+            if let match = tasks.first(where: { $0.id == tid }) {
+                taskPriorityInt = match.priority.rawInt
+            }
+        }
+        let minLevel: Int
+        switch telegramMinPriority {
+        case "low": minLevel = 0
+        case "medium": minLevel = 1
+        case "high": minLevel = 2
+        default: minLevel = 99
+        }
+        guard taskPriorityInt >= minLevel else { return }
+
+        let title = taskSession?.title ?? "Task"
+        let truncated = answer.count > 4000 ? String(answer.prefix(4000)) + "..." : answer
+        TelegramBot.shared.sendNotification("✅ \(title)\n\n\(truncated)")
+    }
+
     func postSystemNotification(title: String, body: String, sessionId: UUID? = nil) {
         let content = UNMutableNotificationContent()
         content.title = title
@@ -1751,7 +1908,7 @@ public struct ModelInfo: Sendable, Codable, Identifiable {
 }
 
 // MARK: - ChatTopic (für Topic-Badge im Chat-Header)
-public struct ChatTopic: Identifiable, Codable, Sendable {
+public struct ChatTopic: Identifiable, Codable, Sendable, Equatable {
     public let id: UUID
     public var name: String
     public var color: String  // HEX color code

@@ -1,6 +1,6 @@
 ══════════════════════════════════════════════
 KOBOLDOS — TUTORIAL & FUNKTIONSUEBERSICHT
-Alpha v0.3.5
+Alpha v0.3.7 (Stable Release)
 ══════════════════════════════════════════════
 
 INHALTSVERZEICHNIS
@@ -98,7 +98,7 @@ Confidence-Badge:
 4. TOOLS — WAS DER AGENT ALLES KANN
 ══════════════════════════════════════════════
 
-Der Agent hat 43+ Tools. Er waehlt automatisch das richtige.
+Der Agent hat 49+ Tools. Er waehlt automatisch das richtige.
 
 ── System & Dateien ──────────────────────────
   shell           Shell-Befehle ausfuehren (ls, grep, python, etc.)
@@ -115,7 +115,8 @@ Der Agent hat 43+ Tools. Er waehlt automatisch das richtige.
 
 ── Kommunikation ─────────────────────────────
   telegram_send   Telegram: Text, Dateien, Fotos, Audio senden
-  whatsapp_api    WhatsApp Business: Nachrichten, Bilder, Templates
+  whatsapp_api    WhatsApp Business API: Nachrichten, Bilder, Templates
+  app_browser     In-App Browser (auch fuer WhatsApp Web)
   slack_api       Slack: Kanaele, Nachrichten, Verlauf
   email           E-Mail senden/empfangen (SMTP/IMAP)
   twilio_sms      SMS senden via Twilio
@@ -218,9 +219,15 @@ Einstellungen → Verbindungen zeigt alle verfuegbaren Dienste:
     → OAuth: Client-ID + Secret
     → Ermoeglicht: Fahrpreise, Fahrten anfordern
 
-  WhatsApp Business
-    → API-Token + Phone-ID eingeben
-    → Ermoeglicht: Nachrichten, Bilder, Templates
+  WhatsApp Web (empfohlen)
+    → QR-Code scannen in Einstellungen → Verbindungen → WhatsApp
+    → Funktioniert wie web.whatsapp.com — einmal scannen, dauerhaft verknuepft
+    → Agent kann WhatsApp Web im In-App-Browser bedienen (Skill: whatsapp_web)
+    → Ideal fuer Kanal-/Newsletter-Nachrichten
+
+  WhatsApp Business API (optional)
+    → App-ID + Secret + Phone-ID eingeben (Meta Developer Account noetig)
+    → Ermoeglicht: Programmatische Nachrichten, Bilder, Templates
 
   WebApp & Cloudflare Tunnel
     → Fernzugriff auf KoboldOS im Browser (siehe Kapitel 12)
@@ -355,8 +362,13 @@ Features:
 
 Text-to-Speech (TTS):
   - Agent kann Text vorlesen: "Lies mir das vor"
+  - Alle macOS System-Stimmen verfuegbar, gruppiert nach Sprache
   - Stimme, Geschwindigkeit, Lautstaerke einstellbar
   - Speaker-Button an jeder Agenten-Nachricht
+  - Option: "Satzzeichen beim Vorlesen entfernen" fuer natuerlicheres Zuhoeren
+  - Tipp: Lade Premium-Stimmen herunter fuer beste Qualitaet
+    (Button in Einstellungen → Sprache & Audio → "Systemeinstellungen oeffnen")
+    Empfohlen: Petra (Premium), Anna (Enhanced), Markus (Enhanced)
   - Einstellungen → Sprache & Audio → TTS
 
 Speech-to-Text (STT):
@@ -530,7 +542,9 @@ Berechtigungen
   - Playwright und Screen Control separat aktivierbar
 
 Sprache & Audio
-  - TTS: Stimme, Rate, Lautstaerke
+  - TTS: Stimme auswaehlen (alle macOS-Stimmen, gruppiert nach Sprache)
+  - TTS: Rate, Lautstaerke, Satzzeichen-Filter
+  - TTS: Button zum Download von Premium-Stimmen (Petra, Anna, Markus)
   - STT: Whisper-Modell auswaehlen und laden, Sprache
   - Stable Diffusion: Modell, Steps, Guidance Scale
 
@@ -612,5 +626,5 @@ Speicherort fuer Daten:
 ══════════════════════════════════════════════
   KoboldOS — Dein autonomer KI-Agent fuer macOS
   https://github.com/your-repo/koboldos
-  ~52.800+ Lines of Swift Code
+  ~67.200+ Lines of Swift Code
 ══════════════════════════════════════════════

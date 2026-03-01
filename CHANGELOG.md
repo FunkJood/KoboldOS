@@ -1,5 +1,72 @@
 # KoboldOS Changelog
 
+## Alpha v0.3.7 — 2026-03-02 (Stable Release)
+
+### Human-in-the-Loop Tool-Bestätigung
+- **Sicherheits-Gate in ToolRegistry**: Tools mit hohem/kritischem Risiko erfordern jetzt Benutzer-Bestätigung vor Ausführung
+- **ToolApprovalOverlay**: GlassUI-Overlay zeigt Tool-Name, Argumente, Risiko-Level und 60s-Countdown
+- **Approval-Queue**: Mehrere Bestätigungen werden nacheinander abgearbeitet, "Alle ablehnen" Button
+- **Konfigurierbarer Threshold**: Einstellungen → Sicherheit → "Mittel+" / "Hoch+" / "Nur Kritisch"
+- **Telegram/Cron exempt**: Headless-Requests (Telegram, Scheduled Tasks) umgehen das Gate automatisch
+- **Auto-Deny bei Timeout**: Nach 60s wird der Tool-Aufruf automatisch abgelehnt
+
+### WebUI Voice Tab — Echtzeit-Sprache
+- **Phrase-Level Streaming TTS**: Statt auf die gesamte Antwort zu warten, wird während des SSE-Streams Satz für Satz an ElevenLabs gesendet und vorgeladen
+- **VAD Audio Fix**: Browser Autoplay Policy umgangen durch pre-unlocked AudioContext bei User-Gesture
+- **Echo-Unterdrückung**: Mikrofon wird während TTS-Wiedergabe stummgeschaltet
+- **ElevenLabs Flash Model**: Default auf `eleven_flash_v2_5` für ~2x schnellere Sprachsynthese
+- **Streaming Endpoint**: Daemon nutzt jetzt `/stream?optimize_streaming_latency=4&output_format=mp3_22050_32`
+- **VAD (LIVE) + Push to Talk**: UI-Redesign mit neuem Stop-Button, Status-Label über dem Mikrofon-Button
+- **Concurrent Audio Player**: Sätze werden parallel vorgeladen und sequentiell abgespielt
+
+### WebUI Verbesserungen
+- **Cloudflare Named Tunnel**: Priorität für Named Tunnels (feste URL) über Quick Tunnels
+- **Settings Persistence**: WebUI-Einstellungen werden per `/settings/update` API an den Daemon gesendet
+- **Login-Stabilität**: Auth-Credentials werden dynamisch aus UserDefaults gelesen (kein Stale-Cache mehr)
+- **Einklappbare User-Nachrichten**: Nachrichten >500 Zeichen werden mit CollapsibleUserMessage eingeklappt
+
+### Desktop Verbesserungen
+- **Leertaste für Sprachaufnahme**: Im Chat-Tab startet/stoppt die Leertaste die Sprachaufnahme
+- **ElevenLabs Multi-Tool**: Neues Agent-Tool mit 4 Aktionen (speak, sound_fx, list_voices, clone_voice)
+
+### Bugfixes
+- **WebUI Login-Button funktionslos**: JavaScript SyntaxError durch fehlerhaftes Regex-Escaping (`\n` statt `\\n` in Swift-String) behoben
+- **WebUI TTS stumm**: `apiKey`-Check entfernt (war durch Settings-Blacklist immer undefined)
+- **WebUI Auth Stale-Cache**: Credentials werden jetzt pro Request aus UserDefaults gelesen
+- **67.263 Lines of Code**
+
+## Alpha v0.3.6 — 2026-02-27
+
+### WhatsApp Web Integration
+- **WhatsApp Web Verknüpfung**: QR-Code scannen direkt in KoboldOS — wie web.whatsapp.com, aber eingebettet
+- **WKWebView mit persistenter Session**: Cookies und Session bleiben zwischen App-Neustarts erhalten (einmal scannen, dauerhaft verknüpft)
+- **Shared Cookie Store**: Settings-WebView und App-Browser teilen `WKWebsiteDataStore.default()` — Agent kann WhatsApp Web automatisch bedienen
+- **Connection Detection**: Automatische Erkennung ob Verknüpfung aktiv (pollt DOM auf Chat-Liste)
+- **Business API optional**: Meta Business API bleibt als erweiterte Option in DisclosureGroup
+
+### WhatsApp Web Skill (Neuer Default-Skill)
+- **Skill `whatsapp_web`**: Lehrt den Agent, WhatsApp Web im In-App-Browser zu bedienen
+- **Kanal/Newsletter-Support**: Agent kann Nachrichten an WhatsApp-Kanäle senden
+- **Robuster Workflow**: Inspect-first → Click → Type → Send — keine hartcodierten Selektoren
+- **Automatisch aktiviert** bei Neuinstallation
+
+### Text-to-Speech Vereinfachung
+- **Piper TTS entfernt**: Neural-TTS-Engine entfernt (Binary-Kompatibilität nicht stabil auf macOS)
+- **Nur macOS System-Stimmen**: Alle installierten Stimmen verfügbar, gruppiert nach Sprache
+- **Premium-Stimmen-Hinweis**: Button zum Öffnen der Systemeinstellungen für Voice-Download (Petra, Anna Enhanced, Markus)
+- **Satzzeichen-Filter**: Neuer Toggle "Satzzeichen beim Vorlesen entfernen" — für natürlicheres Zuhören
+
+### ProactiveEngine Fixes
+- **Heartbeat funktioniert**: `startPeriodicCheck()` wird jetzt tatsächlich aufgerufen (war nie gestartet)
+- **System-Benachrichtigungen**: Heartbeat sendet jetzt BEIDE — In-App Bell UND macOS Banner
+- **Default Idle Tasks**: `IdleTask.examples` werden geladen wenn Liste leer
+- **User Activity Tracking**: `recordUserActivity()` wird bei jeder Nachricht aufgerufen
+
+### Statistik
+- ~53.700 Lines of Code
+
+---
+
 ## Alpha v0.3.5 — 2026-02-27
 
 ### Prozess-Entlastung: Schwere Operationen aus dem Hauptprozess ausgelagert

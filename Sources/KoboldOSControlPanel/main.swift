@@ -14,6 +14,7 @@ extension Notification.Name {
     static let koboldWorkflowRun = Notification.Name("koboldWorkflowRun")
     static let koboldLateStartup = Notification.Name("koboldLateStartup")
     static let koboldScheduledTaskFired = Notification.Name("koboldScheduledTaskFired")
+    static let koboldToolApprovalRequest = Notification.Name("koboldToolApprovalRequest")
 }
 
 // MARK: - App Entry Point
@@ -98,7 +99,7 @@ struct KoboldOSApp: App {
 class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        return true  // Fenster zu = App beenden (kein MenuBar mehr)
+        return false  // App läuft im Hintergrund weiter (Punkt am Dock-Icon bleibt)
     }
 
     // Held for process lifetime — prevents App Nap and requests high scheduler priority.
@@ -148,9 +149,31 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Auto-start Telegram bot if configured
         let telegramToken = UserDefaults.standard.string(forKey: "kobold.telegram.token") ?? ""
         if !telegramToken.isEmpty {
-            let chatId = Int64(UserDefaults.standard.string(forKey: "kobold.telegram.chatId") ?? "") ?? 0
-            TelegramBot.shared.start(token: telegramToken, allowedChatId: chatId)
-            print("[AppDelegate] Telegram bot auto-started")
+            let chatIdStr = UserDefaults.standard.string(forKey: "kobold.telegram.chatId") ?? ""
+            let groupIdsStr = UserDefaults.standard.string(forKey: "kobold.telegram.groupIds") ?? ""
+            let ids = SettingsView.parseTelegramIds(chatId: chatIdStr, groupIds: groupIdsStr)
+            TelegramBot.shared.start(token: telegramToken, allowedChatIds: ids)
+            print("[AppDelegate] Telegram bot auto-started (allowed IDs: \(ids))")
+        }
+
+        // Auto-start WebApp server if configured
+        if UserDefaults.standard.bool(forKey: "kobold.webapp.autostart") &&
+           UserDefaults.standard.bool(forKey: "kobold.webapp.enabled") {
+            let wPort = UserDefaults.standard.integer(forKey: "kobold.webapp.port")
+            let wUser = UserDefaults.standard.string(forKey: "kobold.webapp.username") ?? "admin"
+            let wPass = UserDefaults.standard.string(forKey: "kobold.webapp.password") ?? ""
+            if !wPass.isEmpty {
+                let dPort = UserDefaults.standard.integer(forKey: "kobold.port")
+                let dToken = RuntimeManager.shared.authToken
+                WebAppServer.shared.start(
+                    port: wPort == 0 ? 8090 : wPort,
+                    daemonPort: dPort == 0 ? 8080 : dPort,
+                    daemonToken: dToken,
+                    username: wUser,
+                    password: wPass
+                )
+                print("[AppDelegate] WebApp auto-started on port \(wPort == 0 ? 8090 : wPort)")
+            }
         }
 
         // Initialize TTS Manager
@@ -160,6 +183,35 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
             NotificationCenter.default.post(name: .koboldLateStartup, object: nil)
         }
+
+        // Doppelklick auf Titelleiste = Fenster maximieren/wiederherstellen
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            guard let window = NSApplication.shared.windows.first else { return }
+            let titleBarGesture = NSClickGestureRecognizer(target: self, action: #selector(self.handleTitleBarDoubleClick(_:)))
+            titleBarGesture.numberOfClicksRequired = 2
+            // Geste auf die gesamte contentView legen — aber nur obere 38px reagieren (siehe Action)
+            window.contentView?.addGestureRecognizer(titleBarGesture)
+            print("[AppDelegate] Title bar double-click gesture installed")
+        }
+    }
+
+    @MainActor @objc private func handleTitleBarDoubleClick(_ gesture: NSClickGestureRecognizer) {
+        guard let view = gesture.view, let window = view.window else { return }
+        let loc = gesture.location(in: view)
+        // macOS: Ursprung unten-links, y steigt nach oben → obere 38px = nahe bounds.maxY
+        guard loc.y >= view.bounds.height - 38 else { return }
+        window.zoom(nil)
+    }
+
+    /// Dock-Icon geklickt → Fenster wieder öffnen falls geschlossen/minimiert.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag {
+            // Kein sichtbares Fenster → erstes Fenster wieder zeigen
+            if let window = sender.windows.first {
+                window.makeKeyAndOrderFront(nil)
+            }
+        }
+        return true
     }
 
     func applicationWillTerminate(_ notification: Notification) {

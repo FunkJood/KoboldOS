@@ -2,6 +2,70 @@
 KOBOLDOS — CHANGELOG
 ══════════════════════════════════════════════
 
+VERSION 0.3.7 STABLE (2026-03-02)
+─────────────────────────────────
+Human-in-the-Loop Tool-Bestaetigung:
+• Sicherheits-Gate: Tools mit hohem/kritischem Risiko erfordern Benutzer-Bestaetigung
+• ToolApprovalOverlay: Zeigt Tool-Name, Argumente, Risiko-Level, 60s-Countdown
+• Konfigurierbarer Threshold: "Mittel+" / "Hoch+" / "Nur Kritisch"
+• Telegram/Cron-Tasks umgehen das Gate automatisch (headless)
+• Auto-Deny bei Timeout (60 Sekunden)
+
+WebUI Voice Tab — Echtzeit-Sprache:
+• Phrase-Level Streaming TTS: Saetze werden waehrend SSE-Stream vorgeladen
+• VAD Audio Fix: Browser Autoplay Policy umgangen (pre-unlocked AudioContext)
+• ElevenLabs Flash Model: Default eleven_flash_v2_5 (~2x schneller)
+• Streaming Endpoint: optimize_streaming_latency=4, mp3_22050_32
+• VAD (LIVE) + Push to Talk UI-Redesign mit Stop-Button
+• Echo-Unterdrueckung: Mikrofon stumm waehrend TTS-Wiedergabe
+
+WebUI Verbesserungen:
+• Cloudflare Named Tunnel Prioritaet (feste URL)
+• Settings Persistence via /settings/update API
+• Login-Stabilitaet: Auth-Credentials dynamisch aus UserDefaults
+• Einklappbare User-Nachrichten (>500 Zeichen)
+
+Desktop Verbesserungen:
+• Leertaste fuer Sprachaufnahme im Chat-Tab
+• ElevenLabs Multi-Tool (speak, sound_fx, list_voices, clone_voice)
+
+Bugfixes:
+• WebUI Login-Button funktionslos (JS SyntaxError durch Regex-Escaping)
+• WebUI TTS stumm (apiKey-Check war immer undefined)
+• WebUI Auth Stale-Cache behoben
+• ~67.200+ Lines of Code
+
+VERSION 0.3.6 ALPHA (2026-02-27)
+─────────────────────────────────
+WhatsApp Web Integration:
+• WhatsApp Web Verknuepfung: QR-Code scannen direkt in KoboldOS
+  — eingebetteter WKWebView, genau wie web.whatsapp.com
+• Persistente Session: Cookies bleiben zwischen App-Neustarts erhalten
+  — einmal scannen, dauerhaft verknuepft
+• Shared Cookie Store: Settings-WebView und App-Browser teilen Cookies
+  — Agent kann WhatsApp Web automatisch bedienen
+• Business API bleibt als optionale Erweiterung verfuegbar
+
+WhatsApp Web Skill:
+• Neuer Default-Skill "whatsapp_web"
+  — lehrt den Agent, WhatsApp Web im In-App-Browser zu bedienen
+• Kanal/Newsletter-Support: Agent kann Nachrichten an Kanaele senden
+• Inspect-first Workflow: Keine hartcodierten Selektoren
+
+Text-to-Speech Vereinfachung:
+• Piper Neural-TTS entfernt (Binary-Kompatibilitaet nicht stabil)
+• Alle macOS System-Stimmen verfuegbar, gruppiert nach Sprache
+• Premium-Stimmen-Hinweis mit Button zum Oeffnen der Systemeinstellungen
+  — Petra (Premium), Anna (Enhanced), Markus fuer beste deutsche Qualitaet
+• Neuer Toggle: "Satzzeichen beim Vorlesen entfernen"
+
+ProactiveEngine Fixes:
+• Heartbeat funktioniert: startPeriodicCheck() wird jetzt aufgerufen
+• System-Benachrichtigungen: In-App Bell UND macOS Banner
+• Default Idle Tasks werden geladen wenn Liste leer
+• User Activity Tracking bei jeder Nachricht
+• ~53.700 Lines of Code
+
 VERSION 0.3.5 ALPHA (2026-02-27)
 ─────────────────────────────────
 Prozess-Entlastung (Schwere Operationen ausgelagert):

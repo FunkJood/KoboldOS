@@ -42,6 +42,8 @@
     <true/>
     <key>NSLocalNetworkUsageDescription</key>
     <string>KoboldOS benötigt lokalen Netzwerkzugriff für den Daemon-Server und die WebApp-Fernsteuerung.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>KoboldOS benötigt Mikrofon-Zugriff für bidirektionale Sprachkommunikation im Sprechen-Tab.</string>
 
     <!-- URL Scheme for OAuth2 callbacks -->
     <key>CFBundleURLTypes</key>

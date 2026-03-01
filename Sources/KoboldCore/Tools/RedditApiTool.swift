@@ -30,7 +30,7 @@ public struct RedditApiTool: Tool {
         let action = arguments["action"] ?? ""
 
         guard let accessToken = await oauth.getValidToken() else {
-            return "Error: Nicht mit Reddit verbunden. Bitte unter Einstellungen → Verbindungen → Reddit authentifizieren."
+            return "Error: Nicht mit Reddit verbunden. Bitte unter Einstellungen → Integrationen → Reddit authentifizieren."
         }
 
         let limit = Int(arguments["limit"] ?? "10") ?? 10
@@ -112,7 +112,7 @@ public struct RedditApiTool: Tool {
                     if retryStatus >= 400 { return "Error: HTTP \(retryStatus): \(retryText)" }
                     return retryText
                 }
-                return "Error: Reddit-Token abgelaufen. Bitte neu anmelden unter Einstellungen → Verbindungen → Reddit."
+                return "Error: Reddit-Token abgelaufen. Bitte neu anmelden unter Einstellungen → Integrationen → Reddit."
             }
 
             let text = String(data: data.prefix(8192), encoding: .utf8) ?? "(leer)"

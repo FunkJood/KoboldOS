@@ -33,7 +33,7 @@ public struct SlackApiTool: Tool {
 
     private func slackRequest(method: String, params: [String: String] = [:]) async -> String {
         guard let token = getToken() else {
-            return "Error: Nicht bei Slack angemeldet. Bitte unter Einstellungen → Verbindungen → Slack anmelden."
+            return "Error: Nicht bei Slack angemeldet. Bitte unter Einstellungen → Integrationen → Slack anmelden."
         }
 
         guard let url = URL(string: "https://slack.com/api/\(method)") else {
@@ -55,7 +55,7 @@ public struct SlackApiTool: Tool {
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             let responseStr = String(data: data.prefix(8192), encoding: .utf8) ?? "(empty)"
             if status == 401 {
-                return "Error: Slack-Token ungültig oder abgelaufen. Bitte unter Einstellungen → Verbindungen → Slack neu anmelden."
+                return "Error: Slack-Token ungültig oder abgelaufen. Bitte unter Einstellungen → Integrationen → Slack neu anmelden."
             }
             if status >= 400 { return "Error: HTTP \(status): \(responseStr)" }
 
@@ -64,7 +64,7 @@ public struct SlackApiTool: Tool {
                let ok = json["ok"] as? Bool, !ok {
                 let error = json["error"] as? String ?? "unknown"
                 if error == "invalid_auth" || error == "token_expired" || error == "token_revoked" {
-                    return "Error: Slack-Token ungültig (\(error)). Bitte unter Einstellungen → Verbindungen → Slack neu anmelden."
+                    return "Error: Slack-Token ungültig (\(error)). Bitte unter Einstellungen → Integrationen → Slack neu anmelden."
                 }
                 return "Error: Slack API Fehler: \(error)"
             }

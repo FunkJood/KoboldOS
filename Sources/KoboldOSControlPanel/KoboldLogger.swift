@@ -306,6 +306,96 @@ final class KoboldLogger: @unchecked Sendable {
         }
     }
 
+    // MARK: - Chat History Logs
+
+    /// Daily chat log directory: ~/Library/Application Support/KoboldOS/logs/chat/
+    private lazy var chatLogDir: URL = {
+        let dir = logDir.appendingPathComponent("chat")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }()
+
+    private static let chatDateFmt: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        return f
+    }()
+
+    private static let chatTimeFmt: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss"
+        return f
+    }()
+
+    /// Appends a chat message to today's daily log file.
+    /// Format: [HH:mm:ss] [Session: title] [role] message (truncated to 2000 chars)
+    func chatLog(role: String, sessionTitle: String, message: String) {
+        let now = Date()
+        let fileName = Self.chatDateFmt.string(from: now) + ".log"
+        let time = Self.chatTimeFmt.string(from: now)
+        let truncated = message.count > 2000 ? String(message.prefix(2000)) + "..." : message
+        let line = "[\(time)] [\(sessionTitle)] [\(role)] \(truncated)\n"
+        queue.async { [weak self] in
+            guard let self else { return }
+            let fileURL = self.chatLogDir.appendingPathComponent(fileName)
+            if !FileManager.default.fileExists(atPath: fileURL.path) {
+                let header = "=== KoboldOS Chat-Verlauf — \(Self.chatDateFmt.string(from: now)) ===\n\n"
+                FileManager.default.createFile(atPath: fileURL.path, contents: header.data(using: .utf8))
+            }
+            if let handle = try? FileHandle(forWritingTo: fileURL) {
+                handle.seekToEndOfFile()
+                if let data = line.data(using: .utf8) { handle.write(data) }
+                handle.closeFile()
+            }
+        }
+    }
+
+    /// Deletes chat log files older than the given number of days (default: 7).
+    func cleanupChatLogs(olderThanDays: Int = 7) {
+        queue.async { [weak self] in
+            guard let self else { return }
+            let fm = FileManager.default
+            let cutoff = Calendar.current.date(byAdding: .day, value: -olderThanDays, to: Date()) ?? Date()
+            guard let files = try? fm.contentsOfDirectory(at: self.chatLogDir, includingPropertiesForKeys: [.creationDateKey]) else { return }
+            var deleted = 0
+            for file in files where file.pathExtension == "log" {
+                // Parse date from filename (YYYY-MM-DD.log)
+                let name = file.deletingPathExtension().lastPathComponent
+                if let fileDate = Self.chatDateFmt.date(from: name), fileDate < cutoff {
+                    try? fm.removeItem(at: file)
+                    deleted += 1
+                }
+            }
+            if deleted > 0 {
+                self.debugHandle?.seekToEndOfFile()
+                let msg = "[ChatLog] Cleanup: \(deleted) Log-Dateien älter als \(olderThanDays) Tage gelöscht\n"
+                if let data = msg.data(using: .utf8) { self.debugHandle?.write(data) }
+            }
+        }
+    }
+
+    /// Returns the content of a specific day's chat log (or today if nil).
+    func readChatLog(date: Date? = nil, lastLines: Int = 200) -> String {
+        let d = date ?? Date()
+        let fileName = Self.chatDateFmt.string(from: d) + ".log"
+        let fileURL = chatLogDir.appendingPathComponent(fileName)
+        return readFile(fileURL, lastLines: lastLines, fallback: "(Kein Chat-Log für \(Self.chatDateFmt.string(from: d)))")
+    }
+
+    /// Lists available chat log files with date and size.
+    func listChatLogs() -> [(date: String, size: Int)] {
+        let fm = FileManager.default
+        guard let files = try? fm.contentsOfDirectory(at: chatLogDir, includingPropertiesForKeys: [.fileSizeKey]) else { return [] }
+        return files
+            .filter { $0.pathExtension == "log" }
+            .compactMap { url -> (String, Int)? in
+                let name = url.deletingPathExtension().lastPathComponent
+                let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+                return (name, size)
+            }
+            .sorted { $0.0 > $1.0 }
+    }
+
     deinit {
         debugHandle?.closeFile()
         toolsHandle?.closeFile()
@@ -336,4 +426,7 @@ func kbuild(_ msg: String, file: String = #file, line: Int = #line) {
 }
 func kperf(_ msg: String, file: String = #file, line: Int = #line) {
     KoboldLogger.shared.perf(msg, file: file, line: line)
+}
+func kchat(_ role: String, session: String, message: String) {
+    KoboldLogger.shared.chatLog(role: role, sessionTitle: session, message: message)
 }

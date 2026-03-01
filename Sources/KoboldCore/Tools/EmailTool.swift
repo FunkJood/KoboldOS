@@ -58,7 +58,7 @@ public struct EmailTool: Tool {
         let action = arguments["action"] ?? ""
 
         guard let config = loadConfig() else {
-            return "Error: E-Mail nicht konfiguriert. Bitte unter Einstellungen → Verbindungen → E-Mail die Zugangsdaten eintragen."
+            return "Error: E-Mail nicht konfiguriert. Bitte unter Einstellungen → Integrationen → E-Mail die Zugangsdaten eintragen."
         }
 
         switch action {

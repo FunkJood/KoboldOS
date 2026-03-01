@@ -463,6 +463,73 @@ public actor SkillLoader {
             - **short_term**: Aktuelles Projekt, offene Aufgaben, Kontext
             - **knowledge**: Gelöste Probleme, Befehle, Tricks, API-Infos
             """),
+
+            ("whatsapp_web", """
+            # WhatsApp Web Bedienung
+
+            Du kannst WhatsApp Web im In-App-Browser steuern. Die Session ist bereits verknüpft (QR-Code wurde in Einstellungen gescannt).
+            Nutze das `app_browser` Tool — NICHT `whatsapp_api` (das ist die Business API, etwas anderes).
+
+            ## Wichtig: Immer zuerst lesen, dann klicken!
+            WhatsApp Web hat dynamische CSS-Klassen. NIEMALS Selektoren raten!
+            Workflow: navigate → wait_for_load → read_page/inspect → dann erst click/type.
+
+            ## WhatsApp Web öffnen
+            ```json
+            {"tool_name": "app_browser", "tool_args": {"action": "navigate", "url": "https://web.whatsapp.com"}}
+            ```
+            ```json
+            {"tool_name": "app_browser", "tool_args": {"action": "wait_for_load"}}
+            ```
+            ```json
+            {"tool_name": "app_browser", "tool_args": {"action": "dismiss_popup"}}
+            ```
+
+            ## Chat/Kanal suchen
+            Suchfeld oben anklicken und Kontakt-/Kanalname tippen:
+            ```json
+            {"tool_name": "app_browser", "tool_args": {"action": "inspect"}}
+            ```
+            Dann das Suchfeld finden (meist `[data-testid="chat-list-search"]` oder `[title="Suchen"]`) und tippen:
+            ```json
+            {"tool_name": "app_browser", "tool_args": {"action": "click", "selector": "[data-testid=\\"chat-list-search\\"]"}}
+            ```
+            ```json
+            {"tool_name": "app_browser", "tool_args": {"action": "type", "selector": "[data-testid=\\"search-input\\"]", "text": "Kanalname"}}
+            ```
+            Dann Ergebnis anklicken (inspect nutzen um den Selektor des Suchergebnisses zu finden).
+
+            ## Nachricht senden
+            Im offenen Chat das Eingabefeld finden und Nachricht tippen:
+            ```json
+            {"tool_name": "app_browser", "tool_args": {"action": "click", "selector": "[data-testid=\\"conversation-compose-box-input\\"]"}}
+            ```
+            ```json
+            {"tool_name": "app_browser", "tool_args": {"action": "type", "selector": "[data-testid=\\"conversation-compose-box-input\\"]", "text": "Deine Nachricht hier"}}
+            ```
+            Senden-Button drücken:
+            ```json
+            {"tool_name": "app_browser", "tool_args": {"action": "click", "selector": "[data-testid=\\"send\\"]"}}
+            ```
+
+            ## Newsletter / Kanal-Nachricht senden
+            Gleicher Workflow wie normale Nachricht — Kanal suchen, öffnen, Nachricht eingeben, senden.
+            Kanäle haben ein Megafon-Icon. Bei Kanälen ist das Eingabefeld nur sichtbar wenn du Admin bist.
+
+            ## Nachrichten lesen
+            Chat öffnen, dann Seite lesen:
+            ```json
+            {"tool_name": "app_browser", "tool_args": {"action": "read_page"}}
+            ```
+
+            ## Tipps
+            - WhatsApp Web ändert CSS-Klassen regelmäßig — `data-testid` Attribute sind am stabilsten
+            - Falls ein Selektor nicht funktioniert: `inspect` nutzen und neuen Selektor suchen
+            - Nach jedem click der eine neue Ansicht lädt: `wait_for_load` + `read_page`
+            - Für mehrzeilige Nachrichten: Shift+Enter via execute_js oder \\n im Text
+            - Cookie-Banner beim ersten Öffnen: `dismiss_popup` nutzen
+            - Falls "WhatsApp Web ist bereits in einem anderen Tab geöffnet" erscheint: Das ist OK, einfach "Hier verwenden" klicken
+            """),
         ]
 
         for (name, content) in defaults {
@@ -475,7 +542,7 @@ public actor SkillLoader {
             "code_ausfuehren", "websuche", "dateiverwaltung", "delegation",
             "system_info", "aufgaben_planen", "dokument_analyse", "bild_analyse",
             "antwort_tools", "memory_verwaltung", "api_skill_erstellen",
-            "image_generation"
+            "image_generation", "whatsapp_web"
         ]
         UserDefaults.standard.set(enableByDefault, forKey: enabledKey)
 

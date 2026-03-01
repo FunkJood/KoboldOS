@@ -29,12 +29,14 @@ public struct LLMProviderConfig: Sendable {
     public let model: String         // e.g. "gpt-4o", "claude-sonnet-4-20250514", or "" for default
     public let apiKey: String        // API key for cloud providers
     public let temperature: Double   // 0.0 - 1.0
+    public let numPredict: Int?      // Max tokens to generate (nil = default 4096, voice = 256)
 
-    public init(provider: String = "ollama", model: String = "", apiKey: String = "", temperature: Double = 0.7) {
+    public init(provider: String = "ollama", model: String = "", apiKey: String = "", temperature: Double = 0.7, numPredict: Int? = nil) {
         self.provider = provider
         self.model = model
         self.apiKey = apiKey
         self.temperature = temperature
+        self.numPredict = numPredict
     }
 
     /// Whether this config targets a cloud provider that needs an API key
@@ -192,7 +194,7 @@ public actor LLMRunner {
 
     // MARK: - Ollama /api/chat
 
-    private func generateWithOllama(messages: [[String: String]]) async throws -> LLMResponse {
+    private func generateWithOllama(messages: [[String: String]], numPredict: Int? = nil) async throws -> LLMResponse {
         guard let url = URL(string: "http://localhost:11434/api/chat") else {
             throw LLMError.generationFailed("Invalid Ollama URL")
         }
@@ -209,12 +211,14 @@ public actor LLMRunner {
         // model's compiled default (often 2k–32k) regardless of what the user configured.
         let storedCtx = UserDefaults.standard.integer(forKey: "kobold.context.windowSize")
         let effectiveCtx = storedCtx > 0 ? storedCtx : 32768
-        let ollamaOptions: [String: Any] = ["num_predict": 16384, "num_ctx": effectiveCtx]
+        let effectiveNumPredict = numPredict ?? 4096
+        let ollamaOptions: [String: Any] = ["num_predict": effectiveNumPredict, "num_ctx": effectiveCtx]
 
         let body: [String: Any] = [
             "model": ollamaModel,
             "messages": messages,
             "stream": false,
+            "keep_alive": "24h",
             "options": ollamaOptions
         ]
         guard let httpBody = try? JSONSerialization.data(withJSONObject: body) else {
@@ -360,6 +364,10 @@ public actor LLMRunner {
 
     /// Generate with tokens using a provider config
     public func generateWithTokens(messages: [[String: String]], config: LLMProviderConfig) async throws -> LLMResponse {
+        // For Ollama: pass numPredict through (voice mode uses lower value for latency)
+        if !config.isCloudProvider {
+            return try await generateWithOllama(messages: messages, numPredict: config.numPredict)
+        }
         return try await generateWithTokens(messages: messages, provider: config.provider, model: config.model, apiKey: config.apiKey)
     }
 

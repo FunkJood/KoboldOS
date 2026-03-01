@@ -34,7 +34,7 @@ public struct GoogleApiTool: Tool {
 
         // Get valid access token
         guard let accessToken = await getValidAccessToken() else {
-            return "Error: Nicht bei Google angemeldet. Bitte zuerst in den Einstellungen unter Verbindungen → Google anmelden."
+            return "Error: Nicht bei Google angemeldet. Bitte zuerst in den Einstellungen unter Integrationen → Google anmelden."
         }
 
         // Route to upload handler if file_path is provided

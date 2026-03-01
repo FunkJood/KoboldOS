@@ -53,6 +53,12 @@ public actor EmbeddingStore {
         entries[id] = EmbeddedEntry(id: id, text: text, embedding: embedding,
                                     memoryType: memoryType, tags: tags)
         scheduleSave()
+
+        // Qdrant-Sync (Fire & Forget — blockiert nicht den Hauptpfad)
+        Task.detached(priority: .utility) {
+            await QdrantService.shared.upsert(id: id, vector: embedding, text: text,
+                                               memoryType: memoryType, tags: tags)
+        }
         print("[EmbeddingStore] embedded: \(id.prefix(8))… dim=\(embedding.count)")
     }
 
@@ -61,17 +67,43 @@ public actor EmbeddingStore {
     public func delete(id: String) {
         entries.removeValue(forKey: id)
         scheduleSave()
+
+        // Qdrant-Sync
+        Task.detached(priority: .utility) {
+            await QdrantService.shared.delete(id: id)
+        }
     }
 
     // MARK: - Semantic Search
 
-    /// Returns top-K entries ranked by cosine similarity to `queryEmbedding`.
-    public func search(queryEmbedding: [Float], limit: Int = 5) -> [EmbeddingSearchHit] {
+    /// Returns top-K entries ranked by cosine similarity.
+    /// Nutzt Qdrant HNSW-Index wenn verfügbar (O(log n)), sonst vDSP-Fallback (O(n)).
+    public func search(queryEmbedding: [Float], limit: Int = 5,
+                       typeFilter: String? = nil) async -> [EmbeddingSearchHit] {
+        // Qdrant-Pfad: HNSW-Index für schnelle Suche bei großen Datenmengen
+        if QdrantService.shared.isEnabled {
+            let qdrantHits = await QdrantService.shared.search(
+                queryVector: queryEmbedding, limit: limit, typeFilter: typeFilter)
+            if !qdrantHits.isEmpty {
+                let hits = qdrantHits.map {
+                    EmbeddingSearchHit(id: $0.id, text: $0.text, score: $0.score,
+                                       tags: $0.tags, memoryType: $0.memoryType)
+                }
+                if let best = hits.first {
+                    print("[RAG] Qdrant HNSW hits: \(hits.count), score: \(String(format: "%.2f", best.score))")
+                }
+                return hits
+            }
+        }
+
+        // vDSP-Fallback: Linearer Scan (gut bis ~10k Einträge)
         guard !entries.isEmpty else { return [] }
 
         var scored: [(EmbeddedEntry, Float)] = []
         for entry in entries.values {
             guard entry.embedding.count == queryEmbedding.count else { continue }
+            // Optionaler Typ-Filter
+            if let typeFilter, entry.memoryType != typeFilter { continue }
             let score = cosineSimilarity(queryEmbedding, entry.embedding)
             scored.append((entry, score))
         }
@@ -85,7 +117,7 @@ public actor EmbeddingStore {
                                tags: entry.tags, memoryType: entry.memoryType)
         }
         if let best = hits.first {
-            print("[RAG] semantic hits: \(hits.count), score: \(String(format: "%.2f", best.score))")
+            print("[RAG] vDSP fallback hits: \(hits.count), score: \(String(format: "%.2f", best.score))")
         }
         return Array(hits)
     }
@@ -94,21 +126,59 @@ public actor EmbeddingStore {
 
     /// Called at startup: embeds all MemoryEntry objects that have no vector yet.
     /// Caller should pass `await memoryStore.allEntries()` after the store has loaded.
+    /// Synchronisiert auch bestehende Embeddings nach Qdrant wenn aktiviert.
     public func reembedMissing(entries allMemories: [MemoryEntry]) async {
         let existing = Set(entries.keys)
         let missing = allMemories.filter { !existing.contains($0.id) }
-        guard !missing.isEmpty else {
+
+        if missing.isEmpty {
             print("[EmbeddingStore] reembedMissing: all \(existing.count) entries already embedded")
+        } else {
+            print("[EmbeddingStore] reembedMissing: embedding \(missing.count) entries…")
+            for entry in missing {
+                if let emb = await EmbeddingRunner.shared.embed(entry.text) {
+                    upsert(id: entry.id, text: entry.text, embedding: emb,
+                           memoryType: entry.memoryType, tags: entry.tags)
+                }
+            }
+            print("[EmbeddingStore] reembedMissing: done")
+        }
+
+        // Qdrant-Sync: Bestehende Embeddings nach Qdrant migrieren wenn nötig
+        await syncToQdrantIfNeeded()
+    }
+
+    /// Migriert alle lokalen Embeddings nach Qdrant (einmalig beim Start)
+    private func syncToQdrantIfNeeded() async {
+        guard QdrantService.shared.isEnabled else { return }
+        guard await QdrantService.shared.ensureCollection(vectorSize: entries.values.first?.embedding.count ?? 768) else {
+            print("[EmbeddingStore] Qdrant nicht erreichbar — nutze vDSP-Fallback")
             return
         }
-        print("[EmbeddingStore] reembedMissing: embedding \(missing.count) entries…")
-        for entry in missing {
-            if let emb = await EmbeddingRunner.shared.embed(entry.text) {
-                upsert(id: entry.id, text: entry.text, embedding: emb,
-                       memoryType: entry.memoryType, tags: entry.tags)
-            }
+
+        let qdrantCount = await QdrantService.shared.pointCount()
+        let localCount = entries.count
+
+        // Nur migrieren wenn Qdrant deutlich weniger Einträge hat
+        guard qdrantCount < localCount - 5 else {
+            print("[EmbeddingStore] Qdrant synced (\(qdrantCount)/\(localCount))")
+            return
         }
-        print("[EmbeddingStore] reembedMissing: done")
+
+        print("[EmbeddingStore] Qdrant-Migration: \(qdrantCount) → \(localCount) Einträge…")
+
+        // Batch-Upsert in Gruppen von 100
+        let allEntries = Array(entries.values)
+        let batchSize = 100
+        for start in stride(from: 0, to: allEntries.count, by: batchSize) {
+            let end = min(start + batchSize, allEntries.count)
+            let batch = allEntries[start..<end].map { entry in
+                (id: entry.id, vector: entry.embedding, text: entry.text,
+                 memoryType: entry.memoryType, tags: entry.tags)
+            }
+            let _ = await QdrantService.shared.upsertBatch(points: batch)
+        }
+        print("[EmbeddingStore] Qdrant-Migration abgeschlossen")
     }
 
     // MARK: - Entry count

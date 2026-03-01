@@ -169,16 +169,12 @@ class OAuthManager: NSObject, @unchecked Sendable {
 
     // MARK: - Sign In
 
-    func signIn() {
+    /// Prepare the OAuth authorization URL and start callback server, but don't open browser.
+    /// Returns the URL for QR code display or manual opening.
+    func prepareSignInURL() -> URL? {
         let id = clientId
-        guard !id.isEmpty else {
-            // P12: print entfernt Client ID not configured")
-            return
-        }
-        guard startCallbackServer() else {
-            // P12: print entfernt Failed to start callback server")
-            return
-        }
+        guard !id.isEmpty else { return nil }
+        guard startCallbackServer() else { return nil }
 
         let state = randomState()
         var codeVerifier: String?
@@ -210,10 +206,12 @@ class OAuthManager: NSObject, @unchecked Sendable {
             queryItems.append(URLQueryItem(name: key, value: value))
         }
         components.queryItems = queryItems
+        return components.url
+    }
 
-        guard let authURL = components.url else { return }
+    func signIn() {
+        guard let authURL = prepareSignInURL() else { return }
         NSWorkspace.shared.open(authURL)
-        // P12: print entfernt Opened browser for sign-in (callback on port \(callbackPort))")
     }
 
     // MARK: - Callback Server

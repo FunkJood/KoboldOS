@@ -58,6 +58,9 @@ struct SettingsView: View {
     // Updates
     @AppStorage("kobold.autoCheckUpdates") private var autoCheckUpdates: Bool = true
 
+    // WhatsApp Web
+    @State var whatsappShowWebView: Bool = false
+
     // Shell tier toggles
     @AppStorage("kobold.shell.safeTier") private var shellSafeTier: Bool = true
     @AppStorage("kobold.shell.normalTier") private var shellNormalTier: Bool = false
@@ -116,7 +119,7 @@ struct SettingsView: View {
     @State private var showSecretsManager: Bool = false
     @State private var connectionsVerified: Bool = false
 
-    private let sections = ["Allgemein", "Agenten", "Benachrichtigungen", "Berechtigungen", "Datenschutz", "Fähigkeiten", "Gedächtnis", "Persönlichkeit", "Sprache & Audio", "Sicherheit", "Verbindungen", "Über"]
+    private let sections = ["Allgemein", "Agenten", "Benachrichtigungen", "Berechtigungen", "Datenschutz", "Fähigkeiten", "Gedächtnis", "Persönlichkeit", "Sprache & Audio", "Sicherheit", "Integrationen", "Über"]
 
     var body: some View {
         HStack(spacing: 0) {
@@ -163,7 +166,7 @@ struct SettingsView: View {
                     case "Persönlichkeit":     agentPersonalitySection()
                     case "Sprache & Audio":    speechAndAudioSection()
                     case "Sicherheit":         debugSecuritySection()
-                    case "Verbindungen":       connectionsSection()
+                    case "Integrationen":       connectionsSection()
                     default:                   aboutSection()
                     }
                     Spacer(minLength: 40)
@@ -187,7 +190,7 @@ struct SettingsView: View {
         case "Persönlichkeit":     return "person.fill.viewfinder"
         case "Sicherheit":        return "ladybug.fill"
         case "Sprache & Audio":   return "waveform"
-        case "Verbindungen":      return "link.circle.fill"
+        case "Integrationen":      return "link.circle.fill"
         default:                   return "info.circle.fill"
         }
     }
@@ -323,6 +326,11 @@ struct SettingsView: View {
 
                 Toggle("Heartbeat aktivieren", isOn: $proactiveEngine.heartbeatEnabled)
                     .toggleStyle(.switch).tint(.red)
+
+                Toggle("Heartbeat-Benachrichtigungen", isOn: $proactiveEngine.heartbeatNotify)
+                    .toggleStyle(.switch).tint(.orange)
+                Text("Sendet bei jedem Heartbeat eine Benachrichtigung mit Status und Idle-Task-Info.")
+                    .font(.caption2).foregroundColor(.secondary)
 
                 HStack {
                     Text("Intervall").font(.caption.bold()).foregroundColor(.secondary)
@@ -1362,7 +1370,7 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - Verbindungen
+    // MARK: - Integrationen
 
     // iMessage removed — Telegram is the stable messaging integration
 
@@ -1420,7 +1428,7 @@ struct SettingsView: View {
             if notifyChannel == "telegram" {
                 HStack(spacing: 6) {
                     Image(systemName: "paperplane.fill").foregroundColor(.blue)
-                    Text("Telegram muss unter Verbindungen konfiguriert sein.")
+                    Text("Telegram muss unter Integrationen konfiguriert sein.")
                         .font(.caption).foregroundColor(.secondary)
                 }
             }
@@ -1436,7 +1444,8 @@ struct SettingsView: View {
     @AppStorage("kobold.recovery.maxRetries") private var maxRetries: Int = 3
     @AppStorage("kobold.security.sandboxTools") private var sandboxTools: Bool = true
     @AppStorage("kobold.security.networkRestrict") private var networkRestrict: Bool = false
-    @AppStorage("kobold.security.confirmDangerous") private var confirmDangerous: Bool = true
+    @AppStorage("kobold.security.confirmDangerous") private var confirmDangerous: Bool = false
+    @AppStorage("kobold.security.confirmThreshold") private var confirmThreshold: String = "high"
     @AppStorage("kobold.recovery.healthInterval") private var healthCheckInterval: Int = 60
 
     @ViewBuilder
@@ -1566,10 +1575,26 @@ struct SettingsView: View {
                 .toggleStyle(.switch)
             Text("Verhindert dass der Agent auf lokale Dienste (localhost, 127.0.0.1) zugreift.")
                 .font(.caption2).foregroundColor(.secondary)
-            Toggle("Bestätigung bei gefährlichen Aktionen (rm, sudo, etc.)", isOn: $confirmDangerous)
+            Toggle("Bestätigung bei gefährlichen Aktionen", isOn: $confirmDangerous)
                 .toggleStyle(.switch)
-            Text("Agent bittet um Bestätigung bevor er destruktive Befehle ausführt.")
+            Text("Agent fragt per Overlay nach Bestätigung bevor er risikoreiche Tools ausführt (z.B. Shell, Email, Telefon).")
                 .font(.caption2).foregroundColor(.secondary)
+
+            if confirmDangerous {
+                HStack {
+                    Text("Mindest-Risikostufe").font(.caption)
+                    Spacer()
+                    Picker("", selection: $confirmThreshold) {
+                        Text("Mittel+").tag("medium")
+                        Text("Hoch+").tag("high")
+                        Text("Nur Kritisch").tag("critical")
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(maxWidth: 260)
+                }
+                Text("\"Hoch+\" fragt bei Shell/Email/SMS/etc. \"Nur Kritisch\" nur bei Telefon-Anrufen.")
+                    .font(.caption2).foregroundColor(.secondary)
+            }
 
             GlassDivider()
 
@@ -1893,7 +1918,7 @@ struct SettingsView: View {
 
     @ViewBuilder
     private func connectionsSection() -> some View {
-        sectionTitle("Verbindungen")
+        sectionTitle("Integrationen")
             .task {
                 guard !connectionsVerified else { return }
                 await verifyAllConnections()
@@ -1906,10 +1931,10 @@ struct SettingsView: View {
             soundCloudOAuthSection()
         }
 
-        // Row 2: Telegram + Suno AI
+        // Row 2: Telegram + ElevenLabs
         HStack(alignment: .top, spacing: 12) {
             telegramSection()
-            sunoConnectionSection()
+            elevenLabsConnectionSection()
         }
 
         // Row 3: WebApp-Server + Cloudflare Tunnel
@@ -1960,12 +1985,15 @@ struct SettingsView: View {
             uberConnectionSection()
         }
 
-        // Row 11: Reddit
-        redditConnectionSection()
+        // Row 11: Reddit + Suno AI
+        HStack(alignment: .top, spacing: 12) {
+            redditConnectionSection()
+            sunoConnectionSection()
+        }
 
         // Weitere Integrationen (Phase 2+)
         FuturisticBox(icon: "puzzlepiece.extension.fill", title: "Weitere Integrationen", accent: .koboldGold) {
-                Text("Kommende Verbindungen — du kannst bereits jetzt APIs über das Shell- und Web-Tool nutzen.")
+                Text("Kommende Integrationen — du kannst bereits jetzt APIs über das Shell- und Web-Tool nutzen.")
                     .font(.caption).foregroundColor(.secondary)
         }
 
@@ -2007,7 +2035,7 @@ struct SettingsView: View {
             }
         }
 
-        // MARK: - A2A (Agent-to-Agent) — unter Verbindungen
+        // MARK: - A2A (Agent-to-Agent) — unter Integrationen
 
         sectionTitle("Agent-to-Agent (A2A)")
 
@@ -2750,6 +2778,35 @@ struct SettingsView: View {
                 }
         }
 
+        // Qdrant Vektordatenbank
+        FuturisticBox(icon: "cylinder.fill", title: "Qdrant Vektordatenbank", accent: .koboldGold) {
+                Text("HNSW-Index für schnelle semantische Suche bei großen Datenmengen (>5k Einträge). Optional — ohne Qdrant wird der lokale vDSP-Algorithmus genutzt.")
+                    .font(.caption).foregroundColor(.secondary)
+
+                Toggle("Qdrant aktivieren", isOn: AppStorageToggle("kobold.qdrant.enabled", default: false))
+                    .toggleStyle(.switch)
+                    .tint(.koboldGold)
+
+                if UserDefaults.standard.bool(forKey: "kobold.qdrant.enabled") {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Qdrant URL").font(.caption.bold()).foregroundColor(.secondary)
+                        TextField("http://localhost:6333", text: Binding(
+                            get: { UserDefaults.standard.string(forKey: "kobold.qdrant.url") ?? "http://localhost:6333" },
+                            set: { UserDefaults.standard.set($0, forKey: "kobold.qdrant.url") }
+                        ))
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 12, design: .monospaced))
+                        .frame(maxWidth: 300)
+                    }
+
+                    HStack(spacing: 8) {
+                        Image(systemName: "info.circle").font(.caption).foregroundColor(.koboldGold)
+                        Text("Installation: docker run -d -p 6333:6333 qdrant/qdrant")
+                            .font(.system(size: 10, design: .monospaced)).foregroundColor(.secondary)
+                    }
+                }
+        }
+
         // Export / Import
         FuturisticBox(icon: "square.and.arrow.up", title: "Export / Import", accent: .koboldGold) {
                 HStack(spacing: 8) {
@@ -2827,6 +2884,7 @@ struct SettingsView: View {
     // MARK: - Fernsteuerung (WebApp)
 
     @AppStorage("kobold.webapp.enabled") private var webAppEnabled: Bool = false
+    @AppStorage("kobold.webapp.autostart") private var webAppAutoStart: Bool = false
     @AppStorage("kobold.webapp.port") private var webAppPort: Int = 8090
     @AppStorage("kobold.webapp.username") private var webAppUsername: String = "admin"
     @AppStorage("kobold.webapp.password") private var webAppPassword: String = ""
@@ -2835,6 +2893,19 @@ struct SettingsView: View {
     @State private var tunnelURL: String = ""
     @State private var cloudflaredInstalled = false
     @State private var cloudflaredInstalling = false
+    @State private var cloudflareLoggedIn = false
+    @State private var cloudflareLoggingIn = false
+    @State private var namedTunnelName: String = ""
+    @State private var namedTunnelCreating = false
+    @State private var namedTunnelStatus: String = ""
+    // Cloudflare API credentials
+    @AppStorage("kobold.cloudflare.email") private var cfEmail: String = ""
+    @AppStorage("kobold.cloudflare.apiKey") private var cfApiKey: String = ""
+    @AppStorage("kobold.cloudflare.accountId") private var cfAccountId: String = ""
+    @AppStorage("kobold.cloudflare.zoneId") private var cfZoneId: String = ""
+    @AppStorage("kobold.cloudflare.tunnelUrl") private var cfTunnelUrl: String = ""
+    @AppStorage("kobold.cloudflare.tunnelId") private var cfTunnelId: String = ""
+    @AppStorage("kobold.cloudflare.domain") private var cfDomain: String = ""
 
     @ViewBuilder
     private func webAppSection() -> some View {
@@ -2869,6 +2940,11 @@ struct SettingsView: View {
                 Toggle("WebApp aktivieren", isOn: $webAppEnabled)
                     .toggleStyle(.switch)
                     .tint(.koboldEmerald)
+
+                Toggle("Automatisch mit App starten", isOn: $webAppAutoStart)
+                    .toggleStyle(.switch)
+                    .tint(.koboldGold)
+                    .disabled(!webAppEnabled)
 
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 12) {
@@ -2944,7 +3020,7 @@ struct SettingsView: View {
             }
             .padding()
         }
-        .frame(maxWidth: .infinity, alignment: .top)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .onAppear {
             webAppRunning = WebAppServer.shared.isRunning
         }
@@ -2998,6 +3074,18 @@ struct SettingsView: View {
                         .disabled(cloudflaredInstalling)
                     }
                 } else if webAppRunning {
+                    // Auto-Start Toggle
+                    Toggle(isOn: Binding(
+                        get: { UserDefaults.standard.bool(forKey: "kobold.tunnel.autoStart") },
+                        set: { UserDefaults.standard.set($0, forKey: "kobold.tunnel.autoStart") }
+                    )) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "play.circle.fill").font(.system(size: 11))
+                            Text("Auto-Start mit App").font(.system(size: 12))
+                        }
+                    }
+                    .toggleStyle(.switch).controlSize(.small)
+
                     HStack(spacing: 8) {
                         Button(tunnelRunning ? "Stoppen" : "Starten") {
                             if tunnelRunning {
@@ -3066,12 +3154,173 @@ struct SettingsView: View {
                     Text("Starte zuerst den WebApp-Server um den Tunnel zu aktivieren.")
                         .font(.caption).foregroundColor(.secondary)
                 }
+
+                Divider().opacity(0.5)
+
+                // Named Tunnel via API (permanente URL)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Permanente URL (Named Tunnel)").font(.system(size: 12, weight: .bold))
+                    Text("Feste HTTPS-URL für Twilio, Telegram-Webhooks & Fernzugriff. Benötigt kostenlosen Cloudflare-Account.").font(.system(size: 10)).foregroundColor(.secondary)
+
+                    // API Credentials
+                    VStack(alignment: .leading, spacing: 6) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("E-Mail").font(.system(size: 11, weight: .semibold)).foregroundColor(.secondary)
+                            TextField("cloudflare@example.com", text: $cfEmail)
+                                .textFieldStyle(.roundedBorder).font(.system(size: 12))
+                        }
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Global API Key").font(.system(size: 11, weight: .semibold)).foregroundColor(.secondary)
+                            SecureField("API Key", text: $cfApiKey)
+                                .textFieldStyle(.roundedBorder).font(.system(size: 12))
+                        }
+                        HStack(spacing: 8) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Account ID").font(.system(size: 11, weight: .semibold)).foregroundColor(.secondary)
+                                TextField("abc123...", text: $cfAccountId)
+                                    .textFieldStyle(.roundedBorder).font(.system(size: 12))
+                            }
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Zone ID").font(.system(size: 11, weight: .semibold)).foregroundColor(.secondary)
+                                TextField("xyz789...", text: $cfZoneId)
+                                    .textFieldStyle(.roundedBorder).font(.system(size: 12))
+                            }
+                        }
+                    }
+
+                    // Status display
+                    let cfConfigured = !cfEmail.isEmpty && !cfApiKey.isEmpty && !cfAccountId.isEmpty
+                    if cfConfigured {
+                        HStack(spacing: 4) {
+                            Image(systemName: "checkmark.circle.fill").foregroundColor(.koboldEmerald).font(.system(size: 11))
+                            Text("API konfiguriert").font(.system(size: 11)).foregroundColor(.koboldEmerald)
+                            if !cfDomain.isEmpty {
+                                Text("(\(cfDomain))").font(.system(size: 11, design: .monospaced)).foregroundColor(.secondary)
+                            }
+                        }
+                    }
+
+                    // Active tunnel info
+                    if !cfTunnelId.isEmpty {
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "tunnel.fill").font(.system(size: 11))
+                                Text("Tunnel: \(UserDefaults.standard.string(forKey: "kobold.tunnel.name") ?? cfTunnelId)")
+                                    .font(.system(size: 11, design: .monospaced))
+                            }
+                            .foregroundColor(.blue)
+                            if !cfTunnelUrl.isEmpty {
+                                HStack(spacing: 6) {
+                                    Text(cfTunnelUrl)
+                                        .font(.system(size: 12, design: .monospaced))
+                                        .foregroundColor(.blue)
+                                        .textSelection(.enabled)
+                                    Button("Kopieren") {
+                                        NSPasteboard.general.clearContents()
+                                        NSPasteboard.general.setString(cfTunnelUrl, forType: .string)
+                                    }
+                                    .buttonStyle(.bordered).controlSize(.mini)
+                                }
+                            }
+                        }
+                    }
+
+                    Text("Der KoboldOS-Agent kann Tunnel auch selbst erstellen und verwalten (cloudflare_tunnel Tool).")
+                        .font(.system(size: 9)).foregroundColor(.secondary.opacity(0.7))
+
+                    // Auto-Update Info
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.triangle.2.circlepath").font(.system(size: 10)).foregroundColor(.blue)
+                            Text("Twilio Auto-Update aktiv").font(.system(size: 10, weight: .medium)).foregroundColor(.blue)
+                        }
+                        Text("Webhook-URLs werden automatisch bei Twilio aktualisiert wenn sich die Tunnel-URL ändert.").font(.system(size: 9)).foregroundColor(.secondary.opacity(0.7))
+                    }
+                    .padding(6)
+                    .background(Color.blue.opacity(0.05))
+                    .cornerRadius(4)
+                }
+
+                // ElevenLabs Auto-Update Status (immer sichtbar)
+                Divider().opacity(0.5)
+                let elApiKey = UserDefaults.standard.string(forKey: "kobold.elevenlabs.apiKey") ?? ""
+                let elAgentId = UserDefaults.standard.string(forKey: "kobold.elevenlabs.convai.agentId") ?? ""
+                let elSyncPurpose = UserDefaults.standard.object(forKey: "kobold.elevenlabs.convai.syncPurpose") == nil ? true : UserDefaults.standard.bool(forKey: "kobold.elevenlabs.convai.syncPurpose")
+                let elSyncPersonality = UserDefaults.standard.object(forKey: "kobold.elevenlabs.convai.syncPersonality") == nil ? true : UserDefaults.standard.bool(forKey: "kobold.elevenlabs.convai.syncPersonality")
+                let elUpdaterActive = !elAgentId.isEmpty && !elApiKey.isEmpty && (elSyncPurpose || elSyncPersonality)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 4) {
+                        Image(systemName: elUpdaterActive ? "arrow.triangle.2.circlepath" : "arrow.triangle.2.circlepath")
+                            .font(.system(size: 10))
+                            .foregroundColor(elUpdaterActive ? .koboldEmerald : .secondary.opacity(0.5))
+                        Text("ElevenLabs Call-Sync")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(elUpdaterActive ? .koboldEmerald : .secondary.opacity(0.5))
+                        Spacer()
+                        if elUpdaterActive {
+                            HStack(spacing: 3) {
+                                Circle().fill(Color.koboldEmerald).frame(width: 5, height: 5)
+                                Text(elSyncPurpose ? "Aufgabe + Sync" : "Sync").font(.system(size: 9, weight: .semibold)).foregroundColor(.koboldEmerald)
+                            }
+                        } else {
+                            Text("Inaktiv").font(.system(size: 9)).foregroundColor(.secondary.opacity(0.5))
+                        }
+                    }
+
+                    if elUpdaterActive {
+                        let elCustomLLM = UserDefaults.standard.bool(forKey: "kobold.elevenlabs.convai.customLLM")
+                        VStack(alignment: .leading, spacing: 2) {
+                            if elSyncPurpose {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "text.badge.checkmark").font(.system(size: 9)).foregroundColor(.koboldEmerald.opacity(0.7))
+                                    Text("Aufgabe wird vor jedem Anruf in den Agent-Prompt gesetzt")
+                                        .font(.system(size: 9)).foregroundColor(.secondary.opacity(0.7))
+                                }
+                            }
+                            if elSyncPersonality {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "person.text.rectangle").font(.system(size: 9)).foregroundColor(.koboldCyan.opacity(0.7))
+                                    Text("Persönlichkeit wird zum Agent übertragen")
+                                        .font(.system(size: 9)).foregroundColor(.secondary.opacity(0.7))
+                                }
+                            }
+                            if elCustomLLM {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "server.rack").font(.system(size: 9)).foregroundColor(.purple.opacity(0.7))
+                                    Text("Custom LLM via Tunnel aktiv")
+                                        .font(.system(size: 9)).foregroundColor(.secondary.opacity(0.7))
+                                }
+                            } else {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "bolt").font(.system(size: 9)).foregroundColor(.koboldEmerald.opacity(0.7))
+                                    Text("ElevenLabs eigenes LLM (schnell, kein Tunnel nötig)")
+                                        .font(.system(size: 9)).foregroundColor(.secondary.opacity(0.7))
+                                }
+                            }
+                        }
+                    } else if elApiKey.isEmpty {
+                        Text("API-Key fehlt → unter Integrationen konfigurieren")
+                            .font(.system(size: 9)).foregroundColor(.secondary.opacity(0.5))
+                    } else if elAgentId.isEmpty {
+                        Text("Agent-ID fehlt → unter Integrationen konfigurieren")
+                            .font(.system(size: 9)).foregroundColor(.secondary.opacity(0.5))
+                    } else {
+                        Text("Alle Sync-Toggles deaktiviert → unter Sprache & Audio aktivieren")
+                            .font(.system(size: 9)).foregroundColor(.secondary.opacity(0.5))
+                    }
+                }
+                .padding(6)
+                .background(elUpdaterActive ? Color.koboldEmerald.opacity(0.05) : Color.secondary.opacity(0.03))
+                .cornerRadius(4)
             }
             .padding()
         }
-        .frame(maxWidth: .infinity, alignment: .top)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .onAppear {
             cloudflaredInstalled = WebAppServer.isCloudflaredInstalled()
+            cloudflareLoggedIn = WebAppServer.isCloudflareLoggedIn
+            namedTunnelName = WebAppServer.savedTunnelName ?? ""
             tunnelRunning = WebAppServer.shared.isTunnelRunning
             tunnelURL = WebAppServer.shared.tunnelURL ?? ""
         }
@@ -3346,6 +3595,7 @@ struct SettingsView: View {
 
     @AppStorage("kobold.telegram.token") private var telegramToken: String = ""
     @AppStorage("kobold.telegram.chatId") private var telegramChatId: String = ""
+    @AppStorage("kobold.telegram.groupIds") private var telegramGroupIds: String = ""
     @State private var telegramRunning = false
     @State private var telegramBotName = ""
     @State private var telegramStats: (received: Int, sent: Int) = (0, 0)
@@ -3406,15 +3656,24 @@ struct SettingsView: View {
                             .font(.system(size: 14.5))
                     }
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Chat-ID (optional)").font(.system(size: 12.5, weight: .semibold)).foregroundColor(.secondary)
+                        Text("Deine Chat-ID (optional)").font(.system(size: 12.5, weight: .semibold)).foregroundColor(.secondary)
                         TextField("123456789", text: $telegramChatId)
                             .textFieldStyle(.roundedBorder)
                             .font(.system(size: 14.5))
                     }
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Gruppen-IDs (optional, kommagetrennt)").font(.system(size: 12.5, weight: .semibold)).foregroundColor(.secondary)
+                        TextField("-1001234567890, -1009876543210", text: $telegramGroupIds)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(size: 14.5))
+                        Text("Gruppen-IDs sind negativ (z.B. -100...)")
+                            .font(.system(size: 10.5))
+                            .foregroundColor(.secondary)
+                    }
                     Button(action: {
                         guard !telegramToken.isEmpty else { return }
-                        let chatId = Int64(telegramChatId) ?? 0
-                        TelegramBot.shared.start(token: telegramToken, allowedChatId: chatId)
+                        let ids = Self.parseTelegramIds(chatId: telegramChatId, groupIds: telegramGroupIds)
+                        TelegramBot.shared.start(token: telegramToken, allowedChatIds: ids)
                         telegramRunning = true
                         Task {
                             try? await Task.sleep(nanoseconds: 2_000_000_000)
@@ -3441,6 +3700,20 @@ struct SettingsView: View {
             telegramRunning = TelegramBot.shared.isRunning
             telegramBotName = TelegramBot.shared.botUsername
         }
+    }
+
+    /// Parse user chat ID + comma-separated group IDs into a Set
+    static func parseTelegramIds(chatId: String, groupIds: String) -> Set<Int64> {
+        var ids = Set<Int64>()
+        if let uid = Int64(chatId.trimmingCharacters(in: .whitespaces)), uid != 0 {
+            ids.insert(uid)
+        }
+        for part in groupIds.split(separator: ",") {
+            if let gid = Int64(part.trimmingCharacters(in: .whitespaces)), gid != 0 {
+                ids.insert(gid)
+            }
+        }
+        return ids
     }
 
     // MARK: - Connection Card Template
@@ -3482,7 +3755,7 @@ struct SettingsView: View {
             }
             .padding()
         }
-        .frame(maxWidth: .infinity, alignment: .top)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     // MARK: - Flow Layout (for scope tags)
@@ -3534,7 +3807,12 @@ struct SettingsView: View {
     @AppStorage("kobold.tts.rate") private var ttsRate: Double = 0.5
     @AppStorage("kobold.tts.volume") private var ttsVolume: Double = 0.8
     @AppStorage("kobold.tts.autoSpeak") private var ttsAutoSpeak: Bool = false
+    @AppStorage("kobold.tts.stripPunctuation") private var ttsStripPunctuation: Bool = false
     @State private var ttsTestText: String = "Hallo! Ich bin dein KoboldOS Assistent."
+    @AppStorage("kobold.elevenlabs.enabled") private var elevenLabsEnabled: Bool = false
+    @AppStorage("kobold.elevenlabs.apiKey") private var elevenLabsApiKey: String = ""
+    @AppStorage("kobold.elevenlabs.voiceId") private var elevenLabsVoiceId: String = ""
+    @AppStorage("kobold.elevenlabs.model") private var elevenLabsModel: String = "eleven_multilingual_v2"
 
     @ViewBuilder
     private func speechAndAudioSection() -> some View {
@@ -3585,16 +3863,25 @@ struct SettingsView: View {
                     .toggleStyle(.switch)
                     .tint(.koboldEmerald)
 
+                Toggle("Satzzeichen beim Vorlesen entfernen", isOn: $ttsStripPunctuation)
+                    .toggleStyle(.switch)
+                    .tint(.koboldEmerald)
+
+                // Voice selection
                 HStack(spacing: 20) {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Stimme / Sprache").font(.caption.bold()).foregroundColor(.secondary)
+                        Text("Stimme").font(.caption.bold()).foregroundColor(.secondary)
                         Picker("", selection: $ttsVoice) {
-                            ForEach(TTSManager.availableLanguages, id: \.self) { lang in
-                                Text(lang).tag(lang)
+                            ForEach(TTSManager.groupedVoices, id: \.language) { group in
+                                Section(header: Text(group.language)) {
+                                    ForEach(group.voices, id: \.id) { voice in
+                                        Text("\(voice.name) (\(voice.quality))").tag(voice.id)
+                                    }
+                                }
                             }
                         }
                         .pickerStyle(.menu)
-                        .frame(width: 150)
+                        .frame(width: 280)
                     }
 
                     VStack(alignment: .leading, spacing: 4) {
@@ -3612,13 +3899,133 @@ struct SettingsView: View {
                     }
                 }
 
+                // Hinweis: Premium-Stimmen
+                HStack(spacing: 6) {
+                    Image(systemName: "sparkles").font(.caption).foregroundColor(.koboldGold)
+                    Text("Bessere Stimmen? Lade Premium-Stimmen in den Systemeinstellungen herunter.")
+                        .font(.caption).foregroundColor(.secondary)
+                    Button("Systemeinstellungen öffnen") {
+                        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.universalaccess?TextToSpeech")!)
+                    }
+                    .font(.caption).foregroundColor(.koboldEmerald)
+                    .buttonStyle(.plain)
+                }
+
+                Divider().padding(.vertical, 4)
+
+                // ElevenLabs Section
+                HStack(spacing: 6) {
+                    Image(systemName: "waveform.circle.fill").font(.title3).foregroundColor(.koboldGold)
+                    Text("ElevenLabs").font(.headline)
+                    Text("— Extrem realistische KI-Stimmen").font(.caption).foregroundColor(.secondary)
+                }
+
+                Toggle("ElevenLabs aktivieren", isOn: $elevenLabsEnabled)
+                    .toggleStyle(.switch)
+                    .tint(.koboldGold)
+
+                if elevenLabsEnabled {
+                    HStack(spacing: 12) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("API-Key").font(.caption.bold()).foregroundColor(.secondary)
+                            SecureField("xi-...", text: $elevenLabsApiKey)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 280)
+                                .onChange(of: elevenLabsApiKey) { _ in
+                                    Task {
+                                        await TTSManager.shared.loadElevenLabsVoices()
+                                        await TTSManager.shared.loadElevenLabsCredits()
+                                    }
+                                }
+                        }
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Modell").font(.caption.bold()).foregroundColor(.secondary)
+                            Picker("", selection: $elevenLabsModel) {
+                                Text("Multilingual v2").tag("eleven_multilingual_v2")
+                                Text("Turbo v2.5").tag("eleven_turbo_v2_5")
+                                Text("Flash v2.5").tag("eleven_flash_v2_5")
+                            }
+                            .pickerStyle(.menu)
+                            .frame(width: 180)
+                        }
+                    }
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Stimme").font(.caption.bold()).foregroundColor(.secondary)
+                        if TTSManager.shared.elevenLabsVoices.isEmpty {
+                            HStack(spacing: 6) {
+                                Text("Keine Stimmen geladen").font(.caption).foregroundColor(.secondary)
+                                Button("Laden") {
+                                    Task { await TTSManager.shared.loadElevenLabsVoices() }
+                                }.font(.caption)
+                            }
+                        } else {
+                            Picker("", selection: $elevenLabsVoiceId) {
+                                Text("— Auswählen —").tag("")
+                                ForEach(TTSManager.shared.elevenLabsVoices) { voice in
+                                    Text("\(voice.name) (\(voice.language))").tag(voice.voice_id)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                            .frame(width: 320)
+                        }
+                    }
+
+                    // Credits-Anzeige
+                    HStack(spacing: 8) {
+                        if let credits = TTSManager.shared.elevenLabsCredits,
+                           let limit = TTSManager.shared.elevenLabsCreditsLimit {
+                            let pct = limit > 0 ? Double(credits) / Double(limit) : 0
+                            HStack(spacing: 6) {
+                                Image(systemName: "chart.bar.fill").font(.caption)
+                                    .foregroundColor(pct > 0.2 ? .koboldEmerald : .red)
+                                Text("\(credits.formatted()) / \(limit.formatted()) Zeichen")
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundColor(pct > 0.2 ? .primary : .red)
+                            }
+                            ProgressView(value: pct)
+                                .progressViewStyle(.linear)
+                                .tint(pct > 0.2 ? .koboldEmerald : .red)
+                                .frame(width: 120)
+                        } else {
+                            Button("Credits prüfen") {
+                                Task { await TTSManager.shared.loadElevenLabsCredits() }
+                            }.font(.caption)
+                        }
+                    }
+
+                    // Fehler-Anzeige
+                    if let error = TTSManager.shared.elevenLabsError {
+                        HStack(spacing: 6) {
+                            Image(systemName: "exclamationmark.triangle.fill").foregroundColor(.orange)
+                            Text(error)
+                                .font(.system(size: 11))
+                                .foregroundColor(.orange)
+                                .lineLimit(3)
+                        }
+                        .padding(8)
+                        .background(Color.orange.opacity(0.1))
+                        .cornerRadius(6)
+                    }
+
+                    HStack(spacing: 6) {
+                        Image(systemName: "info.circle").font(.caption).foregroundColor(.koboldGold)
+                        Text("Bezahlter Account nötig — Free-Accounts können Library-Stimmen nicht via API nutzen. API-Key unter elevenlabs.io/developers")
+                            .font(.caption).foregroundColor(.secondary)
+                    }
+                }
+
                 HStack(spacing: 8) {
                     TextField("Testtext...", text: $ttsTestText)
                         .textFieldStyle(.roundedBorder)
                         .font(.system(size: 14.5))
 
                     Button {
-                        TTSManager.shared.speak(ttsTestText, voice: ttsVoice, rate: Float(ttsRate))
+                        if elevenLabsEnabled && !elevenLabsVoiceId.isEmpty {
+                            TTSManager.shared.speak(ttsTestText, voice: elevenLabsVoiceId)
+                        } else {
+                            TTSManager.shared.speak(ttsTestText, voice: ttsVoice, rate: Float(ttsRate))
+                        }
                     } label: {
                         HStack(spacing: 4) {
                             Image(systemName: "play.fill").font(.system(size: 12.5))
@@ -3641,6 +4048,85 @@ struct SettingsView: View {
                 }
         }
 
+        // ElevenLabs Conversational AI Section
+        FuturisticBox(icon: "phone.bubble.fill", title: "ElevenLabs Conversational AI", accent: .purple) {
+                Text("Live-Gespräche — ElevenLabs übernimmt Spracherkennung + Stimme via WebSocket.")
+                    .font(.caption).foregroundColor(.secondary)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Sprechen-Tab Modus").font(.caption.bold()).foregroundColor(.secondary)
+                    Picker("", selection: AppStorageBinding("kobold.voice.mode", default: "native")) {
+                        Text("Nativ (Whisper + Ollama + TTS)").tag("native")
+                        Text("ElevenLabs Live (ConvAI)").tag("elevenlabs_live")
+                    }
+                    .pickerStyle(.radioGroup)
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Agent-ID").font(.caption.bold()).foregroundColor(.secondary)
+                    TextField("z.B. abc123XYZ...", text: AppStorageBinding("kobold.elevenlabs.convai.agentId", default: ""))
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 300)
+                }
+
+                HStack(spacing: 8) {
+                    Image(systemName: "info.circle").font(.caption).foregroundColor(.purple)
+                    Text("Agent bei elevenlabs.io/conversational-ai erstellen. Der gleiche API-Key wie oben wird verwendet.")
+                        .font(.caption).foregroundColor(.secondary)
+                }
+
+                Divider().padding(.vertical, 4)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Telefonie-Modus (Twilio)").font(.caption.bold()).foregroundColor(.secondary)
+                    Picker("", selection: AppStorageBinding("kobold.twilio.voiceMode", default: "native")) {
+                        Text("Nativ (eigener Whisper/TTS Pipeline)").tag("native")
+                        Text("ElevenLabs ConvAI (niedrigere Latenz)").tag("elevenlabs")
+                    }
+                    .pickerStyle(.radioGroup)
+
+                    HStack(spacing: 4) {
+                        Image(systemName: "phone.arrow.right").font(.caption2).foregroundColor(.secondary)
+                        Text("ElevenLabs-Modus benötigt Agent-ID. Eingehende + ausgehende Anrufe werden über ElevenLabs geroutet.")
+                            .font(.system(size: 11)).foregroundColor(.secondary)
+                    }
+                }
+
+                Divider().opacity(0.3)
+
+                Toggle("Aufgabe vor Anruf setzen", isOn: AppStorageToggle("kobold.elevenlabs.convai.syncPurpose", default: true))
+                    .toggleStyle(.switch)
+                    .tint(.koboldEmerald)
+
+                HStack(spacing: 4) {
+                    Image(systemName: "text.badge.checkmark").font(.caption2).foregroundColor(.secondary)
+                    Text("Setzt den Anruf-Zweck in den Agent-Prompt bevor der Anruf startet")
+                        .font(.system(size: 11)).foregroundColor(.secondary)
+                }
+
+                Toggle("Persönlichkeit übertragen", isOn: AppStorageToggle("kobold.elevenlabs.convai.syncPersonality", default: true))
+                    .toggleStyle(.switch)
+                    .tint(.koboldCyan)
+
+                HStack(spacing: 4) {
+                    Image(systemName: "person.text.rectangle").font(.caption2).foregroundColor(.secondary)
+                    Text("Überträgt Seele, Persönlichkeit und Tonfall aus KoboldOS zum ElevenLabs Agent")
+                        .font(.system(size: 11)).foregroundColor(.secondary)
+                }
+
+                Divider().opacity(0.3)
+
+                Toggle("Eigenes Ollama als LLM (Custom LLM)", isOn: AppStorageToggle("kobold.elevenlabs.convai.customLLM", default: false))
+                    .toggleStyle(.switch)
+                    .tint(.purple)
+
+                HStack(spacing: 4) {
+                    Image(systemName: "server.rack").font(.caption2).foregroundColor(.secondary)
+                    Text("Benötigt Cloudflare Tunnel. URL: {tunnel}/v1/chat/completions")
+                        .font(.system(size: 11)).foregroundColor(.secondary)
+                }
+        }
+
         // STT Section
         FuturisticBox(icon: "mic.fill", title: "Speech-to-Text (Whisper)", accent: .koboldEmerald) {
                 Text("Sprachnachrichten und Audio-Dateien automatisch transkribieren mit lokalem Whisper-Model.")
@@ -3657,15 +4143,18 @@ struct SettingsView: View {
                             Text("tiny (75 MB)").tag("tiny")
                             Text("base (142 MB)").tag("base")
                             Text("small (466 MB)").tag("small")
+                            Text("turbo-q5 (574 MB)").tag("large-v3-turbo-q5_0")
+                            Text("turbo-q8 (874 MB)").tag("large-v3-turbo-q8_0")
                             Text("medium (1.5 GB)").tag("medium")
+                            Text("turbo (1.6 GB)").tag("large-v3-turbo")
                         }
                         .pickerStyle(.menu)
-                        .frame(width: 160)
+                        .frame(width: 190)
                     }
 
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Sprache").font(.caption.bold()).foregroundColor(.secondary)
-                        Picker("", selection: AppStorageBinding("kobold.stt.language", default: "auto")) {
+                        Picker("", selection: AppStorageBinding("kobold.stt.language", default: "de")) {
                             Text("Auto-Detect").tag("auto")
                             Text("Deutsch").tag("de")
                             Text("English").tag("en")
@@ -3681,28 +4170,81 @@ struct SettingsView: View {
                     if STTManager.shared.isModelLoaded {
                         HStack(spacing: 6) {
                             Circle().fill(Color.koboldEmerald).frame(width: 8, height: 8)
-                            Text("Model '\(STTManager.shared.currentModelName)' geladen")
+                            Text("'\(STTManager.shared.currentModelName)' geladen")
                                 .font(.system(size: 13.5, weight: .medium)).foregroundColor(.koboldEmerald)
                         }
-                    } else if STTManager.shared.isDownloading {
+                    }
+
+                    if STTManager.shared.isDownloading {
                         HStack(spacing: 6) {
                             ProgressView().controlSize(.small)
                             Text("Lade Model...")
                                 .font(.system(size: 13.5)).foregroundColor(.secondary)
                         }
                     } else {
-                        Button("Model herunterladen") {
+                        let selectedModel = UserDefaults.standard.string(forKey: "kobold.stt.model") ?? "base"
+                        let needsDownload = !STTManager.shared.isModelLoaded || selectedModel != STTManager.shared.currentModelName
+                        let buttonLabel = STTManager.shared.isModelLoaded ? "'\(selectedModel)' laden" : "Model herunterladen"
+
+                        Button(buttonLabel) {
                             Task { await STTManager.shared.downloadModel() }
                         }
                         .buttonStyle(.borderedProminent)
-                        .tint(.koboldEmerald)
+                        .tint(needsDownload ? .koboldEmerald : .secondary)
                         .controlSize(.small)
+                        .opacity(needsDownload ? 1.0 : 0.5)
                     }
+                }
+        }
+
+        // Spracheingabe / Mikrofon
+        FuturisticBox(icon: "mic.circle.fill", title: "Spracheingabe (Mikrofon)", accent: .koboldGold) {
+                Text("Mikrofon-Button im Chat und im Sprechen-Tab. Nutzt Whisper für lokale Transkription.")
+                    .font(.caption).foregroundColor(.secondary)
+
+                Toggle("Voice Activity Detection (VAD)", isOn: AppStorageToggle("kobold.voice.vadEnabled", default: false))
+                    .toggleStyle(.switch)
+                    .tint(.koboldGold)
+                Text("VAD erkennt automatisch wann du aufhörst zu sprechen und stoppt die Aufnahme.")
+                    .font(.system(size: 10)).foregroundColor(.secondary)
+
+                HStack(spacing: 20) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        let timeout = max(0.5, min(5.0, UserDefaults.standard.double(forKey: "kobold.voice.silenceTimeout")))
+                        Text("Stille-Timeout: \(String(format: "%.1fs", timeout == 0 ? 1.5 : timeout))").font(.caption.bold()).foregroundColor(.secondary)
+                        Slider(value: AppStorageDoubleBinding("kobold.voice.silenceTimeout", default: 1.5), in: 0.5...5.0, step: 0.5)
+                            .tint(.koboldGold)
+                            .frame(width: 200)
+                    }
+                    VStack(alignment: .leading, spacing: 4) {
+                        let threshold = max(0.005, min(0.1, Double(UserDefaults.standard.float(forKey: "kobold.voice.vadThreshold"))))
+                        Text("VAD Schwelle: \(String(format: "%.3f", threshold == 0 ? 0.02 : threshold))").font(.caption.bold()).foregroundColor(.secondary)
+                        Slider(value: AppStorageDoubleBinding("kobold.voice.vadThreshold", default: 0.02), in: 0.005...0.1, step: 0.005)
+                            .tint(.koboldGold)
+                            .frame(width: 200)
+                    }
+                }
+
+                Toggle("Auto-TTS (Agent-Antwort vorlesen im Sprechen-Tab)", isOn: AppStorageToggle("kobold.voice.autoRespond", default: true))
+                    .toggleStyle(.switch)
+                    .tint(.koboldGold)
+
+                Divider().padding(.vertical, 4)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    let maxWords = max(10, min(200, UserDefaults.standard.integer(forKey: "kobold.voice.maxResponseWords")))
+                    Text("Max. Antwortlänge (Sprechen-Tab): \(maxWords == 0 ? 50 : maxWords) Wörter").font(.caption.bold()).foregroundColor(.secondary)
+                    Slider(value: AppStorageDoubleBinding("kobold.voice.maxResponseWords", default: 50), in: 10...200, step: 10)
+                        .tint(.koboldGold)
+                        .frame(width: 300)
+                    Text("Begrenzt die Agent-Antworten im Sprachmodus auf kurze, natürliche Sätze.")
+                        .font(.system(size: 10)).foregroundColor(.secondary)
                 }
         }
 
         settingsSaveButton(section: "Sprache & Audio")
     }
+
 
     @ViewBuilder
     private func skillsSettingsSection() -> some View {
@@ -4185,8 +4727,17 @@ struct SettingsView: View {
                 infoRow("PID", "\(ProcessInfo.processInfo.processIdentifier)")
         }
 
-        FuturisticBox(icon: "heart.fill", title: "Credits", accent: .koboldGold) {
-                Text("Entwickelt von der KoboldOS Community")
+        FuturisticBox(icon: "person.2.fill", title: "Kobold Team", accent: .koboldGold) {
+                HStack(spacing: 4) {
+                    Text("Entwickelt von")
+                    Button("FunkJood") {
+                        NSWorkspace.shared.open(URL(string: "https://soundcloud.com/funkjood")!)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundColor(.koboldEmerald)
+                    .underline()
+                    .help("SoundCloud Profil öffnen")
+                }
                 Text("Powered by Ollama · Swift 6 · SwiftUI")
                     .font(.caption).foregroundColor(.secondary)
         }
@@ -4305,11 +4856,6 @@ private extension Int {
 
 struct IdleTasksSettingsView: View {
     @ObservedObject private var proactiveEngine = ProactiveEngine.shared
-    @State private var showAddForm = false
-    @State private var newIdleName = ""
-    @State private var newIdlePrompt = ""
-    @State private var newIdlePriority: GoalEntry.GoalPriority = .medium
-    @State private var newIdleCooldown: Int = 60
 
     var body: some View {
         FuturisticBox(icon: "moon.zzz.fill", title: "Idle Aufgaben", accent: .indigo) {
@@ -4347,110 +4893,6 @@ struct IdleTasksSettingsView: View {
                 Spacer()
             }
 
-            Divider()
-
-            // Aufgabenliste
-            HStack {
-                Text("Aufgaben").font(.system(size: 13.5, weight: .semibold))
-                Spacer()
-                Button(action: { withAnimation { showAddForm.toggle() } }) {
-                    Label(showAddForm ? "Abbrechen" : "Hinzufügen", systemImage: showAddForm ? "xmark" : "plus")
-                        .font(.caption)
-                }.buttonStyle(.bordered).controlSize(.small)
-            }
-
-            if showAddForm {
-                VStack(spacing: 8) {
-                    TextField("Name (z.B. 'Downloads aufräumen')", text: $newIdleName)
-                        .textFieldStyle(.roundedBorder)
-                    TextField("Prompt (Anweisung an den Agent)", text: $newIdlePrompt)
-                        .textFieldStyle(.roundedBorder)
-                    HStack {
-                        Picker("Priorität", selection: $newIdlePriority) {
-                            ForEach(GoalEntry.GoalPriority.allCases, id: \.self) { p in
-                                Text(p.rawValue).tag(p)
-                            }
-                        }.pickerStyle(.segmented).frame(maxWidth: 200)
-                        Picker("Cooldown", selection: $newIdleCooldown) {
-                            Text("15m").tag(15); Text("30m").tag(30); Text("1h").tag(60)
-                            Text("6h").tag(360); Text("12h").tag(720); Text("24h").tag(1440)
-                        }.pickerStyle(.segmented).frame(maxWidth: 300)
-                    }
-                    HStack {
-                        Spacer()
-                        Button("Hinzufügen") {
-                            let task = IdleTask(name: newIdleName.trimmingCharacters(in: .whitespaces),
-                                                prompt: newIdlePrompt.trimmingCharacters(in: .whitespaces),
-                                                priority: newIdlePriority,
-                                                cooldownMinutes: newIdleCooldown)
-                            proactiveEngine.addIdleTask(task)
-                            newIdleName = ""; newIdlePrompt = ""; newIdlePriority = .medium; newIdleCooldown = 60
-                            showAddForm = false
-                        }
-                        .buttonStyle(.borderedProminent).tint(.indigo).controlSize(.small)
-                        .disabled(newIdleName.trimmingCharacters(in: .whitespaces).isEmpty || newIdlePrompt.trimmingCharacters(in: .whitespaces).isEmpty)
-                    }
-                }
-                .padding(8)
-                .background(Color.indigo.opacity(0.05))
-                .cornerRadius(8)
-            }
-
-            if proactiveEngine.idleTasks.isEmpty {
-                VStack(spacing: 6) {
-                    Text("Definiere was der Agent tun soll wenn er nichts zu tun hat.")
-                        .font(.caption).foregroundColor(.secondary).italic()
-                    Text("Schnell hinzufügen:").font(.caption2.bold()).foregroundColor(.secondary)
-                    ForEach(IdleTask.examples, id: \.id) { example in
-                        Button(action: { proactiveEngine.addIdleTask(example) }) {
-                            HStack(spacing: 6) {
-                                Image(systemName: "plus.circle.fill").font(.system(size: 12)).foregroundColor(.indigo)
-                                Text(example.name).font(.system(size: 13)).foregroundColor(.primary)
-                                Spacer()
-                                Text("Cooldown: \(example.cooldownMinutes / 60)h")
-                                    .font(.caption2).foregroundColor(.secondary)
-                            }
-                            .padding(.horizontal, 10).padding(.vertical, 4)
-                            .background(Color.indigo.opacity(0.06)).cornerRadius(6)
-                        }.buttonStyle(.plain)
-                    }
-                }
-            } else {
-                ForEach(Array(proactiveEngine.idleTasks.enumerated()), id: \.element.id) { idx, task in
-                    HStack(spacing: 8) {
-                        Toggle("", isOn: Binding(
-                            get: { guard idx < proactiveEngine.idleTasks.count else { return false }; return proactiveEngine.idleTasks[idx].enabled },
-                            set: { newVal in guard idx < proactiveEngine.idleTasks.count else { return }; proactiveEngine.idleTasks[idx].enabled = newVal; proactiveEngine.saveIdleTasks() }
-                        ))
-                        .toggleStyle(.switch).labelsHidden().controlSize(.mini).tint(.indigo)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(task.name).font(.system(size: 13.5, weight: .medium))
-                            Text(task.prompt).font(.system(size: 12)).foregroundColor(.secondary).lineLimit(1)
-                        }
-                        Spacer()
-                        VStack(alignment: .trailing, spacing: 1) {
-                            Text(task.priority.rawValue)
-                                .font(.system(size: 10.5, weight: .semibold))
-                                .foregroundColor(task.priority == .high ? .orange : .secondary)
-                                .padding(.horizontal, 5).padding(.vertical, 1)
-                                .background(Capsule().fill((task.priority == .high ? Color.orange : Color.secondary).opacity(0.15)))
-                            HStack(spacing: 4) {
-                                Image(systemName: "clock").font(.system(size: 10))
-                                Text("\(task.cooldownMinutes)m").font(.system(size: 11, design: .monospaced))
-                            }.foregroundColor(.secondary)
-                        }
-                        if task.runCount > 0 {
-                            Text("x\(task.runCount)")
-                                .font(.system(size: 11.5, weight: .bold, design: .monospaced))
-                                .foregroundColor(.indigo)
-                        }
-                        Button(action: { proactiveEngine.deleteIdleTask(task.id) }) {
-                            Image(systemName: "trash").font(.system(size: 12)).foregroundColor(.red.opacity(0.6))
-                        }.buttonStyle(.plain)
-                    }
-                }
-            }
-
             // Einstellungen (nur wenn aktiviert)
             if proactiveEngine.idleTasksEnabled {
                 Divider()
@@ -4478,6 +4920,20 @@ struct IdleTasksSettingsView: View {
                         .toggleStyle(.switch).tint(.koboldEmerald)
                     Toggle("Nur Hochpriorität", isOn: $proactiveEngine.idleOnlyHighPriority)
                         .toggleStyle(.switch).tint(.indigo)
+                }
+
+                // Telegram-Weiterleitung
+                HStack(spacing: 8) {
+                    Image(systemName: "paperplane.fill").font(.system(size: 12)).foregroundColor(.secondary)
+                    Text("Telegram senden ab Priorität").font(.caption.bold()).foregroundColor(.secondary)
+                    Picker("", selection: $proactiveEngine.telegramMinPriority) {
+                        Text("Aus").tag("off")
+                        Text("Niedrig").tag("low")
+                        Text("Mittel").tag("medium")
+                        Text("Hoch").tag("high")
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(maxWidth: 280)
                 }
 
                 Divider()

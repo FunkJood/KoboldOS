@@ -8,7 +8,7 @@ struct HealthCommand: AsyncParsableCommand {
     )
 
     @Option(name: .long, help: "Daemon port") var port: Int = 8080
-    @Option(name: .long, help: "Auth token") var token: String = "kobold-secret"
+    @Option(name: .long, help: "Auth token (auto-detected from GUI if omitted)") var token: String = ""
 
     mutating func run() async throws {
         let client = DaemonClient(port: port, token: token)

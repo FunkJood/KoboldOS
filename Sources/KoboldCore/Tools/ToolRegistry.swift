@@ -12,6 +12,16 @@ public actor ToolRegistry {
     private let maxErrors = 50
     private var isSetup = false
 
+    /// When true, skips HiTL approval (for Telegram, scheduled tasks, headless sources)
+    private var _skipApproval: Bool = false
+
+    public func setSkipApproval(_ skip: Bool) {
+        _skipApproval = skip
+    }
+
+    /// Tools that never require approval regardless of risk level
+    private let approvalExemptTools: Set<String> = ["response", "memory", "web_search"]
+
     private init() {}
 
     // MARK: - Compatibility init for AgentLoop
@@ -85,6 +95,67 @@ public actor ToolRegistry {
         errorCounts[name] ?? 0
     }
 
+    // MARK: - Human-in-the-Loop Approval
+
+    /// Check if a tool requires user approval before execution
+    private func requiresApproval(tool: any Tool) -> Bool {
+        guard !_skipApproval else { return false }
+        guard !approvalExemptTools.contains(tool.name) else { return false }
+
+        // Read settings from UserDefaults
+        let defaults = UserDefaults.standard
+        let confirmEnabled = defaults.object(forKey: "kobold.security.confirmDangerous") == nil
+            ? false : defaults.bool(forKey: "kobold.security.confirmDangerous")
+        guard confirmEnabled else { return false }
+
+        // Threshold: "medium", "high", or "critical"
+        let threshold = defaults.string(forKey: "kobold.security.confirmThreshold") ?? "high"
+        let minLevel: RiskLevel = switch threshold {
+        case "medium": .medium
+        case "critical": .critical
+        default: .high
+        }
+
+        return tool.riskLevel >= minLevel
+    }
+
+    /// Request approval from the user via NotificationCenter → SwiftUI overlay
+    private func requestApproval(call: ToolCall, tool: any Tool) async -> Bool {
+        let resultId = UUID().uuidString
+
+        // Serialize arguments as JSON for display
+        let argsJSON: String
+        if let data = try? JSONSerialization.data(withJSONObject: call.arguments, options: .prettyPrinted),
+           let str = String(data: data, encoding: .utf8) {
+            argsJSON = str
+        } else {
+            argsJSON = call.arguments.description
+        }
+
+        // Post notification to MainActor (SwiftUI picks this up)
+        let userInfo: [String: Any] = [
+            "result_id": resultId,
+            "tool_name": call.name,
+            "tool_args": argsJSON,
+            "risk_level": tool.riskLevel.rawValue,
+            "tool_description": tool.description
+        ]
+
+        await MainActor.run {
+            NotificationCenter.default.post(
+                name: Notification.Name("koboldToolApprovalRequest"),
+                object: nil,
+                userInfo: userInfo
+            )
+        }
+
+        // Wait for user response (60s timeout → auto-deny)
+        let response = await AppToolResultWaiter.shared.waitForResult(id: resultId, timeout: 60)
+        await AppToolResultWaiter.shared.cleanup(id: resultId)
+
+        return response == "approved"
+    }
+
     // MARK: - Execute with error tracking
 
     /// Tools that use extended timeout (sub-agent delegation — 10 min instead of 60s)
@@ -106,6 +177,14 @@ public actor ToolRegistry {
         } catch {
             recordError(for: name)
             return .fail("Parameter validation: \(error.localizedDescription)")
+        }
+
+        // HiTL approval gate — blocks until user approves or 60s timeout
+        if requiresApproval(tool: tool) {
+            let approved = await requestApproval(call: call, tool: tool)
+            if !approved {
+                return .fail("Tool '\(name)' wurde vom Benutzer abgelehnt. Bitte erkläre dem Nutzer was du tun wolltest und frage ob er es erlauben möchte.")
+            }
         }
 
         do {

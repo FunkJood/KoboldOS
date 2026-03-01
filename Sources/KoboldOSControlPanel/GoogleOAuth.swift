@@ -87,7 +87,7 @@ final class GoogleOAuth: NSObject, @unchecked Sendable {
     private func getRefreshTokenRaw() -> String { lock.withLock { _refreshToken } }
     private func getTokenExpiry() -> Date { lock.withLock { _tokenExpiry } }
 
-    // OAuth client loaded from Settings (Verbindungen → Google)
+    // OAuth client loaded from Settings (Integrationen → Google)
     var clientId: String { UserDefaults.standard.string(forKey: "kobold.google.clientId") ?? "" }
     var clientSecret: String { UserDefaults.standard.string(forKey: "kobold.google.clientSecret") ?? "" }
 

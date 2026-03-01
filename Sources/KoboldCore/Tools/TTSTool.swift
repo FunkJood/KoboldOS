@@ -11,7 +11,7 @@ public struct TTSTool: Tool {
     public var schema: ToolSchema {
         ToolSchema(properties: [
             "text": ToolSchemaProperty(type: "string", description: "Der Text der vorgelesen werden soll", required: true),
-            "voice": ToolSchemaProperty(type: "string", description: "Stimme/Sprache, z.B. 'de-DE', 'en-US'. Standard: Systemsprache"),
+            "voice": ToolSchemaProperty(type: "string", description: "Optional: Sprache für System-TTS z.B. 'de-DE'. Bei ElevenLabs wird automatisch die konfigurierte Stimme verwendet."),
             "rate": ToolSchemaProperty(type: "string", description: "Geschwindigkeit 0.1-1.0. Standard: 0.5"),
         ], required: ["text"])
     }

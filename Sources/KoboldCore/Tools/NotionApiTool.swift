@@ -39,7 +39,7 @@ public struct NotionApiTool: Tool {
 
     private func notionRequest(endpoint: String, method: String = "GET", body: String? = nil) async -> String {
         guard let token = getToken() else {
-            return "Error: Nicht bei Notion angemeldet. Bitte unter Einstellungen → Verbindungen → Notion anmelden."
+            return "Error: Nicht bei Notion angemeldet. Bitte unter Einstellungen → Integrationen → Notion anmelden."
         }
 
         let urlStr = endpoint.hasPrefix("http") ? endpoint : "https://api.notion.com/v1\(endpoint)"
@@ -61,7 +61,7 @@ public struct NotionApiTool: Tool {
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             let responseStr = String(data: data.prefix(8192), encoding: .utf8) ?? "(empty)"
             if status == 401 {
-                return "Error: Notion-Token ungültig. Bitte unter Einstellungen → Verbindungen → Notion neu anmelden."
+                return "Error: Notion-Token ungültig. Bitte unter Einstellungen → Integrationen → Notion neu anmelden."
             }
             if status >= 400 { return "Error: HTTP \(status): \(responseStr)" }
             return responseStr

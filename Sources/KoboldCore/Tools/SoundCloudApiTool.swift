@@ -38,7 +38,7 @@ public struct SoundCloudApiTool: Tool {
         let filePath = arguments["file_path"]
 
         guard let accessToken = await getValidToken() else {
-            return "Error: Nicht bei SoundCloud angemeldet. Bitte zuerst in Einstellungen → Verbindungen → SoundCloud anmelden."
+            return "Error: Nicht bei SoundCloud angemeldet. Bitte zuerst in Einstellungen → Integrationen → SoundCloud anmelden."
         }
 
         // Route to upload handler if file_path is provided

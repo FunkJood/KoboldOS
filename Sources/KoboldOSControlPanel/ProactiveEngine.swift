@@ -69,6 +69,10 @@ struct GoalEntry: Identifiable, Codable {
         case high = "Hoch"
         case medium = "Mittel"
         case low = "Niedrig"
+
+        var rawInt: Int {
+            switch self { case .low: return 0; case .medium: return 1; case .high: return 2 }
+        }
     }
 
     enum GoalCategory: String, Codable, CaseIterable {
@@ -99,14 +103,14 @@ struct IdleTask: Identifiable, Codable {
 
     static let examples: [IdleTask] = [
         // Konkrete Aufgaben
-        IdleTask(name: "Brew Updates prüfen", prompt: "Prüfe ob Homebrew-Pakete veraltet sind und zeig mir eine Zusammenfassung.", priority: .low, cooldownMinutes: 1440),
-        IdleTask(name: "Downloads aufräumen", prompt: "Schau in meinen Downloads-Ordner und schlage vor welche Dateien gelöscht werden können (älter als 30 Tage, doppelt, temporär).", priority: .medium, cooldownMinutes: 1440),
-        IdleTask(name: "Speicherplatz checken", prompt: "Prüfe den verfügbaren Speicherplatz und warne mich wenn weniger als 10GB frei sind.", priority: .high, cooldownMinutes: 360),
+        IdleTask(name: "Brew Updates prüfen", prompt: "Prüfe ob Homebrew-Pakete veraltet sind und zeig mir eine Zusammenfassung.", priority: .medium, cooldownMinutes: 120),
+        IdleTask(name: "Downloads aufräumen", prompt: "Schau in meinen Downloads-Ordner und schlage vor welche Dateien gelöscht werden können (älter als 30 Tage, doppelt, temporär).", priority: .medium, cooldownMinutes: 180),
+        IdleTask(name: "Speicherplatz checken", prompt: "Prüfe den verfügbaren Speicherplatz und warne mich wenn weniger als 10GB frei sind.", priority: .high, cooldownMinutes: 60),
         // Vage Richtungen / Explorativ
-        IdleTask(name: "Verbesserungen finden", prompt: "Schau dich um und finde etwas auf meinem System das man verbessern, optimieren oder aufräumen könnte. Sei kreativ — Performance, Organisation, Sicherheit, alles ist fair game.", priority: .medium, cooldownMinutes: 720),
-        IdleTask(name: "Sicherheit im Blick", prompt: "Halte Ausschau nach potenziellen Sicherheitsproblemen auf meinem System — veraltete Software, offene Ports, unsichere Berechtigungen, verdächtige Prozesse. Berichte was dir auffällt.", priority: .high, cooldownMinutes: 1440),
-        IdleTask(name: "Neues entdecken", prompt: "Recherchiere etwas Interessantes — neue Tools, Technologien oder Tipps die für mich nützlich sein könnten. Basiere das auf meiner bisherigen Nutzung und meinen Projekten.", priority: .low, cooldownMinutes: 2880),
-        IdleTask(name: "Projekte checken", prompt: "Schau in meine Projekte und Repos. Gibt es uncommitted Changes, veraltete Dependencies, TODOs im Code oder andere Dinge die Aufmerksamkeit brauchen? Fass zusammen was du findest.", priority: .medium, cooldownMinutes: 720),
+        IdleTask(name: "Verbesserungen finden", prompt: "Schau dich um und finde etwas auf meinem System das man verbessern, optimieren oder aufräumen könnte. Sei kreativ — Performance, Organisation, Sicherheit, alles ist fair game.", priority: .medium, cooldownMinutes: 120),
+        IdleTask(name: "Sicherheit im Blick", prompt: "Halte Ausschau nach potenziellen Sicherheitsproblemen auf meinem System — veraltete Software, offene Ports, unsichere Berechtigungen, verdächtige Prozesse. Berichte was dir auffällt.", priority: .high, cooldownMinutes: 180),
+        IdleTask(name: "Neues entdecken", prompt: "Recherchiere etwas Interessantes — neue Tools, Technologien oder Tipps die für mich nützlich sein könnten. Basiere das auf meiner bisherigen Nutzung und meinen Projekten.", priority: .low, cooldownMinutes: 240),
+        IdleTask(name: "Projekte checken", prompt: "Schau in meine Projekte und Repos. Gibt es uncommitted Changes, veraltete Dependencies, TODOs im Code oder andere Dinge die Aufmerksamkeit brauchen? Fass zusammen was du findest.", priority: .medium, cooldownMinutes: 120),
     ]
 }
 
@@ -139,25 +143,28 @@ class ProactiveEngine: ObservableObject {
     @AppStorage("kobold.proactive.heartbeat.intervalSec") var heartbeatIntervalSec: Int = 60
     @AppStorage("kobold.proactive.heartbeat.showInDashboard") var heartbeatShowInDashboard: Bool = true
     @AppStorage("kobold.proactive.heartbeat.logRetention") var heartbeatLogRetention: Int = 50
+    @AppStorage("kobold.proactive.heartbeat.notify") var heartbeatNotify: Bool = true
 
     // Idle Tasks
-    @AppStorage("kobold.proactive.idleTasks") var idleTasksEnabled: Bool = false
-    @AppStorage("kobold.proactive.idle.minIdleMinutes") var idleMinIdleMinutes: Int = 5
-    @AppStorage("kobold.proactive.idle.maxPerHour") var idleMaxPerHour: Int = 3
+    @AppStorage("kobold.proactive.idleTasks") var idleTasksEnabled: Bool = true
+    @AppStorage("kobold.proactive.idle.minIdleMinutes") var idleMinIdleMinutes: Int = 3
+    @AppStorage("kobold.proactive.idle.maxPerHour") var idleMaxPerHour: Int = 5
     @AppStorage("kobold.proactive.idle.allowShell") var idleAllowShell: Bool = false
     @AppStorage("kobold.proactive.idle.allowNetwork") var idleAllowNetwork: Bool = false
     @AppStorage("kobold.proactive.idle.allowFileWrite") var idleAllowFileWrite: Bool = false
-    @AppStorage("kobold.proactive.idle.onlyHighPriority") var idleOnlyHighPriority: Bool = true
-    @AppStorage("kobold.proactive.idle.categories") var idleCategoriesRaw: String = "system,error"
+    @AppStorage("kobold.proactive.idle.onlyHighPriority") var idleOnlyHighPriority: Bool = false
+    @AppStorage("kobold.proactive.idle.categories") var idleCategoriesRaw: String = "system,error,idle,custom"
     @AppStorage("kobold.proactive.idle.quietHoursStart") var idleQuietHoursStart: Int = 22
     @AppStorage("kobold.proactive.idle.quietHoursEnd") var idleQuietHoursEnd: Int = 7
     @AppStorage("kobold.proactive.idle.quietHoursEnabled") var idleQuietHoursEnabled: Bool = false
     @AppStorage("kobold.proactive.idle.notifyOnExecution") var idleNotifyOnExecution: Bool = true
     @AppStorage("kobold.proactive.idle.pauseOnUserActivity") var idlePauseOnUserActivity: Bool = true
+    @AppStorage("kobold.proactive.idle.telegramMinPriority") var telegramMinPriority: String = "high"  // "high", "medium", "low", "off"
 
-    var lastUserActivity: Date = Date()
+    var lastUserActivity: Date = .distantPast  // Start as "long idle" so first heartbeat can fire
     private var idleExecutionsThisHour: Int = 0
     private var lastHourReset: Date = Date()
+    private var lastAutoTaskExecution: Date = .distantPast
 
     private var checkTask: Task<Void, Never>?
     private var heartbeatTask: Task<Void, Never>?
@@ -173,9 +180,34 @@ class ProactiveEngine: ObservableObject {
     }
 
     private init() {
+        migrateDefaults()
         loadRules()
         loadGoals()
         loadIdleTasks()
+    }
+
+    /// One-time migration: Fix broken defaults from versions < 0.3.6
+    private func migrateDefaults() {
+        let key = "kobold.proactive.migrated_v036"
+        if !UserDefaults.standard.bool(forKey: key) {
+            print("[ProactiveEngine] Migrating defaults to v0.3.6")
+            UserDefaults.standard.set(true, forKey: "kobold.proactive.heartbeat.notify")
+            UserDefaults.standard.set(false, forKey: "kobold.proactive.idle.onlyHighPriority")
+            UserDefaults.standard.set("system,error,idle,custom", forKey: "kobold.proactive.idle.categories")
+            UserDefaults.standard.set(5, forKey: "kobold.proactive.idle.maxPerHour")
+            UserDefaults.standard.set(true, forKey: key)
+            UserDefaults.standard.removeObject(forKey: idleTasksKey)
+        }
+        // v2: The critical switches — enabled + idleTasks MUST be on for the system to work.
+        // Previous migration missed "kobold.proactive.enabled" entirely, and idleTasks kept resetting.
+        let key2 = "kobold.proactive.migrated_v036_v2"
+        if !UserDefaults.standard.bool(forKey: key2) {
+            print("[ProactiveEngine] Migration v2: Enabling proactive engine + idle tasks")
+            UserDefaults.standard.set(true, forKey: "kobold.proactive.enabled")
+            UserDefaults.standard.set(true, forKey: "kobold.proactive.idleTasks")
+            UserDefaults.standard.set(true, forKey: "kobold.proactive.heartbeat.enabled")
+            UserDefaults.standard.set(true, forKey: key2)
+        }
     }
 
     /// Call on app termination to prevent task leak
@@ -261,6 +293,11 @@ class ProactiveEngine: ObservableObject {
            let saved = try? JSONDecoder().decode([IdleTask].self, from: data) {
             idleTasks = saved
         }
+        // Auto-load defaults if empty (user can delete/disable individually)
+        if idleTasks.isEmpty {
+            idleTasks = IdleTask.examples
+            saveIdleTasks()
+        }
     }
 
     func saveIdleTasks() {
@@ -303,7 +340,12 @@ class ProactiveEngine: ObservableObject {
     // MARK: - Timer Control
 
     func startPeriodicCheck(viewModel: RuntimeViewModel) {
-        guard isEnabled else { return }
+        guard isEnabled else {
+            print("[ProactiveEngine] DISABLED — not starting timers")
+            return
+        }
+        let taskCount = idleTasks.filter(\.enabled).count
+        print("[ProactiveEngine] ✅ Starting | interval=\(checkIntervalMinutes)m | heartbeat=\(heartbeatIntervalSec)s | idleTasks=\(idleTasksEnabled) (\(taskCount) tasks) | notify=\(heartbeatNotify) | onlyHigh=\(idleOnlyHighPriority) | minIdle=\(idleMinIdleMinutes)m")
         checkTask?.cancel()
         heartbeatTask?.cancel()
         let interval = UInt64(max(1, checkIntervalMinutes)) * 60_000_000_000
@@ -311,12 +353,20 @@ class ProactiveEngine: ObservableObject {
             // Initial check after 15 seconds
             try? await Task.sleep(nanoseconds: 15_000_000_000)
             if let self, let viewModel, !Task.isCancelled {
-                await MainActor.run { self.generateSuggestions(viewModel: viewModel) }
+                // F2: generateSuggestions ist leichtgewichtig genug für MainActor,
+                // aber nur ausführen wenn UI nicht aktiv rendert (viewModel nicht loading)
+                await MainActor.run {
+                    guard !viewModel.agentLoading else { return }
+                    self.generateSuggestions(viewModel: viewModel)
+                }
             }
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: interval)
                 guard !Task.isCancelled, let self, let viewModel else { break }
-                await MainActor.run { self.generateSuggestions(viewModel: viewModel) }
+                await MainActor.run {
+                    guard !viewModel.agentLoading else { return }
+                    self.generateSuggestions(viewModel: viewModel)
+                }
             }
         }
         if heartbeatEnabled {
@@ -361,18 +411,23 @@ class ProactiveEngine: ObservableObject {
 
     private func heartbeat(viewModel: RuntimeViewModel) {
         lastHeartbeat = Date()
+        let now = Date()
+        let idleMinutes = now.timeIntervalSince(lastUserActivity) / 60.0
+
+        print("[ProactiveEngine] ♥ Heartbeat | idle=\(Int(idleMinutes))m | tasksEnabled=\(idleTasksEnabled) | onlyHigh=\(idleOnlyHighPriority) | notify=\(heartbeatNotify) | agentBusy=\(viewModel.agentLoading) | execs=\(idleExecutionsThisHour)/\(idleMaxPerHour)")
 
         // Reset hourly counter
-        let now = Date()
         if now.timeIntervalSince(lastHourReset) > 3600 {
             idleExecutionsThisHour = 0
             lastHourReset = now
         }
 
-        // Agent busy?
-        guard !viewModel.agentLoading else {
-            heartbeatStatus = "Agent aktiv"
-            addHeartbeatLog(status: "Agent aktiv", action: nil)
+        // Agent or Ollama busy?
+        guard !viewModel.agentLoading && !viewModel.isOllamaBusy else {
+            let reason = viewModel.isOllamaBusy ? "Ollama beschäftigt" : "Agent aktiv"
+            heartbeatStatus = reason
+            addHeartbeatLog(status: reason, action: nil)
+            print("[ProactiveEngine] ⏸ Blocked: \(reason)")
             return
         }
 
@@ -380,6 +435,7 @@ class ProactiveEngine: ObservableObject {
         guard idleTasksEnabled else {
             heartbeatStatus = "Idle"
             addHeartbeatLog(status: "Idle (Tasks deaktiviert)", action: nil)
+            print("[ProactiveEngine] ⏸ idleTasksEnabled=false → skipping")
             return
         }
 
@@ -395,51 +451,94 @@ class ProactiveEngine: ObservableObject {
             if inQuiet {
                 heartbeatStatus = "Ruhezeit"
                 addHeartbeatLog(status: "Ruhezeit (\(idleQuietHoursStart):00–\(idleQuietHoursEnd):00)", action: nil)
+                print("[ProactiveEngine] ⏸ Quiet hours")
                 return
             }
         }
 
         // Pause on user activity?
-        if idlePauseOnUserActivity {
-            let idleMinutes = now.timeIntervalSince(lastUserActivity) / 60.0
-            if idleMinutes < Double(idleMinIdleMinutes) {
-                heartbeatStatus = "User aktiv"
-                addHeartbeatLog(status: "User aktiv (Idle: \(Int(idleMinutes))m < \(idleMinIdleMinutes)m)", action: nil)
-                return
-            }
+        if idlePauseOnUserActivity && idleMinutes < Double(idleMinIdleMinutes) {
+            heartbeatStatus = "User aktiv"
+            addHeartbeatLog(status: "User aktiv (Idle: \(Int(idleMinutes))m < \(idleMinIdleMinutes)m)", action: nil)
+            print("[ProactiveEngine] ⏸ User active (\(Int(idleMinutes))m < \(idleMinIdleMinutes)m)")
+            return
         }
 
         // Rate limit
         if idleExecutionsThisHour >= idleMaxPerHour {
             heartbeatStatus = "Limit erreicht (\(idleMaxPerHour)/h)"
             addHeartbeatLog(status: "Stunden-Limit erreicht", action: nil)
+            print("[ProactiveEngine] ⏸ Rate limit reached (\(idleExecutionsThisHour)/\(idleMaxPerHour))")
             return
         }
 
         heartbeatStatus = "Beobachtet..."
 
-        // 1. Try user-defined idle tasks first (have priority)
-        if let userTask = getNextUserIdleTask() {
+        // 1. Try user-defined idle tasks first
+        let availableTasks = idleTasks.filter { $0.enabled }
+        let readyTasks = availableTasks.filter { task in
+            if idleOnlyHighPriority && task.priority != .high { return false }
+            if let lastRun = task.lastRun {
+                let cooldownSec = Double(task.cooldownMinutes) * 60
+                if now.timeIntervalSince(lastRun) < cooldownSec { return false }
+            }
+            return true
+        }
+        print("[ProactiveEngine] 📋 Tasks: \(idleTasks.count) total, \(availableTasks.count) enabled, \(readyTasks.count) ready (cooldown OK)")
+
+        let permPrefix = idlePermissionPrefix()
+
+        if let userTask = readyTasks.first {
             heartbeatStatus = "Führt aus: \(userTask.name)"
             addHeartbeatLog(status: "Idle-Aufgabe", action: userTask.name)
-            viewModel.executeTask(taskId: "idle-\(userTask.id)", taskName: userTask.name, prompt: userTask.prompt, navigate: false)
+            print("[ProactiveEngine] ▶ EXECUTING idle task: \(userTask.name)")
+            viewModel.executeTask(taskId: "idle-tasks", taskName: "Idle-Aufgaben", prompt: permPrefix + userTask.prompt, navigate: true)
             markIdleTaskRun(userTask.id)
             idleTasksCompleted += 1
             idleExecutionsThisHour += 1
+            notify(viewModel: viewModel, title: "Idle-Task gestartet", message: userTask.name, type: .success, target: "tasks", priority: userTask.priority, forceSystem: idleNotifyOnExecution)
             return
         }
 
-        // 2. Fallback to auto-generated suggestions
+        // 2. Fallback to auto-generated suggestions (mit 30-min Cooldown)
+        let autoCooldownOk = now.timeIntervalSince(lastAutoTaskExecution) > 1800
         let autoTasks = getAutoIdleTasks()
-        if let task = autoTasks.first {
+        print("[ProactiveEngine] 📋 Auto-tasks available: \(autoTasks.count), cooldownOk=\(autoCooldownOk)")
+        if autoCooldownOk, let task = autoTasks.first {
             heartbeatStatus = "Führt aus: \(task.title)"
             addHeartbeatLog(status: "Auto-Aufgabe", action: task.title)
-            viewModel.executeTask(taskId: "auto-\(task.id)", taskName: task.title, prompt: task.action, navigate: false)
+            print("[ProactiveEngine] ▶ EXECUTING auto task: \(task.title)")
+            viewModel.executeTask(taskId: "idle-tasks", taskName: "Idle-Aufgaben", prompt: permPrefix + task.action, navigate: true)
             idleTasksCompleted += 1
             idleExecutionsThisHour += 1
+            lastAutoTaskExecution = now
+            let autoPrio: GoalEntry.GoalPriority = task.priority == .high ? .high : task.priority == .medium ? .medium : .low
+            notify(viewModel: viewModel, title: "Auto-Task gestartet", message: task.title, type: .success, target: "tasks", priority: autoPrio, forceSystem: idleNotifyOnExecution)
         } else {
             heartbeatStatus = "Keine Aufgaben"
             addHeartbeatLog(status: "Keine passenden Aufgaben", action: nil)
+            print("[ProactiveEngine] ⏸ No tasks ready (all on cooldown or filtered)")
+        }
+    }
+
+    /// Unified notification helper — sends in-app, macOS system, and optionally Telegram notification
+    private func notify(viewModel: RuntimeViewModel, title: String, message: String, type: KoboldNotification.NotificationType, target: String, priority: GoalEntry.GoalPriority = .medium, forceSystem: Bool = false) {
+        guard heartbeatNotify || forceSystem else { return }
+        viewModel.addNotification(title: title, message: message, type: type, navigationTarget: target)
+        viewModel.postSystemNotification(title: "KoboldOS — \(title)", body: message)
+
+        // Telegram senden wenn Priorität hoch genug
+        if telegramMinPriority != "off" {
+            let minLevel: Int
+            switch telegramMinPriority {
+            case "low": minLevel = 0
+            case "medium": minLevel = 1
+            case "high": minLevel = 2
+            default: minLevel = 99  // off
+            }
+            if priority.rawInt >= minLevel {
+                TelegramBot.shared.sendNotification("🤖 \(title): \(message)")
+            }
         }
     }
 
@@ -448,6 +547,16 @@ class ProactiveEngine: ObservableObject {
         if heartbeatLog.count > heartbeatLogRetention {
             heartbeatLog = Array(heartbeatLog.prefix(heartbeatLogRetention))
         }
+    }
+
+    /// Build permission restrictions string for idle task prompts
+    private func idlePermissionPrefix() -> String {
+        var restrictions: [String] = []
+        if !idleAllowShell { restrictions.append("KEIN Shell/Terminal") }
+        if !idleAllowNetwork { restrictions.append("KEIN Netzwerk/Browser/HTTP") }
+        if !idleAllowFileWrite { restrictions.append("KEINE Dateien schreiben/löschen") }
+        guard !restrictions.isEmpty else { return "" }
+        return "[IDLE-TASK EINSCHRÄNKUNGEN: \(restrictions.joined(separator: ", ")). Nutze nur erlaubte Tools.]\n\n"
     }
 
     /// Next user-defined idle task that is ready to run (respects cooldown)
@@ -537,7 +646,7 @@ class ProactiveEngine: ObservableObject {
         }
 
         // 3. System health (configurable)
-        if systemHealth && viewModel.ollamaStatus != "Running" {
+        if systemHealth && viewModel.ollamaStatus == "Offline" {
             newSuggestions.append(ProactiveSuggestion(
                 icon: "exclamationmark.triangle.fill", title: "Ollama nicht aktiv",
                 message: "Ollama scheint nicht zu laufen. Soll ich es starten?",

@@ -38,7 +38,7 @@ public struct TwilioSmsTool: Tool {
         let defaultFrom = d.string(forKey: "kobold.twilio.fromNumber") ?? ""
 
         guard !accountSid.isEmpty, !authToken.isEmpty else {
-            return "Error: Twilio nicht konfiguriert. Bitte AccountSID und AuthToken unter Einstellungen → Verbindungen → Twilio eintragen."
+            return "Error: Twilio nicht konfiguriert. Bitte AccountSID und AuthToken unter Einstellungen → Integrationen → Twilio eintragen."
         }
 
         let sender = from.isEmpty ? defaultFrom : from

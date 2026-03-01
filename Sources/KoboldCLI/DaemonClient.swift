@@ -7,9 +7,18 @@ struct DaemonClient: Sendable {
     let baseURL: String
     let token: String
 
-    init(port: Int = 8080, token: String = "kobold-secret") {
+    /// Read auth token from the GUI app's UserDefaults (same source as RuntimeManager)
+    static func resolveToken() -> String {
+        if let guiDefaults = UserDefaults(suiteName: "com.koboldos.controlpanel"),
+           let token = guiDefaults.string(forKey: "kobold.authToken"), !token.isEmpty {
+            return token
+        }
+        return "kobold-secret"
+    }
+
+    init(port: Int = 8080, token: String = "") {
         self.baseURL = "http://localhost:\(port)"
-        self.token = token
+        self.token = token.isEmpty ? Self.resolveToken() : token
     }
 
     // MARK: - GET

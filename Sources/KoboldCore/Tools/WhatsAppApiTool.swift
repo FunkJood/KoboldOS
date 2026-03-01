@@ -45,7 +45,7 @@ public struct WhatsAppApiTool: Tool {
 
     private func whatsappRequest(endpoint: String, method: String = "POST", body: String? = nil) async -> String {
         guard let creds = getCredentials() else {
-            return "Error: WhatsApp nicht konfiguriert. Bitte unter Einstellungen → Verbindungen → WhatsApp anmelden und Phone Number ID eintragen."
+            return "Error: WhatsApp nicht konfiguriert. Bitte unter Einstellungen → Integrationen → WhatsApp anmelden und Phone Number ID eintragen."
         }
 
         let urlStr = endpoint.hasPrefix("http") ? endpoint : "https://graph.facebook.com/v18.0/\(creds.phoneNumberId)\(endpoint)"
@@ -75,7 +75,7 @@ public struct WhatsAppApiTool: Tool {
                     if retryStatus >= 400 { return "Error: HTTP \(retryStatus): \(retryBody)" }
                     return retryBody
                 } else {
-                    return "Error: WhatsApp-Token abgelaufen und Refresh fehlgeschlagen. Bitte unter Einstellungen → Verbindungen → WhatsApp neu anmelden."
+                    return "Error: WhatsApp-Token abgelaufen und Refresh fehlgeschlagen. Bitte unter Einstellungen → Integrationen → WhatsApp neu anmelden."
                 }
             }
 

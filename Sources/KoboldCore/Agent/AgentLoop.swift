@@ -101,7 +101,7 @@ public actor AgentLoop {
     private let maxConversationHistory = 500
     /// Proper message pairs for LLM context injection across turns
     private var conversationMessages: [[String: String]] = []
-    private let maxConversationPairs = 250
+    private let maxConversationPairs = 50  // 50 Paare = 100 Messages, genug Kontext ohne Bloat
     private var agentType: AgentType = .general
     private var currentProviderConfig: LLMProviderConfig?
 
@@ -169,14 +169,21 @@ public actor AgentLoop {
         }
     }
 
+    /// Set skipApproval on the tool registry (for headless/Telegram/scheduled sources)
+    public func setSkipApproval(_ skip: Bool) async {
+        await registry.setSkipApproval(skip)
+    }
+
     /// Inject conversation history from UI session so the agent knows what was discussed.
     /// Called by DaemonListener before runStreaming() to provide full chat context.
     public func injectConversationHistory(_ history: [[String: String]]) {
+        // Vorherige History IMMER löschen (verhindert Akkumulation bei Worker-Reuse)
+        self.conversationMessages = []
+        self.conversationHistory = []
         // Take last N pairs to stay within context limits
         let maxPairs = maxConversationPairs
         let trimmed = history.count > maxPairs * 2 ? Array(history.suffix(maxPairs * 2)) : history
         self.conversationMessages = trimmed
-        // Also populate string history for memory
         for msg in trimmed {
             let role = msg["role"] ?? "user"
             let content = msg["content"] ?? ""
@@ -243,6 +250,7 @@ public actor AgentLoop {
         await registry.register(SunoApiTool())
         await registry.register(RedditApiTool())
         await registry.register(TwilioSmsTool())
+        await registry.register(TwilioVoiceCallTool())
         await registry.register(EmailTool())
         await registry.register(CalDAVTool())
         await registry.register(MQTTTool())
@@ -261,6 +269,14 @@ public actor AgentLoop {
         await registry.register(TelegramTool())
         // Text-to-Speech
         await registry.register(TTSTool())
+        // ElevenLabs API (TTS, Sound FX, Voice Cloning)
+        await registry.register(ElevenLabsApiTool())
+        // Document/PDF semantic search
+        await registry.register(DocumentSearchTool())
+        // Claude Code CLI integration
+        await registry.register(ClaudeCodeTool())
+        // Cloudflare Tunnel management
+        await registry.register(CloudflareTunnelTool())
         // Secrets & Keychain access
         await registry.register(SecretsTool())
         // Settings read/write
@@ -459,7 +475,7 @@ public actor AgentLoop {
         } else if autonomyLevel >= 2 {
             selfCheckPrompt = "\n\n# Werkzeug-Nutzung\nDu darfst alle aktivierten Tools selbstständig nutzen ohne nachzufragen. Handle Aufgaben direkt. Frage NUR bei potenziell destruktiven Aktionen (Dateien löschen, System ändern) nach Bestätigung."
         } else {
-            selfCheckPrompt = ""
+            selfCheckPrompt = "\n\n# Werkzeug-Nutzung\nDu darfst alle aktivierten Tools nutzen. Die Berechtigungen sind systemweit konfiguriert und gelten für alle Chats. Frage NICHT jedes Mal nach Erlaubnis — nutze die Tools direkt wenn die Aufgabe es erfordert. Frage nur bei destruktiven Aktionen (Dateien löschen, System ändern) nach Bestätigung."
         }
         let confidencePrompt = """
 
@@ -514,7 +530,7 @@ public actor AgentLoop {
             let llmResponse: String
             do {
                 let resp: LLMResponse
-                if let pc = providerConfig, pc.isCloudProvider, !pc.apiKey.isEmpty {
+                if let pc = providerConfig {
                     resp = try await llmRunner.generateWithTokens(messages: messages, config: pc)
                 } else {
                     resp = try await llmRunner.generateWithTokens(messages: messages)
@@ -591,6 +607,12 @@ public actor AgentLoop {
                         stepNumber: stepCount, type: .toolResult,
                         content: result.outputOrError, toolCallName: call.name,
                         toolResultSuccess: result.isSuccess, timestamp: Date()
+                    ))
+                    // Consciousness: record tool event
+                    await ConsciousnessEngine.shared.recordEvent(.init(
+                        type: result.isSuccess ? .toolSuccess : .toolError,
+                        content: "Tool '\(call.name)': \(String(result.outputOrError.prefix(200)))",
+                        metadata: ["toolName": call.name]
                     ))
                     let truncatedResult = resultText.count > maxToolResultChars
                         ? String(resultText.prefix(maxToolResultChars)) + "\n... (gekürzt)"
@@ -716,6 +738,19 @@ public actor AgentLoop {
                 toolResultSuccess: result.isSuccess, timestamp: Date()
             ))
 
+            // Consciousness: record tool event + auto-save errors
+            await ConsciousnessEngine.shared.recordEvent(.init(
+                type: result.isSuccess ? .toolSuccess : .toolError,
+                content: "Tool '\(call.name)': \(String(result.outputOrError.prefix(200)))",
+                metadata: ["toolName": call.name]
+            ))
+            if !result.isSuccess {
+                await ConsciousnessEngine.shared.recordError(
+                    text: "Fehler bei Tool '\(call.name)': \(String(result.outputOrError.prefix(300)))",
+                    toolName: call.name
+                )
+            }
+
             if ruleEngine.shouldTerminate(afterCalling: call.name) {
                 let answer = result.outputOrError
                 return AgentResult(finalOutput: answer, steps: steps, success: result.isSuccess)
@@ -812,7 +847,7 @@ public actor AgentLoop {
                     let actualStep = checkpoint.stepCount + stepCount
                     let llmResponse: String
                     do {
-                        if let pc = providerConfig, pc.isCloudProvider, !pc.apiKey.isEmpty {
+                        if let pc = providerConfig {
                             llmResponse = try await llmRunner.generate(messages: messages, config: pc)
                         } else {
                             llmResponse = try await llmRunner.generate(messages: messages)
@@ -1017,7 +1052,7 @@ public actor AgentLoop {
                 } else if autonomyLevel >= 2 {
                     selfCheckPrompt = "\n\n# Werkzeug-Nutzung\nDu darfst alle aktivierten Tools selbstständig nutzen ohne nachzufragen. Handle Aufgaben direkt. Frage NUR bei potenziell destruktiven Aktionen (Dateien löschen, System ändern) nach Bestätigung."
                 } else {
-                    selfCheckPrompt = ""
+                    selfCheckPrompt = "\n\n# Werkzeug-Nutzung\nDu darfst alle aktivierten Tools nutzen. Die Berechtigungen sind systemweit konfiguriert und gelten für alle Chats. Frage NICHT jedes Mal nach Erlaubnis — nutze die Tools direkt wenn die Aufgabe es erfordert. Frage nur bei destruktiven Aktionen (Dateien löschen, System ändern) nach Bestätigung."
                 }
                 let confidencePrompt = "\n\n# Confidence Self-Assessment\nInclude a \"confidence\" field (0.0-1.0) in every JSON response. 1.0 = certain, 0.0 = unsure. If confidence < 0.5, use the response tool to ask the user for clarification instead of guessing."
                 let archivalPrompt = "\n\n# Archival Memory\nWenn Core Memory Blöcke voll sind (>80% Limit), nutze archival_memory_insert um ältere Informationen zu archivieren. Nutze archival_memory_search um archivierte Informationen wieder zu finden."
@@ -1064,10 +1099,8 @@ public actor AgentLoop {
                         self.manageContext(&messages)
                     }
 
-                    // UI breathing room before LLM call (lets MainActor process pending renders)
-                    if stepCount > 1 {
-                        try? await Task.sleep(nanoseconds: 200_000_000) // 200ms pause between steps
-                    }
+                    // Yield statt Sleep — gibt anderen Tasks CPU ohne künstliche Verzögerung
+                    if stepCount > 1 { await Task.yield() }
 
                     let llmResponse: String
                     do {
@@ -1082,7 +1115,8 @@ public actor AgentLoop {
                         let resp: LLMResponse = try await withThrowingTaskGroup(of: LLMResponse.self) { group in
                             defer { group.cancelAll() } // P12: verhindert hängende LLM-Calls
                             group.addTask {
-                                if let pc = llmPC, pc.isCloudProvider, !pc.apiKey.isEmpty {
+                                if let pc = llmPC {
+                                    // Config durchreichen — auch für Ollama (numPredict für Voice-Latenz)
                                     return try await capturedRunner.generateWithTokens(messages: llmMessages, config: pc)
                                 } else {
                                     return try await capturedRunner.generateWithTokens(messages: llmMessages)
@@ -1407,6 +1441,19 @@ public actor AgentLoop {
                         continuation.yield(toolResultStep)
                     }
 
+                    // Consciousness: record tool event + auto-save errors
+                    await ConsciousnessEngine.shared.recordEvent(.init(
+                        type: result.isSuccess ? .toolSuccess : .toolError,
+                        content: "Tool '\(call.name)': \(String(result.outputOrError.prefix(200)))",
+                        metadata: ["toolName": call.name]
+                    ))
+                    if !result.isSuccess {
+                        await ConsciousnessEngine.shared.recordError(
+                            text: "Fehler bei Tool '\(call.name)': \(String(result.outputOrError.prefix(300)))",
+                            toolName: call.name
+                        )
+                    }
+
                     // Save checkpoint every 5 steps (not every tool call — reduces disk I/O by 80%)
                     if stepCount % 5 == 0 || stepCount == 1 {
                         let cpStep = stepCount
@@ -1470,9 +1517,8 @@ public actor AgentLoop {
                     conversationHistory.append("Assistant (Schritt \(stepCount)): Tool '\(call.name)' ausgeführt")
                     self.trimConversationHistory()
 
-                    // Micro-pause between tool steps — gives the UI thread breathing room
-                    // Without this, back-to-back tool calls (shell, file, etc.) starve the MainActor
-                    try? await Task.sleep(nanoseconds: 150_000_000) // 150ms
+                    // Yield statt Sleep — CPU freigeben ohne künstliche Verzögerung
+                    await Task.yield()
                 }
 
                 // Step limit reached
@@ -1508,7 +1554,7 @@ public actor AgentLoop {
     public func getTraceJSON() async -> String { "{}" }
     public func getTimelineJSON() async -> String { "{}" }
 
-    private func buildGoalsSection() -> String {
+    public func buildGoalsSection() -> String {
         guard let data = UserDefaults.standard.data(forKey: "kobold.proactive.goals") else { return "" }
         // Parse GoalEntry-style JSON
         struct GoalEntry: Codable { var text: String; var isActive: Bool; var priority: String }
@@ -1528,7 +1574,7 @@ public actor AgentLoop {
 
     // MARK: - Tool Descriptions (AgentZero-style with JSON examples)
 
-    private func buildConnectionsContext() -> String {
+    public func buildConnectionsContext() -> String {
         var lines: [String] = []
 
         // Telegram
@@ -1574,6 +1620,59 @@ public actor AgentLoop {
         if !redditToken.isEmpty {
             let redditUser = UserDefaults.standard.string(forKey: "kobold.reddit.username") ?? "unbekannt"
             lines.append("- Reddit: VERBUNDEN als \(redditUser). Nutze reddit_api Tool für Posts, Suche, Kommentare.")
+        }
+
+        // Twilio SMS
+        let twilioSid = UserDefaults.standard.string(forKey: "kobold.twilio.accountSid") ?? ""
+        let twilioToken = UserDefaults.standard.string(forKey: "kobold.twilio.authToken") ?? ""
+        if !twilioSid.isEmpty && !twilioToken.isEmpty {
+            let twilioFrom = UserDefaults.standard.string(forKey: "kobold.twilio.fromNumber") ?? ""
+            let fromInfo = twilioFrom.isEmpty ? "" : " (Von: \(twilioFrom))"
+            lines.append("- Twilio SMS: VERBUNDEN\(fromInfo). Nutze sms_send Tool um SMS zu versenden.")
+            lines.append("- Twilio Telefonie: VERBUNDEN. Nutze phone_call Tool um Anrufe zu tätigen (z.B. Friseur-Termin, Restaurantreservierung).")
+            let twilioPublicUrl = UserDefaults.standard.string(forKey: "kobold.twilio.publicUrl") ?? ""
+            let tunnelUrl = UserDefaults.standard.string(forKey: "kobold.tunnel.url") ?? ""
+            let publicUrl = twilioPublicUrl.isEmpty ? tunnelUrl : twilioPublicUrl
+            if !publicUrl.isEmpty {
+                let whitelist = UserDefaults.standard.string(forKey: "kobold.twilio.whitelist") ?? ""
+                let whitelistCount = whitelist.components(separatedBy: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }.count
+                lines.append("  Eingehende Anrufe/SMS: Webhook aktiv (\(whitelistCount) Nummern in Whitelist)")
+            }
+        }
+
+        // Email (SMTP/IMAP)
+        let emailAddr = UserDefaults.standard.string(forKey: "kobold.email.address") ?? ""
+        let emailPw = UserDefaults.standard.string(forKey: "kobold.email.password") ?? ""
+        if !emailAddr.isEmpty && !emailPw.isEmpty {
+            lines.append("- Email: VERBUNDEN als \(emailAddr). Nutze email Tool zum Senden/Empfangen von E-Mails.")
+        }
+
+        // CalDAV
+        let caldavURL = UserDefaults.standard.string(forKey: "kobold.caldav.serverURL") ?? ""
+        let caldavUser = UserDefaults.standard.string(forKey: "kobold.caldav.username") ?? ""
+        if !caldavURL.isEmpty && !caldavUser.isEmpty {
+            lines.append("- CalDAV: VERBUNDEN (\(caldavUser)). Nutze caldav Tool für Kalender-Verwaltung.")
+        }
+
+        // MQTT
+        let mqttHost = UserDefaults.standard.string(forKey: "kobold.mqtt.host") ?? ""
+        if !mqttHost.isEmpty {
+            let mqttPort = UserDefaults.standard.string(forKey: "kobold.mqtt.port") ?? "1883"
+            lines.append("- MQTT: VERBUNDEN (\(mqttHost):\(mqttPort)). Nutze mqtt Tool für IoT/Smart-Home-Steuerung.")
+        }
+
+        // ElevenLabs
+        let elevenLabsKey = UserDefaults.standard.string(forKey: "kobold.elevenlabs.apiKey") ?? ""
+        if !elevenLabsKey.isEmpty {
+            let elevenLabsVoice = UserDefaults.standard.string(forKey: "kobold.elevenlabs.voiceId") ?? ""
+            let voiceInfo = elevenLabsVoice.isEmpty ? "" : " (Voice: \(elevenLabsVoice.prefix(20)))"
+            lines.append("- ElevenLabs TTS: VERBUNDEN\(voiceInfo). Sprachausgabe erfolgt automatisch über ElevenLabs.")
+        }
+
+        // HuggingFace
+        let hfToken = UserDefaults.standard.string(forKey: "kobold.huggingface.apiToken") ?? ""
+        if !hfToken.isEmpty {
+            lines.append("- HuggingFace: VERBUNDEN. API-Token konfiguriert für Modell-Downloads.")
         }
 
         if lines.isEmpty {
@@ -1884,38 +1983,60 @@ public actor AgentLoop {
         {"tool_name": "speak", "tool_args": {"text": "The weather is nice today.", "voice": "en-US"}}
         {"tool_name": "speak", "tool_args": {"text": "Wichtige Nachricht!", "rate": "0.4"}}
         ```
+
+        ### phone_call
+        Telefonanruf tätigen oder beenden über Twilio/ElevenLabs. Nutze dieses Tool für Anrufe aller Art: Termine buchen, Reservierungen, Anfragen stellen etc.
+        Args: action ("call" oder "hangup"), to (Telefonnummer im E.164 Format, z.B. +491701234567), purpose (Zweck des Anrufs — WICHTIG: beschreibe genau was der Agent am Telefon tun soll)
+        Der Anruf wird von einer KI-Stimme geführt. Du bekommst das komplette Gesprächs-Transcript als Ergebnis zurück.
+        ```json
+        {"tool_name": "phone_call", "tool_args": {"action": "call", "to": "+491701234567", "purpose": "Termin beim Friseur buchen für Donnerstag Nachmittag"}}
+        {"tool_name": "phone_call", "tool_args": {"action": "call", "to": "+4989123456", "purpose": "Tisch reservieren für 2 Personen am Freitag um 19 Uhr im Restaurant"}}
+        {"tool_name": "phone_call", "tool_args": {"action": "hangup", "call_sid": "CA1234567890"}}
+        ```
+
+        ### sms_send
+        SMS senden über Twilio. Kurze Textnachrichten an Telefonnummern schicken.
+        Args: to (Telefonnummer im E.164 Format), body (Nachrichtentext, max 1600 Zeichen)
+        ```json
+        {"tool_name": "sms_send", "tool_args": {"to": "+491701234567", "body": "Hallo! Bin in 10 Minuten da."}}
+        ```
         """
     }
 
     // MARK: - Smart Memory Retrieval
 
-    private let memoryStore = MemoryStore()
+    private let memoryStore = MemoryStore.shared
 
     /// Search memories relevant to the user's query using semantic RAG (Ollama embeddings).
     /// Falls back to TF-IDF if the embedding model is unavailable.
     private func smartMemoryRetrieval(query: String, limit: Int = 5) async -> String {
         guard !query.isEmpty else { return "" }
 
+        let totalCount = await memoryStore.allEntries().count
+        let footer = totalCount > 0 ? "\n[Gesamt: \(totalCount) Erinnerungen gespeichert — nutze memory_recall für gezielte Suche]" : ""
+
         // --- Semantic RAG path ---
         if let queryEmb = await EmbeddingRunner.shared.embed(query) {
             let hits = await EmbeddingStore.shared.search(queryEmbedding: queryEmb, limit: limit)
             if !hits.isEmpty {
-                return hits.map { h in
+                let lines = hits.map { h in
                     let tags = h.tags.isEmpty ? "" : " [\(h.tags.joined(separator: ", "))]"
                     return "- (\(h.memoryType))\(tags) \(h.text)"
                 }.joined(separator: "\n")
+                return lines + footer
             }
         }
 
-        // --- Fallback: TF-IDF ---
-        // P12: print entfernt
+        // --- Fallback: Emotionally-weighted TF-IDF ---
         do {
-            let results = try await memoryStore.smartSearch(query: query, limit: limit)
-            guard !results.isEmpty else { return "" }
-            return results.map { entry in
+            let results = try await memoryStore.emotionalSearch(query: query, limit: limit)
+            guard !results.isEmpty else { return footer.isEmpty ? "" : footer }
+            let lines = results.map { entry in
                 let tags = entry.tags.isEmpty ? "" : " [\(entry.tags.joined(separator: ", "))]"
-                return "- (\(entry.memoryType))\(tags) \(entry.text)"
+                let valenceIcon = entry.valence > 0.3 ? " [+]" : entry.valence < -0.3 ? " [!]" : ""
+                return "- (\(entry.memoryType))\(tags)\(valenceIcon) \(entry.text)"
             }.joined(separator: "\n")
+            return lines + footer
         } catch {
             return ""
         }
@@ -1993,7 +2114,7 @@ public actor AgentLoop {
         WebGUI-Dateien: ~/Library/Application Support/KoboldOS/webgui/ (index.html etc. — du kannst diese Dateien mit file_read/file_write bearbeiten, um die Web-Oberfläche anzupassen)
         \(personalitySection)\(memoryPolicySection)\(behaviorRulesSection)\(memoryRulesSection)\(buildGoalsSection())
 
-        ## Verbindungen
+        ## Integrationen
         \(buildConnectionsContext())
 
         # Kernregeln
@@ -2008,13 +2129,38 @@ public actor AgentLoop {
         - Pro Antwort EIN Tool, dann auf Ergebnis warten
         - Zeige dem Nutzer NIEMALS JSON oder technische Fehlermeldungen direkt
 
+        # Darstellungsregeln für response
+        Nutze Markdown für ansprechende Antworten:
+        - **Tabellen** für Vergleiche, Statistiken, Listen mit Spalten (| Spalte | Wert |)
+        - **Fett/Kursiv** für Hervorhebungen und Schlüsselwörter
+        - **Listen** (- oder 1.) für Aufzählungen und Schritte
+        - **Code-Blöcke** (```sprache) für Befehle, Ausgaben, Configs
+        - **Links** als [Text](URL) — immer klickbar machen
+        - **Dateipfade** immer vollständig angeben (z.B. /Users/.../datei.txt)
+        - **Überschriften** (## / ###) für strukturierte längere Antworten
+        - Wenn Daten/Metriken vorhanden: als Tabelle oder mit Symbolen (✅❌📊⚡) visualisieren
+        - Medien-URLs (Bilder, Audio, Video) als Markdown-Bild einbetten: ![Beschreibung](URL)
+
         # CLI-Befehle
         Wenn die Nachricht ein Terminal-Befehl ist (git, ls, brew, python, etc.): SOFORT shell ausführen, nicht erklären.
 
         # Gedächtnis
-        memory_save: Einzelne Erinnerung mit Typ (langzeit/kurzzeit/wissen) + Tags speichern
-        memory_recall: Nach Text/Typ/Tags suchen | memory_forget: Löschen
-        EINE Erinnerung pro Fakt. Gute Tags wählen (persönlich, coding, projekt, etc.)\(isMemoryMemorizeEnabled ? "" : "\nGedächtnis DEAKTIVIERT — nur speichern wenn Nutzer es verlangt.")
+        memory_save: Erinnerung mit Typ + Tags + emotionaler Gewichtung speichern
+        memory_recall: Nach Text/Typ/Tags suchen (emotional gewichtet) | memory_forget: Löschen
+
+        ## Gedächtnis-Typen
+        - kurzzeit: Temporärer Kontext der aktuellen Sitzung
+        - langzeit: Permanente Erinnerungen über alle Sitzungen
+        - wissen: Gelerntes Wissen, Fakten, Referenzen
+        - lösungen: Bewährte Lösungswege, Patterns die funktioniert haben (positiv gewichten!)
+        - fehler: Fehler, Probleme, Dinge die NICHT funktioniert haben (negativ gewichten!)
+
+        ## Lernprotokoll (WICHTIG!)
+        1. Bei JEDEM Fehler → memory_save type='fehler', valence=-0.7, arousal=0.8, Tags mit Tool-Name
+        2. Wenn Fehler GELÖST → memory_save type='lösungen', valence=0.8, linked_id=<fehler-ID>
+        3. VOR komplexen Aufgaben → memory_recall mit relevanten Tags prüfen
+        4. Emotionale Gewichtung: valence (-1.0 schlecht bis +1.0 gut), arousal (0.0 unwichtig bis 1.0 kritisch)
+        EINE Erinnerung pro Fakt. Gute Tags wählen (fehler, lösung, coding, tool-name, etc.)\(isMemoryMemorizeEnabled ? "" : "\nGedächtnis DEAKTIVIERT — nur speichern wenn Nutzer es verlangt.")
 
         # Delegation
         call_subordinate: Sub-Agent (coder/web/reviewer/utility) | delegate_parallel: Mehrere gleichzeitig

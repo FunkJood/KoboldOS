@@ -2,7 +2,7 @@
 
 **KoboldOS** is a native macOS application that runs a self-contained AI agent system locally on your Mac. It wraps an Ollama-backed LLM in a full agent loop with tools, persistent memory, a scheduling system, and a polished SwiftUI control panel — no cloud required.
 
-**Current version: Alpha v0.3.5**
+**Current version: Alpha v0.3.7**
 
 ---
 
@@ -15,10 +15,10 @@ ollama pull llama3.2  # or any other model
 
 # 2. Build and run KoboldOS
 swift build -c release
-bash scripts/build.sh  # creates ~/Desktop/KoboldOS-0.3.5.dmg
+bash scripts/build.sh  # creates ~/Desktop/KoboldOS-0.3.7.dmg
 ```
 
-Or just open `~/Desktop/KoboldOS-0.3.5.dmg`, drag to Applications, and launch.
+Or just open `~/Desktop/KoboldOS-0.3.7.dmg`, drag to Applications, and launch.
 
 ---
 
@@ -31,10 +31,10 @@ Or just open `~/Desktop/KoboldOS-0.3.5.dmg`, drag to Applications, and launch.
 - **Screen Control**: Maus/Tastatur-Steuerung, Screenshots, OCR via Vision.framework
 - **Goals System**: Langfristige Ziele unter Persönlichkeit, fließen in den Agent-System-Prompt
 - **Idle Tasks & Heartbeat**: Definierbare Aufgaben für den Agent wenn er nichts zu tun hat — konkret oder vage Richtungen
-- **Speech**: Text-to-Speech (AVSpeechSynthesizer) + Speech-to-Text (whisper.cpp via SwiftWhisper) — auch via Telegram Voice Messages
+- **Speech**: Text-to-Speech (macOS System-Stimmen, alle Sprachen, Premium-Support) + Speech-to-Text (whisper.cpp via SwiftWhisper) — auch via Telegram Voice Messages
 - **Image Generation**: Local SDXL via ComfyUI (Juggernaut XL v9, SDXL Base), auto server start, output to ~/Documents/KoboldOS/Bilder/
 - **Persistent Memory**: Three-tier memory system (Kurzzeit/Langzeit/Wissen) with vector search
-- **Connections**: Google OAuth (YouTube/Drive Upload), SoundCloud (Upload), Telegram Bot (File/Photo/Audio/Voice), Suno AI (Musik), Reddit, Microsoft, GitHub, Slack, Notion, Uber, WhatsApp, A2A Protocol
+- **Connections**: Google OAuth (YouTube/Drive Upload), SoundCloud (Upload), Telegram Bot (File/Photo/Audio/Voice), Suno AI (Musik), Reddit, Microsoft, GitHub, Slack, Notion, Uber, WhatsApp Web (QR-Code-Verknüpfung + Business API), A2A Protocol
 - **Proactive Agent**: Heartbeat-System, Idle-Tasks, Goals, System-Health-Alerts
 - **Scheduled Tasks**: Cron-based task scheduler with auto-execution + Team-Integration
 - **Workflows**: Visual workflow editor with 46+ tools, skill injection, save to ~/Documents/KoboldOS/workflows/

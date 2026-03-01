@@ -49,7 +49,7 @@ public struct CalDAVTool: Tool {
         let action = arguments["action"] ?? ""
 
         guard let config = loadConfig() else {
-            return "Error: CalDAV nicht konfiguriert. Bitte unter Einstellungen → Verbindungen → CalDAV Server-URL, Benutzername und Passwort eintragen."
+            return "Error: CalDAV nicht konfiguriert. Bitte unter Einstellungen → Integrationen → CalDAV Server-URL, Benutzername und Passwort eintragen."
         }
 
         switch action {

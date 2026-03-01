@@ -32,7 +32,7 @@ public struct HuggingFaceApiTool: Tool {
 
         let token = UserDefaults.standard.string(forKey: "kobold.huggingface.apiToken") ?? ""
         guard !token.isEmpty else {
-            return "Error: Kein HuggingFace API-Token konfiguriert. Bitte unter Einstellungen → Verbindungen → HuggingFace eintragen."
+            return "Error: Kein HuggingFace API-Token konfiguriert. Bitte unter Einstellungen → Integrationen → HuggingFace eintragen."
         }
 
         switch action {

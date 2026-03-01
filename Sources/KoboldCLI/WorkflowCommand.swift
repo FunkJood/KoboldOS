@@ -14,7 +14,7 @@ private struct WorkflowList: AsyncParsableCommand {
     static let configuration = CommandConfiguration(commandName: "list", abstract: "List all workflows")
 
     @Option(name: .long, help: "Daemon port") var port: Int = 8080
-    @Option(name: .long, help: "Auth token") var token: String = "kobold-secret"
+    @Option(name: .long, help: "Auth token (auto-detected from GUI if omitted)") var token: String = ""
     @Flag(name: .long, help: "JSON output") var json: Bool = false
 
     mutating func run() async throws {
@@ -53,7 +53,7 @@ private struct WorkflowCreate: AsyncParsableCommand {
     @Option(name: .long, help: "Description") var description: String = ""
     @Option(name: .long, help: "Path to steps JSON file") var stepsFile: String?
     @Option(name: .long, help: "Daemon port") var port: Int = 8080
-    @Option(name: .long, help: "Auth token") var token: String = "kobold-secret"
+    @Option(name: .long, help: "Auth token (auto-detected from GUI if omitted)") var token: String = ""
 
     mutating func run() async throws {
         let client = DaemonClient(port: port, token: token)
@@ -79,7 +79,7 @@ private struct WorkflowDelete: AsyncParsableCommand {
 
     @Argument(help: "Workflow ID") var id: String
     @Option(name: .long, help: "Daemon port") var port: Int = 8080
-    @Option(name: .long, help: "Auth token") var token: String = "kobold-secret"
+    @Option(name: .long, help: "Auth token (auto-detected from GUI if omitted)") var token: String = ""
 
     mutating func run() async throws {
         let client = DaemonClient(port: port, token: token)
@@ -93,7 +93,7 @@ private struct WorkflowRun: AsyncParsableCommand {
 
     @Argument(help: "Workflow ID") var id: String
     @Option(name: .long, help: "Daemon port") var port: Int = 8080
-    @Option(name: .long, help: "Auth token") var token: String = "kobold-secret"
+    @Option(name: .long, help: "Auth token (auto-detected from GUI if omitted)") var token: String = ""
 
     mutating func run() async throws {
         let client = DaemonClient(port: port, token: token)

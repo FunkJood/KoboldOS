@@ -11,7 +11,7 @@ final class TelegramBot: @unchecked Sendable {
     private var _isRunning = false
     private var _botToken = ""
     private var _botUsername = ""
-    private var _allowedChatId: Int64 = 0
+    private var _allowedChatIds: Set<Int64> = []
     private var pollingTask: Task<Void, Never>?
     private var lastUpdateId: Int = 0
     private var _messagesReceived = 0
@@ -31,7 +31,7 @@ final class TelegramBot: @unchecked Sendable {
     var stats: (received: Int, sent: Int) { lock.withLock { (_messagesReceived, _messagesSent) } }
 
     private func getToken() -> String { lock.withLock { _botToken } }
-    private func getAllowed() -> Int64 { lock.withLock { _allowedChatId } }
+    private func getAllowedIds() -> Set<Int64> { lock.withLock { _allowedChatIds } }
     private func setRunning(_ v: Bool) { lock.withLock { _isRunning = v } }
     private func setBotUsername(_ v: String) { lock.withLock { _botUsername = v } }
     private func incReceived() { lock.withLock { _messagesReceived += 1 } }
@@ -90,13 +90,13 @@ final class TelegramBot: @unchecked Sendable {
 
     // MARK: - Start / Stop
 
-    func start(token: String, allowedChatId: Int64 = 0) {
+    func start(token: String, allowedChatIds: Set<Int64> = []) {
         guard !isRunning else { return }
         // Persistente History laden
         loadHistoryFromDisk()
         lock.withLock {
             _botToken = token
-            _allowedChatId = allowedChatId
+            _allowedChatIds = allowedChatIds.filter { $0 != 0 }
             _isRunning = true
             _messagesReceived = 0
             _messagesSent = 0
@@ -183,9 +183,9 @@ final class TelegramBot: @unchecked Sendable {
               let chat = message["chat"] as? [String: Any],
               let chatId = chat["id"] as? Int64 else { return }
 
-        // Check allowed chat ID
-        let allowed = getAllowed()
-        if allowed != 0 && chatId != allowed {
+        // Check allowed chat IDs (empty set = allow all)
+        let allowedIds = getAllowedIds()
+        if !allowedIds.isEmpty && !allowedIds.contains(chatId) {
             await sendMessage(token: token, chatId: chatId, text: "Zugriff verweigert. Deine Chat-ID: \(chatId)")
             return
         }
@@ -200,25 +200,25 @@ final class TelegramBot: @unchecked Sendable {
                   let fileId = voice["file_id"] as? String {
             // Voice message — transcribe via STT
             await sendChatAction(token: token, chatId: chatId, action: "typing")
-            if let transcribed = await transcribeVoiceMessage(token: token, fileId: fileId) {
+            if let transcribed = await transcribeVoiceMessage(token: token, fileId: fileId, chatId: chatId) {
                 messageText = transcribed
                 // Show what was transcribed
                 await sendMessage(token: token, chatId: chatId, text: "\u{1F399}\u{FE0F} Erkannt: \"\(transcribed)\"")
             } else {
                 await sendMessage(token: token, chatId: chatId,
-                    text: "Sprachnachricht konnte nicht transkribiert werden. Ist das Whisper-Modell in den Einstellungen geladen?")
+                    text: "Sprachnachricht konnte nicht transkribiert werden. Whisper-Modell Download fehlgeschlagen — bitte in den KoboldOS Einstellungen unter Sprache prüfen.")
                 return
             }
         } else if let audio = message["audio"] as? [String: Any],
                   let fileId = audio["file_id"] as? String {
             // Audio file — also transcribe
             await sendChatAction(token: token, chatId: chatId, action: "typing")
-            if let transcribed = await transcribeVoiceMessage(token: token, fileId: fileId) {
+            if let transcribed = await transcribeVoiceMessage(token: token, fileId: fileId, chatId: chatId) {
                 messageText = transcribed
                 await sendMessage(token: token, chatId: chatId, text: "\u{1F399}\u{FE0F} Erkannt: \"\(transcribed)\"")
             } else {
                 await sendMessage(token: token, chatId: chatId,
-                    text: "Audio konnte nicht transkribiert werden. Ist das Whisper-Modell geladen?")
+                    text: "Audio konnte nicht transkribiert werden. Whisper-Modell Download fehlgeschlagen — bitte in den KoboldOS Einstellungen unter Sprache prüfen.")
                 return
             }
         } else {
@@ -281,7 +281,7 @@ final class TelegramBot: @unchecked Sendable {
     // MARK: - Voice Message Transcription
 
     /// Downloads a voice/audio file from Telegram and transcribes it via STTManager (whisper.cpp)
-    private func transcribeVoiceMessage(token: String, fileId: String) async -> String? {
+    private func transcribeVoiceMessage(token: String, fileId: String, chatId: Int64? = nil) async -> String? {
         // Step 1: Get file path from Telegram
         guard let filePath = await getTelegramFilePath(token: token, fileId: fileId) else {
             print("[TelegramBot] Failed to get file path for \(fileId)")
@@ -298,11 +298,21 @@ final class TelegramBot: @unchecked Sendable {
             return nil
         }
 
-        // Step 3: Ensure STT model is loaded (might be first access to STTManager)
+        // Step 3: Ensure STT model is loaded — auto-download if needed
         await STTManager.shared.loadModelIfAvailable()
-        let isLoaded = await MainActor.run { STTManager.shared.isModelLoaded }
+        var isLoaded = await MainActor.run { STTManager.shared.isModelLoaded }
+        if !isLoaded {
+            // Auto-Download des konfigurierten Modells (default: "base")
+            let modelName = await MainActor.run { STTManager.shared.modelSize }
+            print("[TelegramBot] Whisper-Modell '\(modelName)' nicht vorhanden — starte Auto-Download...")
+            if let cid = chatId {
+                await sendMessage(token: token, chatId: cid, text: "\u{2B07}\u{FE0F} Lade Whisper-Modell '\(modelName)' herunter (einmalig)... Bitte kurz warten.")
+            }
+            await STTManager.shared.downloadModel(size: modelName)
+            isLoaded = await MainActor.run { STTManager.shared.isModelLoaded }
+        }
         guard isLoaded else {
-            print("[TelegramBot] STT model not available — no model file found")
+            print("[TelegramBot] STT model not available after download attempt")
             return nil
         }
 
@@ -530,10 +540,10 @@ final class TelegramBot: @unchecked Sendable {
 
     // MARK: - Send Message
 
-    /// Send a notification to the configured Telegram chat (called from GUI notification system)
+    /// Send a notification to the primary Telegram chat (first allowed ID, typically the user's personal chat)
     func sendNotification(_ text: String) {
         let token = getToken()
-        let chatId = getAllowed()
+        let chatId = Int64(UserDefaults.standard.string(forKey: "kobold.telegram.chatId") ?? "") ?? 0
         guard !token.isEmpty, chatId != 0, isRunning else { return }
         Task {
             await sendMessage(token: token, chatId: chatId, text: text)

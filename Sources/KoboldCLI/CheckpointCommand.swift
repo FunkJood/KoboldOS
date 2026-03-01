@@ -14,7 +14,7 @@ private struct CheckpointList: AsyncParsableCommand {
     static let configuration = CommandConfiguration(commandName: "list", abstract: "List saved checkpoints")
 
     @Option(name: .long, help: "Daemon port") var port: Int = 8080
-    @Option(name: .long, help: "Auth token") var token: String = "kobold-secret"
+    @Option(name: .long, help: "Auth token (auto-detected from GUI if omitted)") var token: String = ""
 
     mutating func run() async throws {
         let client = DaemonClient(port: port, token: token)
@@ -46,7 +46,7 @@ private struct CheckpointResume: AsyncParsableCommand {
 
     @Argument(help: "Checkpoint ID") var id: String
     @Option(name: .long, help: "Daemon port") var port: Int = 8080
-    @Option(name: .long, help: "Auth token") var token: String = "kobold-secret"
+    @Option(name: .long, help: "Auth token (auto-detected from GUI if omitted)") var token: String = ""
 
     mutating func run() async throws {
         let client = DaemonClient(port: port, token: token)
@@ -66,7 +66,7 @@ private struct CheckpointDelete: AsyncParsableCommand {
 
     @Argument(help: "Checkpoint ID") var id: String
     @Option(name: .long, help: "Daemon port") var port: Int = 8080
-    @Option(name: .long, help: "Auth token") var token: String = "kobold-secret"
+    @Option(name: .long, help: "Auth token (auto-detected from GUI if omitted)") var token: String = ""
 
     mutating func run() async throws {
         let client = DaemonClient(port: port, token: token)

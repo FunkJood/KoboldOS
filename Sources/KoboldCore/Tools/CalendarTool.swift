@@ -114,13 +114,23 @@ public struct CalendarTool: Tool, @unchecked Sendable {
         event.title = title
         event.calendar = store.defaultCalendarForNewEvents
 
-        let iso = ISO8601DateFormatter()
+        if let s = args["start"], !s.isEmpty {
+            // Mehrere Formate versuchen: ISO8601 mit/ohne Z, mit/ohne Sekunden
+            let parsed = Self.parseFlexibleDate(s)
+            if let d = parsed {
+                event.startDate = d
+            } else {
+                return "Error: Startzeit '\(s)' konnte nicht geparst werden. Bitte ISO 8601 Format verwenden, z.B. 2026-03-06T14:00:00"
+            }
+        } else {
+            return "Error: Startzeit (start) fehlt. Bitte im Format 2026-03-06T14:00:00 angeben."
+        }
 
-        if let s = args["start"], let d = iso.date(from: s) { event.startDate = d }
-        else { event.startDate = Date().addingTimeInterval(3600) }
-
-        if let e = args["end"], let d = iso.date(from: e) { event.endDate = d }
-        else { event.endDate = event.startDate.addingTimeInterval(3600) }
+        if let e = args["end"], !e.isEmpty, let d = Self.parseFlexibleDate(e) {
+            event.endDate = d
+        } else {
+            event.endDate = event.startDate.addingTimeInterval(3600)
+        }
 
         if let n = args["notes"] { event.notes = n }
         if let l = args["location"] { event.location = l }
@@ -130,6 +140,33 @@ public struct CalendarTool: Tool, @unchecked Sendable {
         let fmt = DateFormatter()
         fmt.dateStyle = .medium; fmt.timeStyle = .short; fmt.locale = Locale(identifier: "de_DE")
         return "Event erstellt: \"\(title)\" am \(fmt.string(from: event.startDate))"
+    }
+
+    /// Parst Datumsstrings flexibel — LLMs senden oft verschiedene Formate.
+    /// Unterstützt: ISO8601 mit/ohne Z, mit/ohne Sekunden, nur Datum+Uhrzeit.
+    private static func parseFlexibleDate(_ str: String) -> Date? {
+        let trimmed = str.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // 1) Voller ISO8601 (mit Z oder +00:00)
+        let iso = ISO8601DateFormatter()
+        if let d = iso.date(from: trimmed) { return d }
+
+        // 2) ISO8601 ohne Zeitzone (z.B. "2026-03-06T14:00:00")
+        let df = DateFormatter()
+        df.locale = Locale(identifier: "en_US_POSIX")
+        for fmt in [
+            "yyyy-MM-dd'T'HH:mm:ss",
+            "yyyy-MM-dd'T'HH:mm",
+            "yyyy-MM-dd HH:mm:ss",
+            "yyyy-MM-dd HH:mm",
+            "dd.MM.yyyy HH:mm",
+            "dd.MM.yyyy'T'HH:mm"
+        ] {
+            df.dateFormat = fmt
+            if let d = df.date(from: trimmed) { return d }
+        }
+
+        return nil
     }
 
     private func searchEvents(_ args: [String: String]) async throws -> String {

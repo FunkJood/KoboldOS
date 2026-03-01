@@ -49,7 +49,7 @@ public struct MQTTTool: Tool {
         let action = arguments["action"] ?? ""
 
         guard let config = loadConfig() else {
-            return "Error: MQTT nicht konfiguriert. Bitte unter Einstellungen → Verbindungen → MQTT den Host eintragen."
+            return "Error: MQTT nicht konfiguriert. Bitte unter Einstellungen → Integrationen → MQTT den Host eintragen."
         }
 
         switch action {

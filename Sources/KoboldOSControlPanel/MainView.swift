@@ -9,6 +9,15 @@ struct MainView: View {
     @State private var selectedTab: SidebarTab = .chat
     @State private var isSidebarCollapsed: Bool = false
     @AppStorage("kobold.hasOnboarded") private var hasOnboarded: Bool = false
+    // ElevenLabs Call Monitor State
+    @State private var showCallMonitor = false
+    @State private var callMonitorTo = ""
+    @State private var callMonitorPurpose = ""
+    @State private var callMonitorTranscript = ""
+    @State private var callMonitorStatus = ""
+    // HiTL Tool Approval State
+    @State private var pendingApprovals: [ToolApprovalRequest] = []
+    @State private var showToolApproval = false
 
     var body: some View {
         ZStack {
@@ -38,6 +47,62 @@ struct MainView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(Color(red: 0.067, green: 0.075, blue: 0.082).opacity(0.95))
             }
+
+            // ElevenLabs Call Monitor Overlay (unten rechts)
+            if showCallMonitor {
+                VStack {
+                    Spacer()
+                    HStack {
+                        Spacer()
+                        CallMonitorOverlay(
+                            toNumber: callMonitorTo,
+                            purpose: callMonitorPurpose,
+                            transcript: $callMonitorTranscript,
+                            callStatus: $callMonitorStatus,
+                            isVisible: $showCallMonitor
+                        )
+                        .transition(.move(edge: .trailing).combined(with: .opacity))
+                        .padding(.trailing, 16)
+                        .padding(.bottom, 16)
+                    }
+                }
+                .animation(.spring(response: 0.4, dampingFraction: 0.85), value: showCallMonitor)
+            }
+
+            // HiTL Tool Approval Overlay (oben mittig)
+            if showToolApproval, let current = pendingApprovals.first {
+                VStack {
+                    HStack {
+                        Spacer()
+                        ToolApprovalOverlay(
+                            request: current,
+                            pendingCount: pendingApprovals.count,
+                            onApprove: {
+                                Task { await AppToolResultWaiter.shared.deliverResult(id: current.id, result: "approved") }
+                                pendingApprovals.removeFirst()
+                                if pendingApprovals.isEmpty { showToolApproval = false }
+                            },
+                            onDeny: {
+                                Task { await AppToolResultWaiter.shared.deliverResult(id: current.id, result: "denied") }
+                                pendingApprovals.removeFirst()
+                                if pendingApprovals.isEmpty { showToolApproval = false }
+                            },
+                            onDenyAll: {
+                                for req in pendingApprovals {
+                                    Task { await AppToolResultWaiter.shared.deliverResult(id: req.id, result: "denied") }
+                                }
+                                pendingApprovals.removeAll()
+                                showToolApproval = false
+                            }
+                        )
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                        Spacer()
+                    }
+                    .padding(.top, 16)
+                    Spacer()
+                }
+                .animation(.spring(response: 0.4, dampingFraction: 0.85), value: showToolApproval)
+            }
         }
         .frame(minWidth: 960, minHeight: 640)
         .onReceive(NotificationCenter.default.publisher(for: .koboldNavigate)) { note in
@@ -50,7 +115,7 @@ struct MainView: View {
                 case "tasks": selectedTab = .tasks
                 case "workflows": selectedTab = .workflows
                 case "settings": selectedTab = .settings
-                // Dashboard entfernt
+                case "voice", "sprechen": selectedTab = .voice
                 case "memory": selectedTab = .memory
                 default: break
                 }
@@ -81,14 +146,92 @@ struct MainView: View {
                   let taskName = note.userInfo?["taskName"] as? String,
                   let prompt = note.userInfo?["prompt"] as? String else { return }
             viewModel.executeTask(taskId: taskId, taskName: taskName, prompt: prompt, navigate: true)
-            selectedTab = .chat
+            selectedTab = .tasks
         }
         // Notification-Klick: Navigiere zur Task-Session
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("koboldNavigateToSession"))) { note in
             if let sessionId = note.userInfo?["sessionId"] as? UUID {
                 viewModel.switchToSession(sessionId)
-                selectedTab = .chat
+                // Task-Sessions → Tasks-Tab, normale Sessions → Chat-Tab
+                let isTask = viewModel.sessions.first(where: { $0.id == sessionId })?.taskId != nil
+                selectedTab = isTask ? .tasks : .chat
             }
+        }
+        // Eingehender Anruf: System-Notification + Sound + App in Vordergrund
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("koboldTwilioIncomingCall"))) { note in
+            let from = note.userInfo?["from"] as? String ?? "Unbekannt"
+            SoundManager.shared.play(.incomingCall)
+            viewModel.postSystemNotification(
+                title: "Eingehender Anruf",
+                body: "Anruf von \(from)"
+            )
+            // App-Fenster in den Vordergrund bringen
+            NSApp.activate(ignoringOtherApps: true)
+            if let window = NSApp.windows.first {
+                window.makeKeyAndOrderFront(nil)
+            }
+        }
+        // Anruf beendet: Zusammenfassung als Benachrichtigung
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("koboldTwilioCallEnded"))) { note in
+            let number = note.userInfo?["number"] as? String ?? "Unbekannt"
+            let duration = note.userInfo?["duration"] as? String ?? ""
+            let msgCount = note.userInfo?["messageCount"] as? Int ?? 0
+            let summary = note.userInfo?["summary"] as? String ?? ""
+
+            SoundManager.shared.play(.notification)
+            let body = "Anruf mit \(number) beendet (\(duration), \(msgCount) Nachrichten)\n\(summary.prefix(200))"
+            viewModel.postSystemNotification(
+                title: "Anruf beendet",
+                body: body
+            )
+        }
+        // ElevenLabs Call Monitor: Anruf gestartet → Popup öffnen
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("koboldElevenLabsCallStarted"))) { note in
+            callMonitorTo = note.userInfo?["to"] as? String ?? "Unbekannt"
+            callMonitorPurpose = note.userInfo?["purpose"] as? String ?? ""
+            callMonitorTranscript = ""
+            callMonitorStatus = "initiated"
+            showCallMonitor = true
+            // App-Fenster in den Vordergrund
+            NSApp.activate(ignoringOtherApps: true)
+            if let window = NSApp.windows.first { window.makeKeyAndOrderFront(nil) }
+        }
+        // ElevenLabs Call Monitor: Live-Transcript-Update
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("koboldElevenLabsCallUpdate"))) { note in
+            callMonitorTranscript = note.userInfo?["transcript"] as? String ?? callMonitorTranscript
+            callMonitorStatus = note.userInfo?["status"] as? String ?? callMonitorStatus
+        }
+        // ElevenLabs Call Monitor: Anruf beendet
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("koboldElevenLabsCallEnded"))) { note in
+            callMonitorTranscript = note.userInfo?["transcript"] as? String ?? callMonitorTranscript
+            callMonitorStatus = note.userInfo?["status"] as? String ?? "done"
+            SoundManager.shared.play(.notification)
+            let number = note.userInfo?["to"] as? String ?? "Unbekannt"
+            let purpose = note.userInfo?["purpose"] as? String ?? ""
+            viewModel.postSystemNotification(title: "ElevenLabs-Anruf beendet", body: "Anruf an \(number) — \(purpose)")
+        }
+        // HiTL Tool Approval: Agent wartet auf Bestätigung
+        .onReceive(NotificationCenter.default.publisher(for: .koboldToolApprovalRequest)) { note in
+            guard let resultId = note.userInfo?["result_id"] as? String,
+                  let toolName = note.userInfo?["tool_name"] as? String else { return }
+            let request = ToolApprovalRequest(
+                id: resultId,
+                toolName: toolName,
+                toolArgs: note.userInfo?["tool_args"] as? String ?? "{}",
+                riskLevel: note.userInfo?["risk_level"] as? String ?? "high",
+                toolDescription: note.userInfo?["tool_description"] as? String ?? "",
+                timestamp: Date()
+            )
+            pendingApprovals.append(request)
+            showToolApproval = true
+            // App in den Vordergrund bringen
+            NSApp.activate(ignoringOtherApps: true)
+            if let window = NSApp.windows.first { window.makeKeyAndOrderFront(nil) }
+            SoundManager.shared.play(.notification)
+        }
+        // ProactiveEngine starten — Heartbeat + Idle-Task Timer
+        .task {
+            ProactiveEngine.shared.startPeriodicCheck(viewModel: viewModel)
         }
     }
 }
@@ -154,10 +297,8 @@ struct SidebarView: View {
                             workflowSessionsList
                             Rectangle().fill(LinearGradient(colors: [.clear, Color.koboldEmerald.opacity(0.12), Color.koboldGold.opacity(0.08), .clear], startPoint: .leading, endPoint: .trailing)).frame(height: 0.5).padding(.horizontal, 10).padding(.vertical, 4)
                             projectsList
-                            Rectangle().fill(LinearGradient(colors: [.clear, Color.koboldEmerald.opacity(0.12), Color.koboldGold.opacity(0.08), .clear], startPoint: .leading, endPoint: .trailing)).frame(height: 0.5).padding(.horizontal, 10).padding(.vertical, 4)
-                            collapsibleChatsList
                         } else if selectedTab == .tasks {
-                            collapsibleChatsList
+                            taskSessionsList
                         } else {
                             sessionsList
                         }
@@ -186,14 +327,13 @@ struct SidebarView: View {
                         Button(action: { selectedTab = tab }) {
                             Image(systemName: iconForTab(tab))
                                 .font(.system(size: 16.5))
-                                .foregroundColor(selectedTab == tab ? .koboldEmerald : .secondary)
+                                .foregroundColor(selectedTab == tab ? .black : .secondary)
                                 .frame(width: 32, height: 32)
                                 .background(
                                     Group {
                                         if selectedTab == tab {
                                             RoundedRectangle(cornerRadius: 6)
-                                                .fill(Color.koboldSurface)
-                                                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.koboldEmerald.opacity(0.2), lineWidth: 0.5))
+                                                .fill(Color.koboldGold)
                                         }
                                     }
                                 )
@@ -221,28 +361,23 @@ struct SidebarView: View {
         .clipped()
     }
 
-    // tasksSidebarList removed — tasks appear in normal chat list now
-
-    // MARK: - Collapsible Normal Chats (shown in Tasks/Workflows tabs)
-    @State private var showNormalChatsInSubTab: Bool = false
-
-    private var collapsibleChatsList: some View {
+    // MARK: - Task Sessions List (shown in Tasks tab sidebar)
+    private var taskSessionsList: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Button(action: {
-                withAnimation(.easeInOut(duration: 0.2)) { showNormalChatsInSubTab.toggle() }
-            }) {
+            // Task-Sessions anzeigen — auch wenn messages leer (pendingMessages kann Inhalt haben)
+            let taskSessions = viewModel.sessions.filter { $0.taskId != nil }
+                .sorted { $0.createdAt > $1.createdAt }
+
+            if !taskSessions.isEmpty {
                 HStack(spacing: 6) {
-                    Image(systemName: showNormalChatsInSubTab ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 10.5, weight: .bold))
-                        .foregroundColor(.secondary)
-                    Image(systemName: "bubble.left.and.bubble.right")
+                    Image(systemName: "text.bubble")
                         .font(.system(size: 11.5))
-                        .foregroundColor(.koboldEmerald)
-                    Text("Chats")
+                        .foregroundColor(.koboldGold)
+                    Text("Aufgaben-Chats")
                         .font(.caption2.weight(.semibold))
                         .foregroundColor(.secondary)
                     Spacer()
-                    Text("\(viewModel.sessions.count)")
+                    Text("\(taskSessions.count)")
                         .font(.system(size: 10.5, weight: .medium, design: .rounded))
                         .foregroundColor(.secondary)
                         .padding(.horizontal, 5).padding(.vertical, 1)
@@ -250,31 +385,39 @@ struct SidebarView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 6)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
 
-            if showNormalChatsInSubTab {
-                ForEach(viewModel.sessions.prefix(100), id: \.id) { session in
+                ForEach(taskSessions, id: \.id) { session in
                     SidebarSessionRow(
                         session: session,
                         isCurrent: session.id == viewModel.currentSessionId,
-                        icon: "bubble.left",
-                        accentColor: .koboldEmerald
+                        icon: "text.bubble",
+                        accentColor: .koboldGold
                     ) {
                         viewModel.switchToSession(session)
-                        selectedTab = .chat
                     } onDelete: {
                         viewModel.deleteSession(session)
                     }
                 }
-                if viewModel.sessions.count > 20 {
-                    Text("+ \(viewModel.sessions.count - 20) weitere...")
-                        .font(.system(size: 11.5))
-                        .foregroundColor(.secondary)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 4)
+            }
+
+            // Zurück zur Aufgabenliste
+            if viewModel.sessions.first(where: { $0.id == viewModel.currentSessionId })?.taskId != nil {
+                Button(action: {
+                    // Neue leere Session erstellen → Tasks-View zeigt wieder die Aufgabenliste
+                    viewModel.newSession()
+                }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "arrow.left")
+                            .font(.system(size: 11, weight: .medium))
+                        Text("Aufgabenliste")
+                            .font(.caption2.weight(.medium))
+                    }
+                    .foregroundColor(.koboldEmerald)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 6)
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
             }
         }
     }
@@ -468,23 +611,7 @@ struct SidebarView: View {
             }
             .padding(.vertical, 6)
 
-            // Search
-            if viewModel.sessions.count > 4 {
-                HStack(spacing: 6) {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 11.5))
-                        .foregroundColor(.secondary)
-                    TextField("Suchen...", text: $sessionSearchText)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 12.5))
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(Color.koboldSurface.opacity(0.6))
-                .cornerRadius(6)
-                .padding(.horizontal, 12)
-                .padding(.bottom, 6)
-            }
+            // Search entfernt — Sidebar ist kompakter ohne Suchfeld
 
             // Task sidebar section removed — tasks appear in normal chat list
 
@@ -649,8 +776,14 @@ struct SidebarView: View {
 
     /// Sessions + DateGroups neu berechnen (nur aufrufen wenn sessions/searchText sich ändern)
     private func rebuildSessionCache() {
-        // All sessions in one list (tasks included — no separate task sidebar)
-        let normalSessions = viewModel.sessions
+        // Normale Chats filtern — Task-Sessions werden separat in taskSessionsList angezeigt
+        // Leere Chats nur anzeigen wenn sie die aktive Session sind
+        let currentId = viewModel.currentSessionId
+        let normalSessions = viewModel.sessions.filter { session in
+            // Task-Sessions gehören in den Tasks-Tab, nicht in die Chat-Liste
+            if session.taskId != nil { return false }
+            return !session.messages.isEmpty || session.id == currentId
+        }
         let sorted: [ChatSession]
         if sessionSearchText.isEmpty {
             sorted = normalSessions.sorted { $0.createdAt > $1.createdAt }
@@ -703,10 +836,11 @@ struct SidebarView: View {
             HStack {
                 Image(systemName: iconForTab(tab))
                     .frame(width: 20)
-                    .foregroundColor(selectedTab == tab ? .koboldEmerald : .secondary)
+                    .foregroundColor(selectedTab == tab ? .black : .secondary)
                 Text(labelForTab(tab))
+                    .font(.system(size: 15.5))
                     .fontWeight(selectedTab == tab ? .semibold : .regular)
-                    .foregroundColor(selectedTab == tab ? .koboldEmerald : .white)
+                    .foregroundColor(selectedTab == tab ? .black : .white)
                 Spacer()
                 // Beta / Coming Soon badges
                 if tab == .workflows {
@@ -724,15 +858,7 @@ struct SidebarView: View {
                 Group {
                     if selectedTab == tab {
                         RoundedRectangle(cornerRadius: 8)
-                            .fill(Color.koboldSurface)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .fill(LinearGradient(colors: [Color.koboldEmerald.opacity(0.08), Color.koboldGold.opacity(0.04)], startPoint: .leading, endPoint: .trailing))
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .stroke(LinearGradient(colors: [Color.koboldEmerald.opacity(0.2), Color.koboldGold.opacity(0.1)], startPoint: .leading, endPoint: .trailing), lineWidth: 0.5)
-                            )
+                            .fill(Color.koboldGold)
                     }
                 }
             )
@@ -747,6 +873,7 @@ struct SidebarView: View {
         case .memory:       return "Gedächtnis"
         case .tasks:        return l10n.language.tasks
         case .workflows:    return l10n.language.team
+        case .voice:        return "Sprechen"
         case .settings:     return l10n.language.settings
         }
     }
@@ -757,6 +884,7 @@ struct SidebarView: View {
         case .memory:       return "brain.filled.head.profile"
         case .tasks:        return "checklist"
         case .workflows:    return "point.3.connected.trianglepath.dotted"
+        case .voice:        return "waveform.circle.fill"
         case .settings:     return "gearshape.fill"
         }
     }
@@ -769,7 +897,7 @@ struct SessionGroupHeader: View {
     var body: some View {
         HStack(spacing: 6) {
             Text(label.uppercased())
-                .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                .font(.system(size: 12, weight: .semibold, design: .rounded))
                 .foregroundColor(.secondary.opacity(0.5))
                 .tracking(0.8)
             Rectangle()
@@ -807,16 +935,16 @@ struct SidebarTopicFolder: View {
                 Button(action: onToggle) {
                     HStack(spacing: 6) {
                         Image(systemName: topic.isExpanded ? "folder.fill" : "folder")
-                            .font(.system(size: 12.5))
+                            .font(.system(size: 14))
                             .foregroundColor(topic.swiftUIColor)
 
                         Text(topic.name)
-                            .font(.system(size: 13.5, weight: .semibold))
+                            .font(.system(size: 15, weight: .semibold))
                             .foregroundColor(.primary.opacity(0.9))
                             .lineLimit(1)
 
                         Text("\(sessions.count)")
-                            .font(.system(size: 10.5, weight: .medium, design: .rounded))
+                            .font(.system(size: 12, weight: .medium, design: .rounded))
                             .foregroundColor(topic.swiftUIColor.opacity(0.8))
                             .padding(.horizontal, 4)
                             .padding(.vertical, 1)
@@ -828,6 +956,7 @@ struct SidebarTopicFolder: View {
                             .font(.system(size: 10.5, weight: .medium))
                             .foregroundColor(.secondary.opacity(0.5))
                     }
+                    .contentShape(Rectangle()) // Gesamte Zeile klickbar (nicht nur Text/Icons)
                 }
                 .buttonStyle(.plain)
 
@@ -1197,11 +1326,11 @@ struct SidebarSessionRow: View {
 
                     VStack(alignment: .leading, spacing: 1) {
                         Text(session.title)
-                            .font(.system(size: 13.5, weight: isCurrent || session.hasUnread ? .semibold : .regular))
+                            .font(.system(size: 15, weight: isCurrent || session.hasUnread ? .semibold : .regular))
                             .foregroundColor(isCurrent ? .primary : .primary.opacity(0.85))
                             .lineLimit(1)
                         Text(session.formattedDate)
-                            .font(.system(size: 11.5))
+                            .font(.system(size: 13))
                             .foregroundColor(.secondary.opacity(0.7))
                     }
                 }
@@ -1338,7 +1467,37 @@ struct ContentAreaView: View {
                         ChatLockedView(status: runtimeManager.healthStatus)
                     }
                 case .memory:     MemoryView(viewModel: viewModel)
-                case .tasks:      TasksView(viewModel: viewModel)
+                case .tasks:
+                    if viewModel.sessions.first(where: { $0.id == viewModel.currentSessionId })?.taskId != nil {
+                        // Task-Chat aktiv: Banner + ChatView (wie Workflow-Pattern)
+                        VStack(spacing: 0) {
+                            let taskTitle = viewModel.sessions.first(where: { $0.id == viewModel.currentSessionId })?.title ?? "Aufgabe"
+                            HStack(spacing: 6) {
+                                Image(systemName: "text.bubble")
+                                    .font(.caption)
+                                    .foregroundColor(.koboldGold)
+                                Text("Aufgaben-Chat: \(taskTitle)")
+                                    .font(.caption.weight(.medium))
+                                    .foregroundColor(.koboldGold)
+                                Spacer()
+                                Button(action: { viewModel.newSession() }) {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "arrow.left").font(.caption2)
+                                        Text("Aufgabenliste").font(.caption2)
+                                    }
+                                    .foregroundColor(.koboldEmerald)
+                                }.buttonStyle(.plain)
+                            }
+                            .padding(.horizontal, 14).padding(.vertical, 8)
+                            .background(
+                                LinearGradient(colors: [Color.koboldGold.opacity(0.12), Color.koboldEmerald.opacity(0.05)], startPoint: .leading, endPoint: .trailing)
+                            )
+                            GlassDivider()
+                            ChatView(viewModel: viewModel)
+                        }
+                    } else {
+                        TasksView(viewModel: viewModel)
+                    }
                 case .workflows:
                     if viewModel.chatMode == .workflow {
                         VStack(spacing: 0) {
@@ -1368,6 +1527,7 @@ struct ContentAreaView: View {
                     } else {
                         TeamView(viewModel: viewModel)
                     }
+                case .voice:        VoiceView(viewModel: viewModel)
                 case .settings:     SettingsView(viewModel: viewModel)
                 }
             }
@@ -1455,13 +1615,6 @@ struct GlobalHeaderBar: View {
 
             Spacer()
 
-            // Uhrzeit mittig
-            Text(Self.timeFormatter.string(from: tick))
-                .font(.system(size: 15.5, weight: .semibold, design: .monospaced))
-                .foregroundColor(.koboldEmerald)
-
-            Spacer()
-
             // Wetter
             HStack(spacing: 8) {
                 if weatherManager.isLoading {
@@ -1479,6 +1632,12 @@ struct GlobalHeaderBar: View {
                     }
                 }
             }
+
+            // Ollama status badge
+            GlassStatusBadge(
+                label: viewModel.isOllamaBusy ? "Ollama Busy" : "Ollama Idle",
+                color: viewModel.isOllamaBusy ? .orange : .secondary.opacity(0.5)
+            )
 
             // Online badge
             GlassStatusBadge(
@@ -1512,6 +1671,12 @@ struct GlobalHeaderBar: View {
             }
         }
         .padding(.horizontal, 4)
+        .overlay(
+            // Uhrzeit exakt zentriert (unabhängig von Links/Rechts-Breiten)
+            Text(Self.timeFormatter.string(from: tick))
+                .font(.system(size: 15.5, weight: .semibold, design: .monospaced))
+                .foregroundColor(.koboldEmerald)
+        )
         .onAppear {
             weatherManager.fetchWeatherIfNeeded()
         }
@@ -1527,9 +1692,8 @@ struct GlobalHeaderBar: View {
         .padding(.vertical, 10).padding(.horizontal, 14)
         .background(
             ZStack {
-                RoundedRectangle(cornerRadius: 12).fill(Color.koboldPanel)
-                RoundedRectangle(cornerRadius: 12).fill(LinearGradient(colors: [Color.koboldEmerald.opacity(0.04), .clear, Color.koboldGold.opacity(0.03)], startPoint: .leading, endPoint: .trailing))
-                RoundedRectangle(cornerRadius: 12).stroke(LinearGradient(colors: [Color.koboldEmerald.opacity(0.2), Color.koboldGold.opacity(0.15)], startPoint: .leading, endPoint: .trailing), lineWidth: 0.5)
+                RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.08))
+                RoundedRectangle(cornerRadius: 12).stroke(Color.white.opacity(0.1), lineWidth: 0.5)
             }
         )
     }
@@ -1565,6 +1729,7 @@ struct ChatLockedView: View {
 
 enum SidebarTab: String, CaseIterable {
     case chat
+    case voice
     case tasks
     case workflows
     case memory
@@ -1634,12 +1799,12 @@ struct KoboldOSSidebarLogo: View {
                     // Static glow behind icon
                     Circle()
                         .fill(Color.koboldEmerald.opacity(0.20))
-                        .frame(width: 52, height: 52)
+                        .frame(width: 62, height: 62)
                         .blur(radius: 10)
                     Image(nsImage: NSApp.applicationIconImage)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
-                        .frame(width: 48, height: 48)
+                        .frame(width: 56, height: 56)
                         .clipShape(RoundedRectangle(cornerRadius: 10))
                         .shadow(color: Color.koboldEmerald.opacity(0.6), radius: 3)
                 }

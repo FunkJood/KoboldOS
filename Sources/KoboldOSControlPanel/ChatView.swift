@@ -8,31 +8,23 @@ struct ChatView: View {
     @EnvironmentObject var l10n: LocalizationManager
     @State private var inputText: String = ""
     @State private var pendingAttachments: [MediaAttachment] = []
-    @AppStorage("kobold.agent.type") private var agentType: String = "general"
     @AppStorage("kobold.koboldName") private var koboldName: String = "KoboldOS"
     @AppStorage("kobold.showAgentSteps") private var showAgentSteps: Bool = true
     @AppStorage("kobold.chat.fontSize") private var chatFontSize: Double = 16.5
     // Notifications moved to GlobalHeaderBar
     @State private var scrollDebounceTask: Task<Void, Never>?
     /// Number of messages visible from the end — grows when user taps "load more"
-    @State private var visibleMessageCount: Int = 20
+    @State private var visibleMessageCount: Int = 10
     /// Window update interval in nanoseconds (default: 1.5 seconds)
     @AppStorage("kobold.window.updateInterval") private var updateIntervalNanos: Int = 1_500_000_000
 
-    /// Human-readable agent display name for the chat header badge
-    var agentDisplayName: String {
-        switch agentType {
-        case "coder": return "Coder"
-        case "web":   return "Web"
-        default:      return "General"
-        }
-    }
+    // Voice-to-Text (Mikrofon-Button neben Send-Button, wie ChatGPT)
+    @StateObject private var recorder = AudioRecordingManager.shared
+    @ObservedObject private var sttManager = STTManager.shared
+    @State private var isTranscribing = false
 
     var body: some View {
         VStack(spacing: 0) {
-            chatHeader
-            GlassDivider()
-
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 10) {
@@ -45,7 +37,7 @@ struct ChatView: View {
                         if startIndex > 0 {
                             Button {
                                 withAnimation(.easeOut(duration: 0.2)) {
-                                    visibleMessageCount = min(visibleMessageCount + 20, allMessages.count)
+                                    visibleMessageCount = min(visibleMessageCount + 10, allMessages.count)
                                 }
                             } label: {
                                 HStack(spacing: 6) {
@@ -90,7 +82,7 @@ struct ChatView: View {
                 }
                 .onChange(of: viewModel.messages.count) { debouncedScroll(proxy: proxy) }
                 .onChange(of: viewModel.agentLoading) { debouncedScroll(proxy: proxy) }
-                .onChange(of: viewModel.currentSessionId) { visibleMessageCount = 20 }
+                .onChange(of: viewModel.currentSessionId) { visibleMessageCount = 10 }
             }
 
             // Sticky Checklist
@@ -254,77 +246,6 @@ struct ChatView: View {
             )
         case .image(let path, let caption):
             ImageBubble(path: path, caption: caption)
-        }
-    }
-
-    // MARK: - Header
-
-    var chatHeader: some View {
-        VStack(spacing: 0) {
-            VStack(spacing: 2) {
-                HStack(spacing: 8) {
-                    Spacer()
-                    switch viewModel.chatMode {
-                    case .workflow:
-                        Text("⚡ \(viewModel.workflowChatLabel)").font(.system(size: 14.5, weight: .semibold))
-                    case .normal:
-                        Text(koboldName.isEmpty ? "KoboldOS" : koboldName).font(.system(size: 14.5, weight: .semibold))
-                    }
-                    Spacer()
-                }
-                HStack(spacing: 6) {
-                    Spacer()
-                    switch viewModel.chatMode {
-                    case .workflow:
-                        GlassStatusBadge(label: "Workflow", color: .koboldGold, icon: "point.3.connected.trianglepath.dotted")
-                    case .normal:
-                        GlassStatusBadge(label: agentDisplayName, color: .koboldGold, icon: "brain")
-                    }
-                    if viewModel.chatMode == .normal, let topicId = viewModel.activeTopicId,
-                       let topic = viewModel.topics.first(where: { $0.id == topicId }) {
-                        HStack(spacing: 3) {
-                            Circle().fill(topic.swiftUIColor).frame(width: 6, height: 6)
-                            Text(topic.name)
-                                .font(.system(size: 11.5, weight: .medium))
-                                .foregroundColor(topic.swiftUIColor)
-                        }
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Capsule().fill(topic.swiftUIColor.opacity(0.1)))
-                    }
-                    Spacer()
-                }
-            }
-            .padding(.horizontal, 16).padding(.vertical, 6)
-            .background(
-                ZStack {
-                    Color.koboldPanel.opacity(0.5)
-                    LinearGradient(colors: [Color.koboldEmerald.opacity(0.03), .clear, Color.koboldGold.opacity(0.02)], startPoint: .leading, endPoint: .trailing)
-                }
-            )
-
-            // Mode-specific banner
-            if viewModel.chatMode == .workflow {
-                HStack(spacing: 6) {
-                    Image(systemName: "point.3.connected.trianglepath.dotted")
-                        .font(.caption)
-                        .foregroundColor(.koboldEmerald)
-                    Text("Workflow-Chat — gespeichert unter Workflows")
-                        .font(.caption)
-                        .foregroundColor(.koboldEmerald)
-                    Spacer()
-                    Button(action: {
-                        NotificationCenter.default.post(name: .koboldNavigate, object: SidebarTab.workflows)
-                        viewModel.newSession()
-                    }) {
-                        Text("Zurück zum Workflow").font(.caption2).foregroundColor(.koboldEmerald)
-                    }.buttonStyle(.plain)
-                }
-                .padding(.horizontal, 14).padding(.vertical, 6)
-                .background(
-                    LinearGradient(colors: [Color.koboldEmerald.opacity(0.12), Color.koboldGold.opacity(0.06)], startPoint: .leading, endPoint: .trailing)
-                )
-            }
         }
     }
 
@@ -574,6 +495,9 @@ struct ChatView: View {
                         .disabled(inputText.trimmingCharacters(in: .whitespaces).isEmpty && pendingAttachments.isEmpty)
                     }
                 } else {
+                    // Mikrofon-Button (Voice-to-Text, wie ChatGPT)
+                    micButton
+
                     Button(action: send) {
                         Image(systemName: "paperplane.fill")
                             .font(.system(size: 18.5, weight: .semibold))
@@ -699,5 +623,77 @@ struct ChatView: View {
         // Reset context usage to reflect compressed state
         viewModel.updateContextUsage(for: sessionId, promptTokens: remaining * 80, completionTokens: 0, windowSize: viewModel.contextWindowSize)
         viewModel.syncAgentStateToUI()
+    }
+
+    // MARK: - Mikrofon-Button (Voice-to-Text im Chat-Context)
+
+    @available(macOS 14.0, *)
+    private var micButton: some View {
+        Button(action: toggleVoiceInput) {
+            ZStack {
+                if recorder.isRecording {
+                    // Pulsierender Ring während der Aufnahme
+                    Circle()
+                        .stroke(Color.red.opacity(0.4), lineWidth: 2)
+                        .frame(width: 36, height: 36)
+                        .scaleEffect(1.15)
+                        .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: recorder.isRecording)
+                }
+
+                Image(systemName: isTranscribing ? "waveform" :
+                        (recorder.isRecording ? "stop.circle.fill" : "mic.fill"))
+                    .font(.system(size: recorder.isRecording ? 18.5 : 16, weight: .semibold))
+                    .foregroundColor(recorder.isRecording ? .white : .koboldGold)
+                    .frame(width: 36, height: 36)
+                    .background(
+                        recorder.isRecording ? Color.red :
+                            (isTranscribing ? Color.orange.opacity(0.8) : Color.koboldGold.opacity(0.15))
+                    )
+                    .cornerRadius(10)
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(isTranscribing || !sttManager.isModelLoaded || !recorder.hasMicrophonePermission || viewModel.isAgentLoadingInCurrentChat)
+        .help(recorder.isRecording ? "Aufnahme stoppen (Leertaste)" :
+                (isTranscribing ? "Transkribiere..." :
+                    (!sttManager.isModelLoaded ? "Whisper-Modell nicht geladen" :
+                        (!recorder.hasMicrophonePermission ? "Mikrofon-Berechtigung fehlt" : "Spracheingabe (Leertaste)"))))
+        .keyboardShortcut(.space, modifiers: [])
+        .onAppear {
+            recorder.onSpeechCaptured = handleVoiceCapture
+            recorder.checkMicrophonePermission()
+        }
+    }
+
+    private func toggleVoiceInput() {
+        if recorder.isRecording {
+            recorder.stopRecording()
+        } else {
+            recorder.onSpeechCaptured = handleVoiceCapture
+            recorder.startRecording()
+        }
+    }
+
+    private func handleVoiceCapture(audioURL: URL) {
+        isTranscribing = true
+
+        // Sprache transkribieren + als Nachricht mit Audio-Attachment senden
+        Task.detached(priority: .userInitiated) {
+            let transcribedText = await STTManager.shared.transcribe(audioURL: audioURL)
+
+            await MainActor.run {
+                self.isTranscribing = false
+
+                let text = transcribedText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                guard !text.isEmpty else {
+                    try? FileManager.default.removeItem(at: audioURL)
+                    return
+                }
+
+                // Audio als Attachment hinzufügen (Sprachnachricht-Bubble im Chat)
+                let attachment = MediaAttachment(url: audioURL)
+                self.viewModel.sendMessage(text, attachments: [attachment])
+            }
+        }
     }
 }

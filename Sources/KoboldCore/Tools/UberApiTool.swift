@@ -4,7 +4,7 @@ import Foundation
 // MARK: - Uber API Tool (OAuth2-basiert)
 public struct UberApiTool: Tool {
     public let name = "uber_api"
-    public let description = "Uber: Fahrpreis schätzen, Fahrt anfragen, Fahrtstatus prüfen, Account-Info. Benötigt OAuth-Verbindung in Einstellungen → Verbindungen."
+    public let description = "Uber: Fahrpreis schätzen, Fahrt anfragen, Fahrtstatus prüfen, Account-Info. Benötigt OAuth-Verbindung in Einstellungen → Integrationen."
     public let riskLevel: RiskLevel = .high // Kann echte Fahrten buchen
 
     public var schema: ToolSchema {
@@ -32,7 +32,7 @@ public struct UberApiTool: Tool {
         let action = arguments["action"] ?? ""
 
         guard let accessToken = await oauth.getValidToken() else {
-            return "Error: Nicht mit Uber verbunden oder Token abgelaufen. Bitte unter Einstellungen → Verbindungen → Uber authentifizieren."
+            return "Error: Nicht mit Uber verbunden oder Token abgelaufen. Bitte unter Einstellungen → Integrationen → Uber authentifizieren."
         }
 
         switch action {
@@ -163,7 +163,7 @@ public struct UberApiTool: Tool {
                     if retryStatus >= 400 { return "Error: HTTP \(retryStatus): \(retryText)" }
                     return retryText
                 } else {
-                    return "Error: Uber-Token abgelaufen und Refresh fehlgeschlagen. Bitte erneut anmelden unter Einstellungen → Verbindungen → Uber."
+                    return "Error: Uber-Token abgelaufen und Refresh fehlgeschlagen. Bitte erneut anmelden unter Einstellungen → Integrationen → Uber."
                 }
             }
 

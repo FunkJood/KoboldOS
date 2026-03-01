@@ -237,13 +237,13 @@ struct OnboardingView: View {
                     )
                 )
 
-            Text("Wähle deine Sprache / Choose your language")
+            Text("\(lang.obLanguagePrompt) / Choose your language")
                 .font(.title3)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
 
             VStack(spacing: 12) {
-                Picker("Sprache / Language", selection: $languageCode) {
+                Picker("\(lang.obLanguagePicker) / Language", selection: $languageCode) {
                     ForEach(AppLanguage.allCases, id: \.self) { l in
                         Text(l.displayName).tag(l.rawValue)
                     }
@@ -494,11 +494,11 @@ struct OnboardingView: View {
         VStack(spacing: 24) {
             progressDots(current: 4)
 
-            Text("Modelle herunterladen")
+            Text(lang.obModelsTitle)
                 .font(.system(size: 29, weight: .bold))
                 .foregroundColor(.primary)
 
-            Text("Lade das KI-Modell für den Chat.")
+            Text(lang.obModelsSubtitle)
                 .font(.body)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
@@ -512,10 +512,10 @@ struct OnboardingView: View {
                                 HStack(spacing: 6) {
                                     Image(systemName: modelManager.chatModelInstalled ? "checkmark.circle.fill" : "cpu.fill")
                                         .foregroundColor(modelManager.chatModelInstalled ? .koboldEmerald : .koboldGold)
-                                    Text("Chat-Modell").font(.system(size: 15.5, weight: .semibold))
+                                    Text(lang.obChatModel).font(.system(size: 15.5, weight: .semibold))
                                     Text("(\(modelManager.recommendedChatModel))").font(.caption).foregroundColor(.secondary)
                                 }
-                                Text(modelManager.chatModelInstalled ? "Bereits installiert" : "Empfohlen — Lokales Sprachmodell via Ollama")
+                                Text(modelManager.chatModelInstalled ? lang.obAlreadyInstalled : lang.obChatModelDesc)
                                     .font(.caption).foregroundColor(.secondary)
                             }
                         }
@@ -540,7 +540,7 @@ struct OnboardingView: View {
                 GlassButton(title: lang.obBack, icon: "chevron.left", isPrimary: false) {
                     withAnimation { step = .use }
                 }
-                GlassButton(title: "Herunterladen & Starten", icon: "sparkles", isPrimary: true) {
+                GlassButton(title: lang.obDownloadAndStart, icon: "sparkles", isPrimary: true) {
                     if downloadChat && !modelManager.chatModelInstalled {
                         modelManager.downloadChatModel()
                     }
@@ -548,7 +548,7 @@ struct OnboardingView: View {
                     withAnimation(.spring()) { step = .hatching }
                     Task { await performHatching() }
                 }
-                GlassButton(title: "Überspringen", icon: nil, isPrimary: false) {
+                GlassButton(title: lang.obSkip, icon: nil, isPrimary: false) {
                     withAnimation(.spring()) { step = .hatching }
                     Task { await performHatching() }
                 }

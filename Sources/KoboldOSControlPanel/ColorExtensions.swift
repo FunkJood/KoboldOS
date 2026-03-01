@@ -29,8 +29,8 @@ extension Color {
     static let koboldPanel = Color(red: 0.09, green: 0.10, blue: 0.11)
     /// Surface color for cards / selected items
     static let koboldSurface = Color(red: 0.13, green: 0.145, blue: 0.16)
-    /// Signature emerald green
-    static let koboldEmerald = Color(red: 0.13, green: 0.82, blue: 0.55)
+    /// Signature toxic neon green (Kobold-Giftig)
+    static let koboldEmerald = Color(red: 0.0, green: 0.58, blue: 0.2)
     /// Gold accent
     static let koboldGold = Color(red: 1.0, green: 0.78, blue: 0.22)
     /// Danger red

@@ -4,7 +4,7 @@ import Foundation
 // MARK: - Lieferando API Tool (Takeaway.com / Just Eat Takeaway API)
 public struct LieferandoApiTool: Tool {
     public let name = "lieferando_api"
-    public let description = "Lieferando: Restaurants suchen, Speisekarten lesen, Bestellstatus prüfen. Benötigt API-Credentials in Einstellungen → Verbindungen."
+    public let description = "Lieferando: Restaurants suchen, Speisekarten lesen, Bestellstatus prüfen. Benötigt API-Credentials in Einstellungen → Integrationen."
     public let riskLevel: RiskLevel = .medium
 
     public var schema: ToolSchema {
@@ -30,7 +30,7 @@ public struct LieferandoApiTool: Tool {
         switch action {
         case "search_restaurants":
             guard !postalCode.isEmpty else {
-                return "Error: Postleitzahl benötigt. Setze 'postal_code' oder konfiguriere sie in Einstellungen → Verbindungen → Lieferando."
+                return "Error: Postleitzahl benötigt. Setze 'postal_code' oder konfiguriere sie in Einstellungen → Integrationen → Lieferando."
             }
             return await searchRestaurants(postalCode: postalCode, query: query, apiKey: apiKey)
 

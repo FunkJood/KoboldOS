@@ -74,7 +74,6 @@ public struct ToolCallParser: Sendable {
 
         // Fallback: treat as implicit "response"
         let text = extractReadableText(from: cleaned)
-        print("[ToolCallParser] FALLBACK: No tool call found. Response starts with: \(String(cleaned.prefix(200)))")
         return [ParsedToolCall(
             name: "response",
             arguments: ["text": text],
@@ -300,7 +299,6 @@ public struct ToolCallParser: Sendable {
               let argsMatch = argsRegex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
               let argsMatchRange = Range(argsMatch.range, in: text) else {
             // No args — return tool call with empty args
-            print("[ToolCallParser] RECOVERY: Found tool '\(name)' (no args) from malformed JSON")
             return ParsedToolCall(name: name, arguments: [:])
         }
 
@@ -327,7 +325,6 @@ public struct ToolCallParser: Sendable {
                            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
                             var args: [String: String] = [:]
                             for (key, value) in json { args[key] = stringify(value) }
-                            print("[ToolCallParser] RECOVERY: Extracted '\(name)' with \(args.count) args from malformed JSON")
                             return ParsedToolCall(name: name, arguments: args)
                         }
                         break
@@ -338,7 +335,6 @@ public struct ToolCallParser: Sendable {
         }
 
         // Args sub-object also malformed — return with empty args
-        print("[ToolCallParser] RECOVERY: Found tool '\(name)' but args sub-object also malformed")
         return ParsedToolCall(name: name, arguments: [:])
     }
 

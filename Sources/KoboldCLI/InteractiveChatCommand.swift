@@ -12,10 +12,10 @@ struct InteractiveChatCommand: AsyncParsableCommand {
     )
 
     @Option(name: .long, help: "Daemon port") var port: Int = 8080
-    @Option(name: .long, help: "Auth token") var token: String = "kobold-secret"
+    @Option(name: .long, help: "Auth token (auto-detected from GUI if omitted)") var token: String = ""
     @Option(name: .long, help: "Agent type (general, coder, web)") var agent: String = "general"
     @Option(name: .long, help: "Load existing session by ID") var session: String?
-    @Flag(name: .long, help: "Auto-start daemon if not running") var autoDaemon: Bool = true
+    @Flag(name: .long, inversion: .prefixedNo, help: "Auto-start daemon if not running") var autoDaemon: Bool = true
 
     mutating func run() async throws {
         let client = DaemonClient(port: port, token: token)
@@ -31,7 +31,7 @@ struct InteractiveChatCommand: AsyncParsableCommand {
         if !healthy {
             if autoDaemon {
                 print(TerminalFormatter.info("Daemon nicht erreichbar, starte in-process..."))
-                let listener = DaemonListener(port: port, authToken: token)
+                let listener = DaemonListener(port: port, authToken: client.token)
                 Task.detached { await listener.start() }
                 // Wait for daemon to come up
                 for _ in 0..<30 {

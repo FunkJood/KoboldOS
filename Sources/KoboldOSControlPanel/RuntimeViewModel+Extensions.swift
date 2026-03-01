@@ -47,9 +47,11 @@ extension RuntimeViewModel {
 
             while retryCount < maxRetries {
                 do {
-                    // Deduplicate off main thread
+                    // Deduplicate + leere Sessions entfernen (off main thread)
                     var seen = Set<UUID>()
-                    let deduped = snapshot.filter { seen.insert($0.id).inserted }
+                    let deduped = snapshot
+                        .filter { seen.insert($0.id).inserted }
+                        .filter { !$0.messages.isEmpty || $0.taskId != nil }
 
                     // Ensure directory exists
                     let dir = url.deletingLastPathComponent()

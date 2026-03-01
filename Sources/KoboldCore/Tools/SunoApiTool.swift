@@ -4,7 +4,7 @@ import Foundation
 // MARK: - Suno API Tool (Musik-Generierung via sunoapi.org)
 public struct SunoApiTool: Tool {
     public let name = "suno_api"
-    public let description = "Suno AI: Musik generieren, Status prüfen, Tracks abrufen. Benötigt API-Key in Einstellungen → Verbindungen."
+    public let description = "Suno AI: Musik generieren, Status prüfen, Tracks abrufen. Benötigt API-Key in Einstellungen → Integrationen."
     public let riskLevel: RiskLevel = .medium
 
     public var schema: ToolSchema {
@@ -32,7 +32,7 @@ public struct SunoApiTool: Tool {
 
         let apiKey = UserDefaults.standard.string(forKey: "kobold.suno.apiKey") ?? ""
         guard !apiKey.isEmpty else {
-            return "Error: Kein Suno API-Key konfiguriert. Bitte in Einstellungen → Verbindungen → Suno den API-Key eintragen (von sunoapi.org)."
+            return "Error: Kein Suno API-Key konfiguriert. Bitte in Einstellungen → Integrationen → Suno den API-Key eintragen (von sunoapi.org)."
         }
 
         switch action {
@@ -150,7 +150,7 @@ public struct SunoApiTool: Tool {
             let text = String(data: data.prefix(8192), encoding: .utf8) ?? "(leer)"
 
             if status == 401 || status == 403 {
-                return "Error: Suno API-Key ungültig oder abgelaufen. Bitte unter Einstellungen → Verbindungen → Suno prüfen."
+                return "Error: Suno API-Key ungültig oder abgelaufen. Bitte unter Einstellungen → Integrationen → Suno prüfen."
             }
             if status >= 400 {
                 return "Error: HTTP \(status): \(text)"

@@ -14,7 +14,7 @@ private struct HistoryClear: AsyncParsableCommand {
     static let configuration = CommandConfiguration(commandName: "clear", abstract: "Clear agent conversation history")
 
     @Option(name: .long, help: "Daemon port") var port: Int = 8080
-    @Option(name: .long, help: "Auth token") var token: String = "kobold-secret"
+    @Option(name: .long, help: "Auth token (auto-detected from GUI if omitted)") var token: String = ""
     @Flag(name: .long, help: "Skip confirmation") var force: Bool = false
 
     mutating func run() async throws {

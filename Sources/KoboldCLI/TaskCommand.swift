@@ -14,7 +14,7 @@ private struct TaskList: AsyncParsableCommand {
     static let configuration = CommandConfiguration(commandName: "list", abstract: "List all tasks")
 
     @Option(name: .long, help: "Daemon port") var port: Int = 8080
-    @Option(name: .long, help: "Auth token") var token: String = "kobold-secret"
+    @Option(name: .long, help: "Auth token (auto-detected from GUI if omitted)") var token: String = ""
     @Flag(name: .long, help: "JSON output") var json: Bool = false
 
     mutating func run() async throws {
@@ -54,7 +54,7 @@ private struct TaskCreate: AsyncParsableCommand {
     @Option(name: .long, help: "Task prompt") var prompt: String
     @Option(name: .long, help: "Cron schedule (optional)") var schedule: String = ""
     @Option(name: .long, help: "Daemon port") var port: Int = 8080
-    @Option(name: .long, help: "Auth token") var token: String = "kobold-secret"
+    @Option(name: .long, help: "Auth token (auto-detected from GUI if omitted)") var token: String = ""
 
     mutating func run() async throws {
         let client = DaemonClient(port: port, token: token)
@@ -76,7 +76,7 @@ private struct TaskDelete: AsyncParsableCommand {
 
     @Argument(help: "Task ID") var id: String
     @Option(name: .long, help: "Daemon port") var port: Int = 8080
-    @Option(name: .long, help: "Auth token") var token: String = "kobold-secret"
+    @Option(name: .long, help: "Auth token (auto-detected from GUI if omitted)") var token: String = ""
 
     mutating func run() async throws {
         let client = DaemonClient(port: port, token: token)
@@ -91,7 +91,7 @@ private struct TaskToggle: AsyncParsableCommand {
     @Argument(help: "Task ID") var id: String
     @Option(name: .long, help: "Enable (true/false)") var enabled: Bool
     @Option(name: .long, help: "Daemon port") var port: Int = 8080
-    @Option(name: .long, help: "Auth token") var token: String = "kobold-secret"
+    @Option(name: .long, help: "Auth token (auto-detected from GUI if omitted)") var token: String = ""
 
     mutating func run() async throws {
         let client = DaemonClient(port: port, token: token)
