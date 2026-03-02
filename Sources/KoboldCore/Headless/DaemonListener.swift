@@ -96,6 +96,7 @@ public actor DaemonListener {
     public func start() async {
         addTrace(event: "Start", detail: "DaemonListener on :\(port)")
         isRunning = true
+        migrateA2APermissions()
         startTaskScheduler()
         // Start ConsciousnessEngine with shared memory stores
         await ConsciousnessEngine.shared.configure(
@@ -203,7 +204,21 @@ public actor DaemonListener {
             } else {
                 provided = authHeader
             }
-            if !authToken.isEmpty && provided != authToken {
+
+            // A2A routes use their own token (kobold.a2a.token), not the daemon token
+            if path == "/a2a" {
+                let a2aToken = UserDefaults.standard.string(forKey: "kobold.a2a.token") ?? ""
+                let a2aEnabled = UserDefaults.standard.bool(forKey: "kobold.a2a.enabled")
+                if !a2aEnabled {
+                    client.write(httpResponse(status: "403 Forbidden", body: "{\"error\":\"A2A is disabled\"}"))
+                    return
+                }
+                if a2aToken.isEmpty || provided != a2aToken {
+                    client.write(httpResponse(status: "401 Unauthorized", body: "{\"error\":\"Invalid or missing A2A token\"}"))
+                    return
+                }
+                // A2A auth passed — fall through to routing
+            } else if !authToken.isEmpty && provided != authToken {
                 // Debug: Bei Proxy-Pfad detailliert loggen
                 if path.hasPrefix("/v1/") {
                     print("[Auth] ❌ 401 für \(path) — Header: '\(authHeader.prefix(30))...', erwartet Token-Länge: \(authToken.count)")
@@ -237,6 +252,17 @@ public actor DaemonListener {
         if path == "/agent/stream" && method == "POST" {
             await handleAgentStream(client: client, body: body)
             return
+        }
+
+        // A2A streaming endpoint (JSON-RPC message/sendStream)
+        if path == "/a2a" && method == "POST" {
+            if let body,
+               let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+               let rpcMethod = json["method"] as? String,
+               rpcMethod == "message/sendStream" {
+                await handleA2AStream(client: client, body: body, json: json)
+                return
+            }
         }
 
         // OpenAI-compatible proxy (für ElevenLabs Custom LLM → Ollama)
@@ -468,6 +494,11 @@ public actor DaemonListener {
         // MARK: - A2A Agent Card (public)
         case "/.well-known/agent.json":
             return jsonOK(buildAgentCard())
+
+        // MARK: - A2A JSON-RPC (authenticated via kobold.a2a.token)
+        case "/a2a":
+            guard method == "POST", let body else { return jsonError("POST required") }
+            return await handleA2ARPC(body: body)
 
         // MARK: - Checkpoints
         case "/checkpoints":
@@ -1466,40 +1497,454 @@ public actor DaemonListener {
         }
     }
 
+    // MARK: - A2A Protocol (Google A2A / JSON-RPC 2.0)
+
+    /// In-memory A2A task store (cleaned up after 1h)
+    private struct A2ATask {
+        let id: String
+        let contextId: String
+        var state: String  // submitted, working, completed, failed, canceled
+        var messages: [[String: Any]]
+        var artifacts: [[String: Any]]
+        var metadata: [String: Any]
+        let createdAt: Date
+        var updatedAt: Date
+    }
+    private var a2aTasks: [String: A2ATask] = [:]
+
+    /// Check a granular A2A permission. Returns true only if explicitly enabled.
+    private func a2aPermission(_ resource: String, _ action: String) -> Bool {
+        let key = "kobold.a2a.perm.\(resource).\(action)"
+        let defaults: [String: Bool] = [
+            "kobold.a2a.perm.memory.read": true, "kobold.a2a.perm.memory.write": false,
+            "kobold.a2a.perm.tools.read": true, "kobold.a2a.perm.tools.write": true,
+            "kobold.a2a.perm.files.read": false, "kobold.a2a.perm.files.write": false,
+            "kobold.a2a.perm.shell.read": false, "kobold.a2a.perm.shell.write": false,
+            "kobold.a2a.perm.tasks.read": true, "kobold.a2a.perm.tasks.write": false,
+            "kobold.a2a.perm.settings.read": false, "kobold.a2a.perm.settings.write": false,
+            "kobold.a2a.perm.agent.read": true, "kobold.a2a.perm.agent.write": true,
+        ]
+        if UserDefaults.standard.object(forKey: key) == nil {
+            return defaults[key] ?? false
+        }
+        return UserDefaults.standard.bool(forKey: key)
+    }
+
+    /// One-time migration from old flat A2A permission keys to granular ones
+    private func migrateA2APermissions() {
+        let ud = UserDefaults.standard
+        guard ud.object(forKey: "kobold.a2a.perm.migrated") == nil else { return }
+        if ud.object(forKey: "kobold.a2a.allowMemoryRead") != nil {
+            ud.set(ud.bool(forKey: "kobold.a2a.allowMemoryRead"), forKey: "kobold.a2a.perm.memory.read")
+        }
+        if ud.object(forKey: "kobold.a2a.allowMemoryWrite") != nil {
+            ud.set(ud.bool(forKey: "kobold.a2a.allowMemoryWrite"), forKey: "kobold.a2a.perm.memory.write")
+        }
+        if ud.object(forKey: "kobold.a2a.allowTools") != nil {
+            let v = ud.bool(forKey: "kobold.a2a.allowTools")
+            ud.set(v, forKey: "kobold.a2a.perm.tools.read")
+            ud.set(v, forKey: "kobold.a2a.perm.tools.write")
+        }
+        if ud.object(forKey: "kobold.a2a.allowFiles") != nil {
+            let v = ud.bool(forKey: "kobold.a2a.allowFiles")
+            ud.set(v, forKey: "kobold.a2a.perm.files.read")
+            ud.set(v, forKey: "kobold.a2a.perm.files.write")
+        }
+        if ud.object(forKey: "kobold.a2a.allowShell") != nil {
+            let v = ud.bool(forKey: "kobold.a2a.allowShell")
+            ud.set(v, forKey: "kobold.a2a.perm.shell.read")
+            ud.set(v, forKey: "kobold.a2a.perm.shell.write")
+        }
+        ud.set(true, forKey: "kobold.a2a.perm.migrated")
+    }
+
+    /// JSON-RPC 2.0 success response
+    private func jsonRpcResult(id: Any?, result: [String: Any]) -> String {
+        var obj: [String: Any] = ["jsonrpc": "2.0", "result": result]
+        if let id = id { obj["id"] = id } else { obj["id"] = NSNull() }
+        let data = (try? JSONSerialization.data(withJSONObject: obj, options: [.sortedKeys])) ?? Data()
+        return httpResponse(status: "200 OK", body: String(data: data, encoding: .utf8) ?? "{}")
+    }
+
+    /// JSON-RPC 2.0 error response
+    private func jsonRpcError(id: Any?, code: Int, message: String) -> String {
+        var obj: [String: Any] = ["jsonrpc": "2.0", "error": ["code": code, "message": message] as [String: Any]]
+        if let id = id { obj["id"] = id } else { obj["id"] = NSNull() }
+        let data = (try? JSONSerialization.data(withJSONObject: obj, options: [.sortedKeys])) ?? Data()
+        return httpResponse(status: "200 OK", body: String(data: data, encoding: .utf8) ?? "{}")
+    }
+
+    /// Remove stale terminal A2A tasks older than 1 hour
+    private func cleanupA2ATasks() {
+        let staleThreshold = Date().addingTimeInterval(-3600)
+        let terminal: Set<String> = ["completed", "failed", "canceled"]
+        a2aTasks = a2aTasks.filter { (_, task) in
+            if !terminal.contains(task.state) { return true }
+            return task.updatedAt > staleThreshold
+        }
+    }
+
+    // MARK: - A2A JSON-RPC Dispatcher
+
+    private func handleA2ARPC(body: Data) async -> String {
+        guard let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+              let rpcVersion = json["jsonrpc"] as? String, rpcVersion == "2.0",
+              let method = json["method"] as? String else {
+            return jsonRpcError(id: nil, code: -32600, message: "Invalid JSON-RPC 2.0 request")
+        }
+
+        let id = json["id"]
+        let params = json["params"] as? [String: Any] ?? [:]
+
+        addTrace(event: "A2A", detail: "\(method)")
+        cleanupA2ATasks()
+
+        switch method {
+        case "message/send":
+            guard a2aPermission("agent", "write") else {
+                return jsonRpcError(id: id, code: -32001, message: "Permission denied: agent.write")
+            }
+            return await handleA2AMessageSend(id: id, params: params)
+
+        case "tasks/get":
+            guard a2aPermission("tasks", "read") else {
+                return jsonRpcError(id: id, code: -32001, message: "Permission denied: tasks.read")
+            }
+            return handleA2ATaskGet(id: id, params: params)
+
+        case "tasks/list":
+            guard a2aPermission("tasks", "read") else {
+                return jsonRpcError(id: id, code: -32001, message: "Permission denied: tasks.read")
+            }
+            return handleA2ATaskList(id: id, params: params)
+
+        case "tasks/cancel":
+            guard a2aPermission("tasks", "write") else {
+                return jsonRpcError(id: id, code: -32001, message: "Permission denied: tasks.write")
+            }
+            return handleA2ATaskCancel(id: id, params: params)
+
+        case "memory/read":
+            guard a2aPermission("memory", "read") else {
+                return jsonRpcError(id: id, code: -32001, message: "Permission denied: memory.read")
+            }
+            return await handleA2AMemoryRead(id: id, params: params)
+
+        case "memory/write":
+            guard a2aPermission("memory", "write") else {
+                return jsonRpcError(id: id, code: -32001, message: "Permission denied: memory.write")
+            }
+            return await handleA2AMemoryWrite(id: id, params: params)
+
+        case "tools/list":
+            guard a2aPermission("tools", "read") else {
+                return jsonRpcError(id: id, code: -32001, message: "Permission denied: tools.read")
+            }
+            return await handleA2AToolsList(id: id)
+
+        default:
+            return jsonRpcError(id: id, code: -32601, message: "Method not found: \(method)")
+        }
+    }
+
+    // MARK: - A2A message/send (blocking)
+
+    private func handleA2AMessageSend(id: Any?, params: [String: Any]) async -> String {
+        guard let msgObj = params["message"] as? [String: Any],
+              let parts = msgObj["parts"] as? [[String: Any]] else {
+            return jsonRpcError(id: id, code: -32602, message: "Invalid params: message.parts required")
+        }
+
+        let textParts = parts.compactMap { $0["text"] as? String }
+        let userMessage = textParts.joined(separator: "\n")
+        guard !userMessage.isEmpty else {
+            return jsonRpcError(id: id, code: -32602, message: "No text content in message parts")
+        }
+
+        let taskId = params["taskId"] as? String ?? UUID().uuidString
+        let contextId = params["contextId"] as? String ?? UUID().uuidString
+
+        a2aTasks[taskId] = A2ATask(
+            id: taskId, contextId: contextId, state: "working",
+            messages: [msgObj], artifacts: [], metadata: params["metadata"] as? [String: Any] ?? [:],
+            createdAt: Date(), updatedAt: Date()
+        )
+
+        // Notify UI
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(
+                name: Notification.Name("koboldA2AClientConnected"), object: nil,
+                userInfo: ["id": taskId, "name": "A2A Agent", "url": contextId]
+            )
+        }
+
+        let pool = AgentWorkerPool.shared
+        let agent = await pool.acquire()
+        defer { Task.detached { await pool.release(agent) } }
+
+        await agent.setSkipApproval(true)
+
+        let agentMessage = "[A2A-REMOTE-ANFRAGE — Ein externer Agent sendet dir eine Aufgabe. Bearbeite sie und antworte mit dem response-Tool.]\n\n\(userMessage)"
+
+        addTrace(event: "A2A Send", detail: String(userMessage.prefix(80)))
+
+        do {
+            let result = try await agent.run(userMessage: agentMessage, agentType: .general)
+            let cleanOutput = Self.stripJSONForTelegram(result.finalOutput)
+
+            let artifact: [String: Any] = [
+                "id": UUID().uuidString,
+                "parts": [["text": cleanOutput]],
+                "metadata": ["steps": result.steps.count, "success": result.success] as [String: Any]
+            ]
+            a2aTasks[taskId]?.state = result.success ? "completed" : "failed"
+            a2aTasks[taskId]?.artifacts.append(artifact)
+            a2aTasks[taskId]?.updatedAt = Date()
+            a2aTasks[taskId]?.messages.append([
+                "role": "agent",
+                "parts": [["text": cleanOutput]]
+            ])
+
+            return jsonRpcResult(id: id, result: buildA2ATaskJSON(taskId))
+        } catch {
+            a2aTasks[taskId]?.state = "failed"
+            a2aTasks[taskId]?.updatedAt = Date()
+            return jsonRpcError(id: id, code: -32000, message: "Agent error: \(error.localizedDescription)")
+        }
+    }
+
+    // MARK: - A2A message/sendStream (SSE)
+
+    private func handleA2AStream(client: ClientSocket, body: Data?, json: [String: Any]) async {
+        let params = json["params"] as? [String: Any] ?? [:]
+
+        guard a2aPermission("agent", "write") else {
+            client.write(httpResponse(status: "403 Forbidden",
+                body: "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32001,\"message\":\"Permission denied: agent.write\"}}"))
+            return
+        }
+
+        guard let msgObj = params["message"] as? [String: Any],
+              let parts = msgObj["parts"] as? [[String: Any]] else {
+            client.write(httpResponse(status: "400 Bad Request",
+                body: "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32602,\"message\":\"Invalid params\"}}"))
+            return
+        }
+
+        let textParts = parts.compactMap { $0["text"] as? String }
+        let userMessage = textParts.joined(separator: "\n")
+        guard !userMessage.isEmpty else {
+            client.write(httpResponse(status: "400 Bad Request",
+                body: "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32602,\"message\":\"No text\"}}"))
+            return
+        }
+
+        let taskId = params["taskId"] as? String ?? UUID().uuidString
+        let contextId = params["contextId"] as? String ?? UUID().uuidString
+
+        a2aTasks[taskId] = A2ATask(
+            id: taskId, contextId: contextId, state: "working",
+            messages: [msgObj], artifacts: [], metadata: [:],
+            createdAt: Date(), updatedAt: Date()
+        )
+        activeAgentStreams += 1
+
+        let pool = AgentWorkerPool.shared
+        let agent = await pool.acquire()
+        defer {
+            activeAgentStreams -= 1
+            Task.detached { await pool.release(agent) }
+        }
+        await agent.setSkipApproval(true)
+
+        // Socket options for SSE
+        var yes: Int32 = 1
+        setsockopt(client.fd, SOL_SOCKET, SO_NOSIGPIPE, &yes, socklen_t(MemoryLayout<Int32>.size))
+        setsockopt(client.fd, IPPROTO_TCP, TCP_NODELAY, &yes, socklen_t(MemoryLayout<Int32>.size))
+
+        let sseHeaders = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache, no-store\r\nConnection: close\r\nX-Accel-Buffering: no\r\n\r\n"
+        client.write(sseHeaders)
+        _ = client.tryWrite("event: status\ndata: {\"taskId\":\"\(taskId)\",\"state\":\"working\"}\n\n")
+
+        let agentMessage = "[A2A-REMOTE-ANFRAGE]\n\n\(userMessage)"
+        let stream = await agent.runStreaming(userMessage: agentMessage, agentType: .general)
+        var finalOutput = ""
+        var stepCount = 0
+
+        for await step in stream {
+            stepCount += 1
+            switch step.type {
+            case .think, .toolCall, .toolResult:
+                let stepType = step.type == .think ? "thinking" : (step.type == .toolCall ? "tool:\(step.toolCallName ?? "")" : "result")
+                let evt: [String: Any] = [
+                    "taskId": taskId, "type": stepType,
+                    "content": String(step.content.prefix(2000))
+                ]
+                if let d = try? JSONSerialization.data(withJSONObject: evt),
+                   let s = String(data: d, encoding: .utf8) {
+                    let safe = s.replacingOccurrences(of: "\n", with: "\\n")
+                    if !client.tryWrite("event: message\ndata: \(safe)\n\n") { return }
+                }
+            case .finalAnswer:
+                finalOutput += step.content
+            case .error:
+                let evt: [String: Any] = ["taskId": taskId, "type": "error", "content": step.content]
+                if let d = try? JSONSerialization.data(withJSONObject: evt),
+                   let s = String(data: d, encoding: .utf8) {
+                    _ = client.tryWrite("event: message\ndata: \(s.replacingOccurrences(of: "\n", with: "\\n"))\n\n")
+                }
+            default: break
+            }
+            await Task.yield()
+        }
+
+        let cleanOutput = Self.stripJSONForTelegram(finalOutput)
+        let artifact: [String: Any] = [
+            "taskId": taskId,
+            "artifact": ["id": UUID().uuidString, "parts": [["text": cleanOutput]]] as [String: Any]
+        ]
+        if let d = try? JSONSerialization.data(withJSONObject: artifact),
+           let s = String(data: d, encoding: .utf8) {
+            _ = client.tryWrite("event: artifact\ndata: \(s.replacingOccurrences(of: "\n", with: "\\n"))\n\n")
+        }
+
+        a2aTasks[taskId]?.state = "completed"
+        a2aTasks[taskId]?.updatedAt = Date()
+        a2aTasks[taskId]?.artifacts.append(["id": UUID().uuidString, "parts": [["text": cleanOutput]]])
+        _ = client.tryWrite("event: status\ndata: {\"taskId\":\"\(taskId)\",\"state\":\"completed\"}\n\n")
+        _ = client.tryWrite("event: done\ndata: {}\n\n")
+
+        addTrace(event: "A2A Stream", detail: "Completed: \(stepCount) steps")
+    }
+
+    // MARK: - A2A Task Helpers
+
+    private func buildA2ATaskJSON(_ taskId: String) -> [String: Any] {
+        guard let task = a2aTasks[taskId] else { return ["error": "Task not found"] }
+        let fmt = ISO8601DateFormatter()
+        return [
+            "id": task.id, "contextId": task.contextId,
+            "status": ["state": task.state],
+            "messages": task.messages, "artifacts": task.artifacts,
+            "metadata": task.metadata,
+            "createdAt": fmt.string(from: task.createdAt),
+            "updatedAt": fmt.string(from: task.updatedAt)
+        ]
+    }
+
+    private func handleA2ATaskGet(id: Any?, params: [String: Any]) -> String {
+        guard let taskId = params["taskId"] as? String else {
+            return jsonRpcError(id: id, code: -32602, message: "Missing taskId")
+        }
+        guard a2aTasks[taskId] != nil else {
+            return jsonRpcError(id: id, code: -32002, message: "Task not found: \(taskId)")
+        }
+        return jsonRpcResult(id: id, result: buildA2ATaskJSON(taskId))
+    }
+
+    private func handleA2ATaskList(id: Any?, params: [String: Any]) -> String {
+        let contextId = params["contextId"] as? String
+        let tasks: [[String: Any]]
+        if let ctx = contextId {
+            tasks = a2aTasks.values.filter { $0.contextId == ctx }.map { buildA2ATaskJSON($0.id) }
+        } else {
+            tasks = a2aTasks.values.map { buildA2ATaskJSON($0.id) }
+        }
+        return jsonRpcResult(id: id, result: ["tasks": tasks])
+    }
+
+    private func handleA2ATaskCancel(id: Any?, params: [String: Any]) -> String {
+        guard let taskId = params["taskId"] as? String else {
+            return jsonRpcError(id: id, code: -32602, message: "Missing taskId")
+        }
+        guard a2aTasks[taskId] != nil else {
+            return jsonRpcError(id: id, code: -32002, message: "Task not found")
+        }
+        a2aTasks[taskId]?.state = "canceled"
+        a2aTasks[taskId]?.updatedAt = Date()
+        return jsonRpcResult(id: id, result: buildA2ATaskJSON(taskId))
+    }
+
+    // MARK: - A2A Resource Handlers
+
+    private func handleA2AMemoryRead(id: Any?, params: [String: Any]) async -> String {
+        guard let agent = agentLoop else {
+            return jsonRpcError(id: id, code: -32000, message: "Agent not available")
+        }
+        let blocks = await agent.coreMemory.allBlocks()
+        let arr = blocks.map { ["label": $0.label, "content": $0.value, "limit": $0.limit] as [String: Any] }
+        return jsonRpcResult(id: id, result: ["blocks": arr])
+    }
+
+    private func handleA2AMemoryWrite(id: Any?, params: [String: Any]) async -> String {
+        guard let agent = agentLoop else {
+            return jsonRpcError(id: id, code: -32000, message: "Agent not available")
+        }
+        guard let label = params["label"] as? String else {
+            return jsonRpcError(id: id, code: -32602, message: "Missing 'label'")
+        }
+        if let content = params["content"] as? String {
+            let limit = params["limit"] as? Int ?? 2000
+            await agent.coreMemory.upsert(MemoryBlock(label: label, value: content, limit: limit))
+            return jsonRpcResult(id: id, result: ["ok": true])
+        }
+        if let del = params["delete"] as? Bool, del {
+            try? await agent.coreMemory.clear(label: label)
+            return jsonRpcResult(id: id, result: ["ok": true])
+        }
+        return jsonRpcError(id: id, code: -32602, message: "Provide 'content' or 'delete: true'")
+    }
+
+    private func handleA2AToolsList(id: Any?) async -> String {
+        guard let agent = agentLoop else {
+            return jsonRpcError(id: id, code: -32000, message: "Agent not available")
+        }
+        let tools = await agent.listToolNames()
+        return jsonRpcResult(id: id, result: ["tools": tools])
+    }
+
     // MARK: - A2A Agent Card
 
     private func buildAgentCard() -> [String: Any] {
-        [
-            "name": "KoboldOS",
-            "version": KoboldVersion.current,
+        let ud = UserDefaults.standard
+        let koboldName = ud.string(forKey: "kobold.koboldName") ?? "KoboldOS"
+
+        // Build permissions summary
+        var permissions: [String: Any] = [:]
+        for resource in ["memory", "tools", "files", "shell", "tasks", "settings", "agent"] {
+            permissions[resource] = [
+                "read": a2aPermission(resource, "read"),
+                "write": a2aPermission(resource, "write")
+            ]
+        }
+
+        return [
+            "name": koboldName,
             "description": "Native macOS AI Agent Runtime — local-first, privacy-focused",
+            "version": KoboldVersion.current,
+            "url": "http://localhost:\(port)/a2a",
+            "provider": ["organization": "KoboldOS"],
             "capabilities": [
                 "streaming": true,
-                "tools": ["shell", "file", "browser", "http", "applescript", "notify_user", "calculator",
-                          "core_memory_read", "core_memory_append", "core_memory_replace",
-                          "archival_memory_search", "archival_memory_insert",
-                          "calendar", "contacts",
-                          "call_subordinate", "delegate_parallel"],
-                "agent_types": ["general", "coder", "web"],
-                "memory": true,
-                "sub_agents": true,
-                "vision": true,
-                "checkpoints": true,
-                "memory_versioning": true
+                "pushNotifications": false
             ] as [String: Any],
-            "authentication": ["type": "bearer"],
-            "endpoints": [
-                "agent": "/agent",
-                "stream": "/agent/stream",
-                "chat": "/chat",
-                "health": "/health",
-                "memory": "/memory",
-                "tasks": "/tasks",
-                "workflows": "/workflows",
-                "checkpoints": "/checkpoints",
-                "card": "/.well-known/agent.json"
-            ]
-        ]
+            "defaultInputModes": ["text/plain"],
+            "defaultOutputModes": ["text/plain"],
+            "skills": [
+                ["id": "general-chat", "name": "General Assistant", "description": "General-purpose AI assistant with tool access", "tags": ["chat"], "inputModes": ["text/plain"], "outputModes": ["text/plain"]],
+                ["id": "code-assistant", "name": "Code Assistant", "description": "Programming and code generation", "tags": ["code"], "inputModes": ["text/plain"], "outputModes": ["text/plain"]],
+                ["id": "web-research", "name": "Web Researcher", "description": "Web browsing and information gathering", "tags": ["web"], "inputModes": ["text/plain"], "outputModes": ["text/plain"]]
+            ] as [[String: Any]],
+            "securitySchemes": ["bearerAuth": ["type": "http", "scheme": "bearer"]],
+            "security": [["bearerAuth": [] as [String]]],
+            "x-kobold": [
+                "a2aEnabled": ud.bool(forKey: "kobold.a2a.enabled"),
+                "permissions": permissions,
+                "agentTypes": ["general", "coder", "web"],
+                "subAgents": true, "memory": true, "vision": true,
+                "endpoints": ["a2a": "/a2a", "agentCard": "/.well-known/agent.json", "health": "/health"]
+            ] as [String: Any]
+        ] as [String: Any]
     }
 
     // MARK: - Checkpoint Handlers
@@ -1924,8 +2369,13 @@ public actor DaemonListener {
         "kobold.webapp.enabled", "kobold.webapp.autostart", "kobold.webapp.port",
         // A2A
         "kobold.a2a.enabled", "kobold.a2a.port",
-        "kobold.a2a.allowMemoryRead", "kobold.a2a.allowMemoryWrite",
-        "kobold.a2a.allowTools", "kobold.a2a.allowFiles", "kobold.a2a.allowShell",
+        "kobold.a2a.perm.memory.read", "kobold.a2a.perm.memory.write",
+        "kobold.a2a.perm.tools.read", "kobold.a2a.perm.tools.write",
+        "kobold.a2a.perm.files.read", "kobold.a2a.perm.files.write",
+        "kobold.a2a.perm.shell.read", "kobold.a2a.perm.shell.write",
+        "kobold.a2a.perm.tasks.read", "kobold.a2a.perm.tasks.write",
+        "kobold.a2a.perm.settings.read", "kobold.a2a.perm.settings.write",
+        "kobold.a2a.perm.agent.read", "kobold.a2a.perm.agent.write",
         // Skills
         "kobold.skills.enabled",
         // Cloudflare (non-secret settings)

@@ -53,7 +53,7 @@ final class WebAppServer: @unchecked Sendable {
     }
 
     /// Current WebGUI version — bump when HTML changes to auto-update on-disk copy
-    private static let webGUIVersion = "v0.3.7"
+    private static let webGUIVersion = "v0.3.71"
 
     /// Write default index.html to disk if not present or outdated (agent can then edit it)
     func ensureWebGUIFiles() {
@@ -718,7 +718,7 @@ final class WebAppServer: @unchecked Sendable {
 
     private static func buildHTML() -> String {
         return """
-        <!-- KoboldOS WebGUI v0.3.7 -->
+        <!-- KoboldOS WebGUI v0.3.71 -->
         <!DOCTYPE html>
         <html lang="de">
         <head>
@@ -1761,7 +1761,7 @@ final class WebAppServer: @unchecked Sendable {
             <div class="nav-item" onclick="switchTab('memory',this)"><i data-lucide="brain"></i><span>Gedächtnis</span></div>
             <div class="nav-item" onclick="switchTab('settings',this)"><i data-lucide="settings"></i><span>Einstellungen</span></div>
           </div>
-          <div class="sidebar-footer" id="versionFooter">KoboldOS <span class="version-badge">v0.3.7</span></div>
+          <div class="sidebar-footer" id="versionFooter">KoboldOS <span class="version-badge">v0.3.71</span></div>
         </div>
 
         <div class="main">
@@ -2302,11 +2302,21 @@ final class WebAppServer: @unchecked Sendable {
                   <div class="fbox-header"><i data-lucide="globe"></i>A2A (Agent-to-Agent)</div>
                   <div class="settings-row"><div class="s-left"><span class="settings-label">A2A aktivieren</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.a2a.enabled"><span class="slider"></span></label></div>
                   <div class="settings-row"><div class="s-left"><span class="settings-label">A2A Port</span></div><select class="s-select" data-key="kobold.a2a.port"><option value="8081">8081</option><option value="8082">8082</option><option value="8083">8083</option><option value="9090">9090</option></select></div>
-                  <div class="settings-row"><div class="s-left"><span class="settings-label">Memory lesen</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.a2a.allowMemoryRead"><span class="slider"></span></label></div>
-                  <div class="settings-row"><div class="s-left"><span class="settings-label">Memory schreiben</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.a2a.allowMemoryWrite"><span class="slider"></span></label></div>
-                  <div class="settings-row"><div class="s-left"><span class="settings-label">Tools erlauben</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.a2a.allowTools"><span class="slider"></span></label></div>
-                  <div class="settings-row"><div class="s-left"><span class="settings-label">Dateien erlauben</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.a2a.allowFiles"><span class="slider"></span></label></div>
-                  <div class="settings-row"><div class="s-left"><span class="settings-label">Shell erlauben</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.a2a.allowShell"><span class="slider"></span></label></div>
+                  <div style="margin-top:8px;margin-bottom:4px">
+                    <span class="settings-label" style="font-weight:600">Berechtigungen</span>
+                    <div style="display:flex;gap:4px;margin-top:6px;padding:0 4px">
+                      <span style="flex:1;font-size:11px;color:var(--text-tertiary);font-weight:600">Ressource</span>
+                      <span style="width:60px;text-align:center;font-size:11px;color:#4ade80;font-weight:600">Lesen</span>
+                      <span style="width:60px;text-align:center;font-size:11px;color:#fb923c;font-weight:600">Schreiben</span>
+                    </div>
+                  </div>
+                  <div class="settings-row"><div class="s-left" style="flex:1"><span class="settings-label">🧠 Gedächtnis</span></div><label class="s-toggle" style="width:60px;justify-content:center"><input type="checkbox" data-key="kobold.a2a.perm.memory.read"><span class="slider"></span></label><label class="s-toggle" style="width:60px;justify-content:center"><input type="checkbox" data-key="kobold.a2a.perm.memory.write"><span class="slider"></span></label></div>
+                  <div class="settings-row"><div class="s-left" style="flex:1"><span class="settings-label">🔧 Tools</span></div><label class="s-toggle" style="width:60px;justify-content:center"><input type="checkbox" data-key="kobold.a2a.perm.tools.read"><span class="slider"></span></label><label class="s-toggle" style="width:60px;justify-content:center"><input type="checkbox" data-key="kobold.a2a.perm.tools.write"><span class="slider"></span></label></div>
+                  <div class="settings-row"><div class="s-left" style="flex:1"><span class="settings-label">📁 Dateien</span></div><label class="s-toggle" style="width:60px;justify-content:center"><input type="checkbox" data-key="kobold.a2a.perm.files.read"><span class="slider"></span></label><label class="s-toggle" style="width:60px;justify-content:center"><input type="checkbox" data-key="kobold.a2a.perm.files.write"><span class="slider"></span></label></div>
+                  <div class="settings-row"><div class="s-left" style="flex:1"><span class="settings-label">💻 Shell</span></div><label class="s-toggle" style="width:60px;justify-content:center"><input type="checkbox" data-key="kobold.a2a.perm.shell.read"><span class="slider"></span></label><label class="s-toggle" style="width:60px;justify-content:center"><input type="checkbox" data-key="kobold.a2a.perm.shell.write"><span class="slider"></span></label></div>
+                  <div class="settings-row"><div class="s-left" style="flex:1"><span class="settings-label">✅ Aufgaben</span></div><label class="s-toggle" style="width:60px;justify-content:center"><input type="checkbox" data-key="kobold.a2a.perm.tasks.read"><span class="slider"></span></label><label class="s-toggle" style="width:60px;justify-content:center"><input type="checkbox" data-key="kobold.a2a.perm.tasks.write"><span class="slider"></span></label></div>
+                  <div class="settings-row"><div class="s-left" style="flex:1"><span class="settings-label">⚙️ Einstellungen</span></div><label class="s-toggle" style="width:60px;justify-content:center"><input type="checkbox" data-key="kobold.a2a.perm.settings.read"><span class="slider"></span></label><label class="s-toggle" style="width:60px;justify-content:center"><input type="checkbox" data-key="kobold.a2a.perm.settings.write"><span class="slider"></span></label></div>
+                  <div class="settings-row"><div class="s-left" style="flex:1"><span class="settings-label">🤖 Agent</span></div><label class="s-toggle" style="width:60px;justify-content:center"><input type="checkbox" data-key="kobold.a2a.perm.agent.read"><span class="slider"></span></label><label class="s-toggle" style="width:60px;justify-content:center"><input type="checkbox" data-key="kobold.a2a.perm.agent.write"><span class="slider"></span></label></div>
                   <div style="margin-top:12px"><span class="settings-label">Vertrauenswürdige Agenten</span><span class="s-desc" style="display:block">Agent-IDs kommagetrennt</span></div>
                   <textarea class="s-textarea" data-key="kobold.a2a.trustedAgents" rows="2" placeholder="agent-id-1, agent-id-2"></textarea>
                   <div style="margin-top:8px;text-align:right"><button class="btn btn-primary btn-sm" onclick="saveTextarea('kobold.a2a.trustedAgents')"><i data-lucide="save"></i>Speichern</button></div>
@@ -2326,7 +2336,7 @@ final class WebAppServer: @unchecked Sendable {
                   <div class="fbox-header"><i data-lucide="users"></i>Kobold Team</div>
                   <div class="settings-row">
                     <span class="settings-label">Entwickelt von</span>
-                    <a href="https://soundcloud.com/funkjood" target="_blank" style="color:var(--accent);text-decoration:underline;font-size:13px">FunkJood</a>
+                    <a href="https://on.soundcloud.com/I3XRNMhkOAtnNQitGJ" target="_blank" style="color:var(--accent);text-decoration:underline;font-size:13px">FunkJood</a>
                   </div>
                   <div class="settings-row"><span class="settings-label" style="color:var(--text-tertiary);font-size:12px">Powered by Ollama · Swift 6 · SwiftUI</span></div>
                 </div>

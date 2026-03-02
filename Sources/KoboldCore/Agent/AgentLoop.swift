@@ -277,6 +277,8 @@ public actor AgentLoop {
         await registry.register(ClaudeCodeTool())
         // Cloudflare Tunnel management
         await registry.register(CloudflareTunnelTool())
+        // A2A Agent-to-Agent communication
+        await registry.register(A2AClientTool())
         // Secrets & Keychain access
         await registry.register(SecretsTool())
         // Settings read/write
@@ -428,6 +430,11 @@ public actor AgentLoop {
 
     /// Maximum characters to include from a tool result in the message context
     private let maxToolResultChars = 32000
+
+    /// List all registered tool names (for A2A tools/list endpoint)
+    public func listToolNames() async -> [String] {
+        await registry.listEnabled()
+    }
 
     public func run(userMessage: String, agentType: AgentType = .general, providerConfig: LLMProviderConfig? = nil) async throws -> AgentResult {
         // Wrap with timeout

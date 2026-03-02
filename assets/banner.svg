@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 200">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#1a1a2e"/>
+      <stop offset="100%" stop-color="#16213e"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f59e0b"/>
+      <stop offset="100%" stop-color="#ef4444"/>
+    </linearGradient>
+  </defs>
+  <rect width="800" height="200" rx="16" fill="url(#bg)"/>
+  <rect x="30" y="40" width="120" height="120" rx="20" fill="#111827" stroke="url(#accent)" stroke-width="3"/>
+  <text x="90" y="122" text-anchor="middle" font-family="system-ui,sans-serif" font-size="72" font-weight="bold" fill="url(#accent)">K</text>
+  <text x="180" y="105" font-family="system-ui,sans-serif" font-size="48" font-weight="bold" fill="#f5f5f5">KoboldOS</text>
+  <text x="180" y="140" font-family="system-ui,sans-serif" font-size="18" fill="#9ca3af">Local AI Agent Runtime — Privacy-first, Autonomous, Open</text>
+  <rect x="600" y="55" rx="8" width="170" height="30" fill="#f59e0b" opacity="0.15"/>
+  <text x="685" y="76" text-anchor="middle" font-family="system-ui,sans-serif" font-size="14" font-weight="600" fill="#f59e0b">Alpha v0.3.71</text>
+  <rect x="600" y="95" rx="8" width="170" height="30" fill="#3b82f6" opacity="0.15"/>
+  <text x="685" y="116" text-anchor="middle" font-family="system-ui,sans-serif" font-size="13" fill="#60a5fa">macOS + Docker</text>
+</svg>

@@ -2,6 +2,23 @@
 KOBOLDOS — CHANGELOG
 ══════════════════════════════════════════════
 
+VERSION 0.3.71 (2026-03-02)
+─────────────────────────────────
+Google A2A Protocol — Vollstaendige Implementierung:
+• A2A Server (JSON-RPC 2.0): KoboldOS ueber /a2a von anderen Agents steuerbar
+• 8 RPC-Methoden: message/send, message/sendStream, tasks/*, memory/*, tools/list
+• A2A Client Tool: Agent kann andere A2A-Agents entdecken und anrufen
+• Granulare Berechtigungen: 7 Ressourcen x 2 Richtungen = 14 Toggles
+• Desktop + Web UI: Berechtigungs-Grid (Lesen gruen / Schreiben orange)
+• CLI: kobold card send <url> <nachricht> --token <token>
+• Spec-konforme Agent Card mit Skills, Security Schemes, Permissions
+• Separate A2A-Auth (eigener Token unabhaengig vom Daemon-Token)
+• Task-Lifecycle mit automatischem Cleanup nach 1h
+• Permission Migration: Alte Keys automatisch auf neue granulare Keys
+
+Bugfixes:
+• SoundCloud-Profil Link korrigiert (Desktop + Web)
+
 VERSION 0.3.7 STABLE (2026-03-02)
 ─────────────────────────────────
 Human-in-the-Loop Tool-Bestaetigung:

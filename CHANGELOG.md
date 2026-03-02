@@ -1,5 +1,25 @@
 # KoboldOS Changelog
 
+## Alpha v0.3.71 — 2026-03-02
+
+### Google A2A Protocol — Vollständige Implementierung
+- **A2A Server (JSON-RPC 2.0)**: KoboldOS kann jetzt von anderen Agents über `/a2a` angesteuert werden
+- **8 RPC-Methoden**: `message/send`, `message/sendStream` (SSE), `tasks/get`, `tasks/list`, `tasks/cancel`, `memory/read`, `memory/write`, `tools/list`
+- **A2A Client Tool**: Agent kann andere A2A-kompatible Agents entdecken (`discover`) und anrufen (`send`)
+- **Granulare Berechtigungen**: 7 Ressourcen (Gedächtnis, Tools, Dateien, Shell, Aufgaben, Einstellungen, Agent) × 2 Richtungen (Lesen/Schreiben) = 14 individuelle Toggles
+- **Desktop UI**: Berechtigungs-Grid mit farbcodierten Icons und Spalten Lesen (grün) / Schreiben (orange)
+- **Web UI**: Gleiches Grid in HTML mit automatischem Settings-Binding
+- **CLI**: `kobold card send <url> <nachricht> --token <token>` für Shell-basierte A2A-Kommunikation
+- **Spec-konforme Agent Card**: Skills, Security Schemes, Permissions-Summary, x-kobold Extensions
+- **Separate A2A-Auth**: Eigener Token (`kobold.a2a.token`) unabhängig vom Daemon-Token
+- **Task-Lifecycle**: Automatisches Cleanup nach 1h, Task-States (working/completed/failed/canceled)
+- **Permission Migration**: Alte flache Keys werden einmalig auf neue granulare Keys migriert
+
+### Bugfixes
+- **SoundCloud-Profil**: About-Link korrigiert (Desktop + Web)
+
+---
+
 ## Alpha v0.3.7 — 2026-03-02 (Stable Release)
 
 ### Human-in-the-Loop Tool-Bestätigung

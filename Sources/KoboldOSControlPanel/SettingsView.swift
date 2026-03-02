@@ -69,13 +69,23 @@ struct SettingsView: View {
     // A2A settings
     @AppStorage("kobold.a2a.enabled") private var a2aEnabled: Bool = false
     @AppStorage("kobold.a2a.port") private var a2aPort: Int = 8081
-    @AppStorage("kobold.a2a.allowMemoryRead") private var a2aAllowMemoryRead: Bool = true
-    @AppStorage("kobold.a2a.allowMemoryWrite") private var a2aAllowMemoryWrite: Bool = false
-    @AppStorage("kobold.a2a.allowTools") private var a2aAllowTools: Bool = true
-    @AppStorage("kobold.a2a.allowFiles") private var a2aAllowFiles: Bool = false
-    @AppStorage("kobold.a2a.allowShell") private var a2aAllowShell: Bool = false
     @AppStorage("kobold.a2a.trustedAgents") private var a2aTrustedAgents: String = ""
     @AppStorage("kobold.a2a.token") private var a2aToken: String = ""
+    // A2A Granular Permissions — 7 resources x 2 directions = 14 toggles
+    @AppStorage("kobold.a2a.perm.memory.read") private var a2aPermMemoryRead: Bool = true
+    @AppStorage("kobold.a2a.perm.memory.write") private var a2aPermMemoryWrite: Bool = false
+    @AppStorage("kobold.a2a.perm.tools.read") private var a2aPermToolsRead: Bool = true
+    @AppStorage("kobold.a2a.perm.tools.write") private var a2aPermToolsWrite: Bool = true
+    @AppStorage("kobold.a2a.perm.files.read") private var a2aPermFilesRead: Bool = false
+    @AppStorage("kobold.a2a.perm.files.write") private var a2aPermFilesWrite: Bool = false
+    @AppStorage("kobold.a2a.perm.shell.read") private var a2aPermShellRead: Bool = false
+    @AppStorage("kobold.a2a.perm.shell.write") private var a2aPermShellWrite: Bool = false
+    @AppStorage("kobold.a2a.perm.tasks.read") private var a2aPermTasksRead: Bool = true
+    @AppStorage("kobold.a2a.perm.tasks.write") private var a2aPermTasksWrite: Bool = false
+    @AppStorage("kobold.a2a.perm.settings.read") private var a2aPermSettingsRead: Bool = false
+    @AppStorage("kobold.a2a.perm.settings.write") private var a2aPermSettingsWrite: Bool = false
+    @AppStorage("kobold.a2a.perm.agent.read") private var a2aPermAgentRead: Bool = true
+    @AppStorage("kobold.a2a.perm.agent.write") private var a2aPermAgentWrite: Bool = true
     @State private var a2aRemoteToken: String = ""
     @State private var a2aConnectedClients: [A2AConnectedClient] = []
 
@@ -1354,19 +1364,30 @@ struct SettingsView: View {
 
     // (A2A section moved into connectionsSection above)
 
-    private func a2aPermToggle(title: String, icon: String, color: Color, isOn: Binding<Bool>) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: icon)
-                .font(.system(size: 14.5))
-                .foregroundColor(isOn.wrappedValue ? color : .secondary)
-                .frame(width: 18)
-            Text(title).font(.system(size: 13.5))
+    private func a2aPermRow(label: String, icon: String, color: Color,
+                            readBinding: Binding<Bool>, writeBinding: Binding<Bool>) -> some View {
+        HStack {
+            HStack(spacing: 6) {
+                Image(systemName: icon)
+                    .font(.system(size: 13.5))
+                    .foregroundColor(readBinding.wrappedValue || writeBinding.wrappedValue ? color : .secondary)
+                    .frame(width: 16)
+                Text(label).font(.system(size: 13.5))
+            }
+            .frame(width: 120, alignment: .leading)
             Spacer()
-            Toggle("", isOn: isOn)
+            Toggle("", isOn: readBinding)
                 .toggleStyle(.switch)
                 .labelsHidden()
-                .tint(color)
+                .tint(.green)
                 .controlSize(.small)
+                .frame(width: 60)
+            Toggle("", isOn: writeBinding)
+                .toggleStyle(.switch)
+                .labelsHidden()
+                .tint(.orange)
+                .controlSize(.small)
+                .frame(width: 60)
         }
     }
 
@@ -2154,7 +2175,7 @@ struct SettingsView: View {
                 }
             }
 
-            // Berechtigungen Card
+            // Berechtigungen Card — Granular Read/Write per Resource
             GroupBox {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack(spacing: 10) {
@@ -2169,19 +2190,41 @@ struct SettingsView: View {
                         .frame(width: 36, height: 36)
                         VStack(alignment: .leading, spacing: 2) {
                             Text("A2A Berechtigungen").font(.system(size: 17.5, weight: .bold))
-                            Text("Zugriff externer Agenten").font(.system(size: 13.5)).foregroundColor(.secondary)
+                            Text("Lesen & Schreiben pro Ressource").font(.system(size: 13.5)).foregroundColor(.secondary)
                         }
                         Spacer()
                     }
 
                     Divider().opacity(0.5)
 
-                    VStack(spacing: 6) {
-                        a2aPermToggle(title: "Tools nutzen", icon: "wrench.fill", color: .koboldGold, isOn: $a2aAllowTools)
-                        a2aPermToggle(title: "Gedächtnis lesen", icon: "brain.fill", color: .cyan, isOn: $a2aAllowMemoryRead)
-                        a2aPermToggle(title: "Gedächtnis schreiben", icon: "brain.head.profile", color: .orange, isOn: $a2aAllowMemoryWrite)
-                        a2aPermToggle(title: "Dateizugriff", icon: "folder.fill", color: .blue, isOn: $a2aAllowFiles)
-                        a2aPermToggle(title: "Shell-Zugriff", icon: "terminal.fill", color: .red, isOn: $a2aAllowShell)
+                    // Column headers
+                    HStack {
+                        Text("Ressource").font(.system(size: 12.5, weight: .semibold)).foregroundColor(.secondary)
+                            .frame(width: 120, alignment: .leading)
+                        Spacer()
+                        Text("Lesen").font(.system(size: 12.5, weight: .semibold)).foregroundColor(.secondary)
+                            .frame(width: 60)
+                        Text("Schreiben").font(.system(size: 12.5, weight: .semibold)).foregroundColor(.secondary)
+                            .frame(width: 60)
+                    }
+
+                    Divider().opacity(0.3)
+
+                    VStack(spacing: 8) {
+                        a2aPermRow(label: "Gedächtnis", icon: "brain.fill", color: .cyan,
+                                   readBinding: $a2aPermMemoryRead, writeBinding: $a2aPermMemoryWrite)
+                        a2aPermRow(label: "Tools", icon: "wrench.fill", color: .koboldGold,
+                                   readBinding: $a2aPermToolsRead, writeBinding: $a2aPermToolsWrite)
+                        a2aPermRow(label: "Dateien", icon: "folder.fill", color: .blue,
+                                   readBinding: $a2aPermFilesRead, writeBinding: $a2aPermFilesWrite)
+                        a2aPermRow(label: "Shell", icon: "terminal.fill", color: .red,
+                                   readBinding: $a2aPermShellRead, writeBinding: $a2aPermShellWrite)
+                        a2aPermRow(label: "Aufgaben", icon: "checklist", color: .green,
+                                   readBinding: $a2aPermTasksRead, writeBinding: $a2aPermTasksWrite)
+                        a2aPermRow(label: "Einstellungen", icon: "gear", color: .gray,
+                                   readBinding: $a2aPermSettingsRead, writeBinding: $a2aPermSettingsWrite)
+                        a2aPermRow(label: "Agent", icon: "person.fill", color: .purple,
+                                   readBinding: $a2aPermAgentRead, writeBinding: $a2aPermAgentWrite)
                     }
                 }
                 .padding()
@@ -4731,7 +4774,7 @@ struct SettingsView: View {
                 HStack(spacing: 4) {
                     Text("Entwickelt von")
                     Button("FunkJood") {
-                        NSWorkspace.shared.open(URL(string: "https://soundcloud.com/funkjood")!)
+                        NSWorkspace.shared.open(URL(string: "https://on.soundcloud.com/I3XRNMhkOAtnNQitGJ")!)
                     }
                     .buttonStyle(.plain)
                     .foregroundColor(.koboldEmerald)
