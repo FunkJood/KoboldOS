@@ -287,5 +287,5 @@ Durch die Nutzung akzeptierst du:
 
 <p align="center">
   <strong>KoboldOS</strong> — Local-first, Privacy-focused AI Agent Runtime<br>
-  Made by <a href="https://soundcloud.com/funkjood">FunkJood</a>
+  Made by <a href="https://soundcloud.com/funkjoodmusic">FunkJood</a>
 </p>
