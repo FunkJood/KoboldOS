@@ -20,7 +20,7 @@ public struct SettingsReadTool: Tool {
 
     /// Keys the agent must NEVER read (security-sensitive).
     private static let blacklist: Set<String> = [
-        "kobold.auth.token"
+        "kobold.authToken"
     ]
 
     public func validate(arguments: [String: String]) throws {

@@ -36,6 +36,7 @@ Ein lokales Ollama-Sprachmodell wird mit **55+ Tools**, persistentem Gedächtnis
 | **Echter Agent** | Autonome Tool-Nutzung, mehrstufiges Reasoning, Sub-Agenten. |
 | **55+ Tools** | Shell, Browser, GitHub, Telegram, Google, Docker, E-Mail, und mehr. |
 | **Gedächtnis** | 3-Tier Memory mit Vektorsuche. Erinnert sich, lernt, wächst. |
+| **Teams & Workflows** | Multi-Agent-Teams mit Chat, visueller Workflow-Editor mit Node-by-Node Execution. |
 | **Multi-Plattform** | Native macOS-App + Docker-Container (Windows, macOS, Linux). |
 
 ---
@@ -51,7 +52,7 @@ brew install ollama && ollama serve
 # 2. KoboldOS bauen
 git clone https://github.com/FunkJood/KoboldOS.git
 cd KoboldOS && bash scripts/build.sh
-# Erstellt ~/Desktop/KoboldOS-0.3.71.dmg
+# Erstellt ~/Desktop/KoboldOS-0.3.8.dmg
 ```
 
 Oder: DMG öffnen, in Programme ziehen, starten.
@@ -149,7 +150,9 @@ KoboldOS-Instanzen kommunizieren miteinander — macOS-App steuert Docker-Agent,
 - **Cron-Scheduler**: Stündlich, täglich, wöchentlich, monatlich, ...
 - **Idle-Tasks**: Agent arbeitet automatisch in Leerlaufzeiten
 - **Proaktive Engine**: Heartbeat, Ziele, System-Health-Alerts
-- **Workflow-Editor**: Visuelle Nodes, Connections, Trigger
+- **Workflow-Editor**: Visueller Canvas mit 18 Node-Typen, Connection Snap, Inspector
+- **Workflow-Execution**: Node-by-Node mit Live Thought Stream und dediziertem Workflow Chat
+- **Multi-Agent-Teams**: Agent-Teams mit Rollen, System-Prompts und Chat-Diskurs
 
 ---
 
@@ -163,7 +166,7 @@ KoboldOS-Instanzen kommunizieren miteinander — macOS-App steuert Docker-Agent,
 | **Spracheingabe** | Whisper (STT) | — |
 | **AppleScript** | Safari, Mail, etc. | — |
 | **Kalender/Kontakte** | Apple nativ | CalDAV |
-| **Teams** | Multi-Agent Diskurs | — |
+| **Teams** | Multi-Agent Diskurs | Multi-Agent Chat (WebGUI) |
 | **Marktplatz** | Widgets, Skills | — |
 | **Docker-Steuerung** | — | Container verwalten |
 | **Tresor** | Keychain | WebGUI Vault |

@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Build script for KoboldOS
-VERSION="0.3.76"
+VERSION="0.3.8"
 echo "Building KoboldOS v${VERSION}..."
 
 # Clean previous builds
@@ -10,15 +10,13 @@ rm -f dist/KoboldOSv${VERSION}.dmg
 rm -f dist/KoboldOS-${VERSION}.dmg
 rm -rf dist/dmg_staging
 
-# Build the project (debug mode for development)
-echo "Compiling..."
-swift build 2>&1
+# Build the project
+swift build -c debug
 
 if [ $? -ne 0 ]; then
     echo "Build failed!"
     exit 1
 fi
-echo "Compilation successful."
 
 # Create app bundle structure
 echo "Creating app bundle..."
@@ -65,7 +63,7 @@ cat > dist/KoboldOSv${VERSION}.app/Contents/Info.plist << EOF
     <key>CFBundleShortVersionString</key>
     <string>${VERSION}</string>
     <key>CFBundleVersion</key>
-    <string>20260302</string>
+    <string>20260303</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <key>NSHighResolutionCapable</key>
@@ -138,18 +136,15 @@ if command -v hdiutil &> /dev/null; then
     # 2. Create Applications symlink (drag-to-install)
     ln -s /Applications "$DMG_STAGING/Applications"
 
-    # 3. Copy only essential documentation
-    if [ -f "README.md" ]; then
-        cp README.md "$DMG_STAGING/README.txt"
-    fi
-    if [ -f "dist/CHANGELOG.txt" ]; then
-        cp dist/CHANGELOG.txt "$DMG_STAGING/CHANGELOG.txt"
-    elif [ -f "CHANGELOG.md" ]; then
-        cp CHANGELOG.md "$DMG_STAGING/CHANGELOG.txt"
-    fi
-    if [ -f "dist/TUTORIAL.txt" ]; then
-        cp dist/TUTORIAL.txt "$DMG_STAGING/TUTORIAL.txt"
-    fi
+    # 3. Copy exactly 5 documentation files (.md → .txt)
+    for f in README DOKUMENTATION ROADMAP ARCHITECTURE CHANGELOG; do
+        if [ -f "${f}.md" ]; then
+            cp "${f}.md" "$DMG_STAGING/${f}.txt"
+            echo "  → ${f}.txt"
+        else
+            echo "  ⚠ ${f}.md nicht gefunden!"
+        fi
+    done
 
     # 4. Create DMG
     hdiutil create \

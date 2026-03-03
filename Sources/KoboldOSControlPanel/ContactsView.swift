@@ -978,9 +978,10 @@ struct ContactsView: View {
         await loadAll()
     }
 
-    private func importAppleContacts() async {
-        guard let url = URL(string: viewModel.baseURL + "/contacts/import-apple") else { return }
-        isImporting = true; importStatus = "Apple Kontakte werden importiert..."
+    /// Generische Import-Funktion für Apple/Google Kontakte (dedupliziert)
+    private func importContacts(endpoint: String, serviceName: String) async {
+        guard let url = URL(string: viewModel.baseURL + endpoint) else { return }
+        isImporting = true; importStatus = "\(serviceName) Kontakte werden importiert..."
         defer { isImporting = false }
         var req = viewModel.authorizedRequest(url: url, method: "POST")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -1001,27 +1002,12 @@ struct ContactsView: View {
         await loadAll()
     }
 
+    private func importAppleContacts() async {
+        await importContacts(endpoint: "/contacts/import-apple", serviceName: "Apple")
+    }
+
     private func importGoogleContacts() async {
-        guard let url = URL(string: viewModel.baseURL + "/contacts/import-google") else { return }
-        isImporting = true; importStatus = "Google Kontakte werden importiert..."
-        defer { isImporting = false }
-        var req = viewModel.authorizedRequest(url: url, method: "POST")
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        do {
-            let (data, _) = try await URLSession.shared.data(for: req)
-            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                if let error = json["error"] as? String {
-                    importStatus = "Fehler: \(error)"
-                } else if let count = json["imported"] as? Int, let skipped = json["skipped"] as? Int {
-                    importStatus = "\(count) importiert, \(skipped) übersprungen"
-                } else {
-                    importStatus = "Import abgeschlossen"
-                }
-            }
-        } catch {
-            importStatus = "Fehler: \(error.localizedDescription)"
-        }
-        await loadAll()
+        await importContacts(endpoint: "/contacts/import-google", serviceName: "Google")
     }
 }
 

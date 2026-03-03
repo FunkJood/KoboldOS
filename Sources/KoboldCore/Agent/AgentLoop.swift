@@ -2036,17 +2036,26 @@ public actor AgentLoop {
 
     /// Search memories relevant to the user's query using semantic RAG (Ollama embeddings).
     /// Falls back to TF-IDF if the embedding model is unavailable.
-    private func smartMemoryRetrieval(query: String, limit: Int = 5) async -> String {
+    /// Max. Suchergebnisse (Suchpool-Größe) — Settings: kobold.memory.maxSearch
+    private var memoryMaxSearchLimit: Int {
+        let v = UserDefaults.standard.integer(forKey: "kobold.memory.maxSearch")
+        return v > 0 ? v : 12
+    }
+
+    private func smartMemoryRetrieval(query: String, limit: Int? = nil) async -> String {
         guard !query.isEmpty else { return "" }
+
+        let searchLimit = limit ?? memoryMaxSearchLimit
+        let resultLimit = memoryMaxSearchResults  // kobold.memory.maxResults (Kontext-Limit)
 
         let totalCount = await memoryStore.allEntries().count
         let footer = totalCount > 0 ? "\n[Gesamt: \(totalCount) Erinnerungen gespeichert — nutze memory_recall für gezielte Suche]" : ""
 
         // --- Semantic RAG path ---
         if let queryEmb = await EmbeddingRunner.shared.embed(query) {
-            let hits = await EmbeddingStore.shared.search(queryEmbedding: queryEmb, limit: limit)
+            let hits = await EmbeddingStore.shared.search(queryEmbedding: queryEmb, limit: searchLimit)
             if !hits.isEmpty {
-                let lines = hits.map { h in
+                let lines = hits.prefix(resultLimit).map { h in
                     let tags = h.tags.isEmpty ? "" : " [\(h.tags.joined(separator: ", "))]"
                     return "- (\(h.memoryType))\(tags) \(h.text)"
                 }.joined(separator: "\n")
@@ -2056,9 +2065,9 @@ public actor AgentLoop {
 
         // --- Fallback: Emotionally-weighted TF-IDF ---
         do {
-            let results = try await memoryStore.emotionalSearch(query: query, limit: limit)
+            let results = try await memoryStore.emotionalSearch(query: query, limit: searchLimit)
             guard !results.isEmpty else { return footer.isEmpty ? "" : footer }
-            let lines = results.map { entry in
+            let lines = results.prefix(resultLimit).map { entry in
                 let tags = entry.tags.isEmpty ? "" : " [\(entry.tags.joined(separator: ", "))]"
                 let valenceIcon = entry.valence > 0.3 ? " [+]" : entry.valence < -0.3 ? " [!]" : ""
                 return "- (\(entry.memoryType))\(tags)\(valenceIcon) \(entry.text)"

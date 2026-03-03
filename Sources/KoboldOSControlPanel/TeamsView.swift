@@ -48,6 +48,7 @@ struct TeamsView: View {
     @State private var formDesc = ""
     @State private var formRouting: RoutingMode = .sequential
     @State private var showAddMember = false
+    @State private var editingMemberId: String? = nil
     @State private var memberName = ""
     @State private var memberRole = ""
     @State private var memberPrompt = ""
@@ -185,26 +186,52 @@ struct TeamsView: View {
 
     // MARK: - Member Row & Form
 
+    @ViewBuilder
     func memberRow(_ member: TeamMember, teamId: String) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "cpu.fill").font(.system(size: 14)).foregroundColor(.koboldEmerald).frame(width: 24, height: 24)
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text(member.name).font(.system(size: 14.5, weight: .semibold))
-                    Text(member.role).font(.system(size: 12, weight: .medium)).foregroundColor(.secondary)
-                        .padding(.horizontal, 6).padding(.vertical, 2)
-                        .background(RoundedRectangle(cornerRadius: 4).fill(Color.white.opacity(0.08)))
+        if editingMemberId == member.id {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Mitglied bearbeiten").font(.system(size: 13, weight: .semibold))
+                GlassTextField(text: $memberName, placeholder: lang.memberNamePH)
+                GlassTextField(text: $memberRole, placeholder: lang.memberRolePH)
+                Text(lang.systemPrompt).font(.system(size: 13, weight: .medium)).foregroundColor(.secondary)
+                TextEditor(text: $memberPrompt).font(.system(size: 14)).frame(minHeight: 60, maxHeight: 120)
+                    .padding(6).background(Color.black.opacity(0.2)).cornerRadius(8).scrollContentBackground(.hidden)
+                HStack {
+                    Spacer()
+                    GlassButton(title: lang.cancel, isPrimary: false) { editingMemberId = nil; resetMemberForm() }
+                    GlassButton(title: "Speichern", icon: "checkmark", isPrimary: true,
+                                isDisabled: memberName.trimmingCharacters(in: .whitespaces).isEmpty) {
+                        Task { await saveMember(memberId: member.id, teamId: teamId) }
+                    }
                 }
-                if !member.systemPrompt.isEmpty {
-                    Text(member.systemPrompt).font(.system(size: 12)).foregroundColor(.secondary).lineLimit(2)
+            }.padding(10).background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.04)))
+        } else {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "cpu.fill").font(.system(size: 14)).foregroundColor(.koboldEmerald).frame(width: 24, height: 24)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text(member.name).font(.system(size: 14.5, weight: .semibold))
+                        Text(member.role).font(.system(size: 12, weight: .medium)).foregroundColor(.secondary)
+                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(RoundedRectangle(cornerRadius: 4).fill(Color.white.opacity(0.08)))
+                    }
+                    if !member.systemPrompt.isEmpty {
+                        Text(member.systemPrompt).font(.system(size: 12)).foregroundColor(.secondary).lineLimit(2)
+                    }
                 }
+                Spacer()
+                Button(action: {
+                    memberName = member.name; memberRole = member.role; memberPrompt = member.systemPrompt
+                    showAddMember = false; editingMemberId = member.id
+                }) {
+                    Image(systemName: "pencil.circle.fill").font(.system(size: 16)).foregroundColor(.secondary)
+                }.buttonStyle(.plain).help("Bearbeiten")
+                Button(action: { Task { await removeMember(memberId: member.id, teamId: teamId) } }) {
+                    Image(systemName: "minus.circle.fill").font(.system(size: 16)).foregroundColor(.red.opacity(0.7))
+                }.buttonStyle(.plain).help(lang.removeMember)
             }
-            Spacer()
-            Button(action: { Task { await removeMember(memberId: member.id, teamId: teamId) } }) {
-                Image(systemName: "minus.circle.fill").font(.system(size: 16)).foregroundColor(.red.opacity(0.7))
-            }.buttonStyle(.plain).help(lang.removeMember)
+            .padding(8).background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.04)))
         }
-        .padding(8).background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.04)))
     }
 
     func addMemberForm(teamId: String) -> some View {
@@ -346,6 +373,24 @@ struct TeamsView: View {
             "action": "update", "id": teamId, "data": ["members": updated.map { memberDict($0) }] as [String: Any]])
         do { _ = try await URLSession.shared.data(for: req) } catch { errorMsg = "Mitglied hinzufuegen fehlgeschlagen: \(error.localizedDescription)" }
         showAddMember = false; resetMemberForm(); await loadTeams()
+    }
+
+    func saveMember(memberId: String, teamId: String) async {
+        guard let team = teams.first(where: { $0.id == teamId }) else { return }
+        let name = memberName.trimmingCharacters(in: .whitespaces); guard !name.isEmpty else { return }
+        let updated = team.members.map { m -> TeamMember in
+            if m.id == memberId {
+                return TeamMember(id: m.id, name: name, role: memberRole.trimmingCharacters(in: .whitespaces), systemPrompt: memberPrompt.trimmingCharacters(in: .whitespaces))
+            }
+            return m
+        }
+        guard let url = URL(string: viewModel.baseURL + "/teams") else { return }
+        var req = viewModel.authorizedRequest(url: url, method: "POST")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: [
+            "action": "update", "id": teamId, "data": ["members": updated.map { memberDict($0) }] as [String: Any]])
+        do { _ = try await URLSession.shared.data(for: req) } catch { errorMsg = "Speichern fehlgeschlagen: \(error.localizedDescription)" }
+        editingMemberId = nil; resetMemberForm(); await loadTeams()
     }
 
     func removeMember(memberId: String, teamId: String) async {
@@ -564,7 +609,7 @@ struct TeamChatView: View {
 
                     HStack(spacing: 6) {
                         Text(lang.rounds).font(.system(size: 12)).foregroundColor(.secondary)
-                        Slider(value: $maxRounds, in: 1...20, step: 1).frame(width: 100).disabled(isRunning)
+                        Slider(value: $maxRounds, in: 1...5, step: 1).frame(width: 100).disabled(isRunning)
                         Text("\(Int(maxRounds))").font(.system(size: 12, weight: .semibold, design: .monospaced)).frame(width: 24)
                     }
                 }

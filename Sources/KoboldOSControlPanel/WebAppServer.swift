@@ -53,7 +53,7 @@ final class WebAppServer: @unchecked Sendable {
     }
 
     /// Current WebGUI version — bump when HTML changes to auto-update on-disk copy
-    private static let webGUIVersion = "v0.3.76"
+    private static let webGUIVersion = "v0.3.8"
 
     /// Write default index.html to disk if not present or outdated (agent can then edit it)
     func ensureWebGUIFiles() {
@@ -431,7 +431,7 @@ final class WebAppServer: @unchecked Sendable {
             proxyToDaemon(method: method, path: path, headers: headers, raw: raw, conn: conn, config: config)
         } else if path.hasPrefix("/api/") {
             let daemonPath = String(path.dropFirst(4))
-            if daemonPath == "/agent/stream" {
+            if daemonPath == "/agent/stream" || daemonPath == "/teams/chat" {
                 proxySSE(method: method, path: daemonPath, headers: headers, raw: raw, conn: conn, config: config)
             } else {
                 proxyToDaemon(method: method, path: daemonPath, headers: headers, raw: raw, conn: conn, config: config)
@@ -727,7 +727,7 @@ final class WebAppServer: @unchecked Sendable {
 
     private static func buildHTML() -> String {
         return """
-        <!-- KoboldOS WebGUI v0.3.76 -->
+        <!-- KoboldOS WebGUI v0.3.8 -->
         <!DOCTYPE html>
         <html lang="de">
         <head>
@@ -760,6 +760,7 @@ final class WebAppServer: @unchecked Sendable {
           --text-secondary: rgba(235,235,245,0.6);
           --text-tertiary: rgba(235,235,245,0.3);
           --accent: #009433;
+          --accent-primary: #009433;
           --accent-secondary: #FFC738;
           --green: #009433;
           --orange: #FFC738;
@@ -1006,6 +1007,34 @@ final class WebAppServer: @unchecked Sendable {
           align-self: flex-start;
           display: flex; align-items: center; gap: 8px;
         }
+        .team-typing-dots { display:inline-flex; gap:4px; padding:2px 0; }
+        .team-typing-dots span { width:6px; height:6px; border-radius:50%; background:var(--text-tertiary); animation:teamDot 1.4s infinite ease-in-out both; }
+        .team-typing-dots span:nth-child(1) { animation-delay:0s; }
+        .team-typing-dots span:nth-child(2) { animation-delay:0.2s; }
+        .team-typing-dots span:nth-child(3) { animation-delay:0.4s; }
+        @keyframes teamDot { 0%,80%,100%{transform:scale(0.4);opacity:0.4} 40%{transform:scale(1);opacity:1} }
+        /* ─── Team Chat View (Content-Area, nicht Overlay) ─── */
+        .tcm-view { display:flex;flex-direction:column;height:100%;animation:fadeIn .2s ease; }
+        .tcm-header { padding:12px 16px;border-bottom:1px solid var(--separator);display:flex;align-items:center;gap:10px;background:var(--bg-secondary);flex-shrink:0; }
+        .tcm-header h3 { margin:0;font-size:15px;font-weight:600; }
+        .tcm-back { background:none;border:none;color:var(--text-secondary);font-size:16px;cursor:pointer;padding:4px 8px;border-radius:6px;display:flex;align-items:center;gap:4px; }
+        .tcm-back:hover { background:var(--hover-bg);color:var(--text-primary); }
+        .tcm-info { display:flex;gap:6px;flex-wrap:wrap;padding:8px 16px;border-bottom:1px solid rgba(255,255,255,.04);font-size:11px;align-items:center;flex-shrink:0; }
+        .tcm-member-pill { display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:10px;background:rgba(255,255,255,.06);font-size:11px; }
+        .tcm-member-pill .tcm-avatar { width:18px;height:18px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:700;color:#fff; }
+        .tcm-body { flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:10px; }
+        .tcm-msg { padding:10px 14px;border-radius:12px;max-width:75%;font-size:13px;line-height:1.5;white-space:pre-wrap; }
+        .tcm-msg.user { align-self:flex-end;background:var(--accent-primary);color:#fff;border-bottom-right-radius:4px; }
+        .tcm-msg.agent-left { align-self:flex-start;background:var(--bg-secondary);border-bottom-left-radius:4px; }
+        .tcm-msg.agent-right { align-self:flex-end;background:var(--bg-tertiary, rgba(255,255,255,.04));border-bottom-right-radius:4px; }
+        .tcm-msg.summary { align-self:center;background:rgba(255,199,56,.08);border:1px solid rgba(255,199,56,.2);max-width:90%; }
+        .tcm-msg .tcm-sender { font-size:11px;font-weight:600;margin-bottom:4px; }
+        .tcm-msg .tcm-role { font-weight:400;opacity:.6; }
+        .tcm-round { text-align:center;font-size:10px;color:var(--text-tertiary);margin:6px 0;padding:4px 12px;border-top:1px solid rgba(255,255,255,.06); }
+        .tcm-composer { padding:10px 16px;border-top:1px solid var(--separator);display:flex;gap:8px;background:var(--bg-secondary);flex-shrink:0; }
+        .tcm-composer input { flex:1;background:var(--bg-primary);border:1px solid var(--separator);border-radius:8px;padding:10px 14px;color:var(--text-primary);font-size:13px;outline:none; }
+        .tcm-composer input:focus { border-color:var(--accent-primary); }
+        .tcm-controls { display:flex;gap:6px;align-items:center;margin-left:auto; }
         .bubble.error { border-color: var(--red); color: var(--red); }
         .bubble-wrap { position: relative; display: flex; flex-direction: column; }
         .bubble-wrap.user-wrap { align-items: flex-end; }
@@ -1196,14 +1225,16 @@ final class WebAppServer: @unchecked Sendable {
           padding: 4px; border-radius: 6px; cursor: pointer; transition: var(--transition);
         }
         .mem-card .mem-edit:hover { color: var(--accent); background: rgba(0,148,51,0.1); }
-        .mem-stats { display: flex; gap: 12px; margin-bottom: 16px; }
+        .mem-stats { display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:16px; }
         .mem-stat {
-          flex: 1; text-align: center; padding: 12px;
-          background: var(--bg-secondary); border: 0.5px solid var(--separator);
-          border-radius: var(--radius);
+          text-align:center;padding:10px 6px;
+          background:var(--bg-secondary);border:0.5px solid var(--separator);
+          border-radius:var(--radius);cursor:pointer;transition:var(--transition);
         }
-        .mem-stat .num { font-size: 22px; font-weight: 700; }
-        .mem-stat .lbl { font-size: 10px; color: var(--text-tertiary); text-transform: uppercase; margin-top: 2px; }
+        .mem-stat:hover { border-color:var(--accent-primary);background:rgba(0,210,106,0.05); }
+        .mem-stat.active { border-color:var(--accent-primary);background:rgba(0,210,106,0.1); }
+        .mem-stat .num { font-size:20px;font-weight:700; }
+        .mem-stat .lbl { font-size:9px;color:var(--text-tertiary);text-transform:uppercase;margin-top:2px; }
         .add-mem-form {
           display: none; background: var(--bg-secondary); border: 0.5px solid var(--separator);
           border-radius: var(--radius); padding: 14px; margin-bottom: 14px;
@@ -1251,6 +1282,12 @@ final class WebAppServer: @unchecked Sendable {
           font-size: 13px; font-family: inherit; outline: none; margin-bottom: 8px;
         }
         .form-input:focus { border-color: var(--accent); }
+        .s-input {
+          background: var(--bg-primary); border: 0.5px solid var(--separator);
+          color: var(--text); padding: 9px 12px; border-radius: 8px;
+          font-size: 13px; font-family: inherit; outline: none;
+        }
+        .s-input:focus { border-color: var(--accent); }
         .form-select {
           background: var(--bg-primary); border: 0.5px solid var(--separator);
           color: var(--text); padding: 9px 12px; border-radius: 8px;
@@ -1744,6 +1781,189 @@ final class WebAppServer: @unchecked Sendable {
           .gh-badge { font-size: 9px !important; padding: 2px 6px !important; }
           .historie-popup { width: 90vw; max-height: 60vh; top: auto; bottom: 60px; left: 5vw; transform: none; }
         }
+        /* ─── Teams Tab ─── */
+        .team-card { background:var(--bg-secondary);border:0.5px solid var(--separator);border-radius:var(--radius);padding:14px;margin-bottom:10px;transition:var(--transition); }
+        .team-card:hover { border-color:rgba(120,120,128,0.4); }
+        .team-header { display:flex;align-items:center;gap:10px; }
+        .team-name { font-size:15px;font-weight:600;flex:1; }
+        .team-desc { font-size:13px;color:var(--text-secondary);margin-top:6px;line-height:1.4; }
+        .routing-badge { font-size:10px;font-weight:600;padding:3px 10px;border-radius:20px;letter-spacing:0.2px; }
+        .routing-badge.sequential { background:rgba(96,165,250,0.12);color:#60a5fa; }
+        .routing-badge.leader { background:rgba(251,191,36,0.12);color:#fbbf24; }
+        .routing-badge.round-robin { background:rgba(74,222,128,0.12);color:#4ade80; }
+        .member-count { font-size:11px;color:var(--text-tertiary);background:var(--fill);padding:2px 8px;border-radius:12px; }
+        .member-list { display:flex;flex-direction:column;gap:6px;margin-top:10px; }
+        .member-item { display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--bg-primary);border-radius:8px;border:0.5px solid var(--separator); }
+        .member-avatar { width:28px;height:28px;border-radius:50%;background:var(--fill);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;color:var(--text-secondary); }
+        .member-name { font-size:13px;font-weight:600;flex:1; }
+        .member-role { font-size:10px;color:var(--text-tertiary);background:var(--fill);padding:2px 6px;border-radius:6px; }
+        .team-details { display:none;margin-top:12px;padding-top:12px;border-top:0.5px solid var(--separator); }
+        .team-details.open { display:block; }
+        .team-chat-area { margin-top:12px;background:var(--bg-primary);border-radius:10px;border:0.5px solid var(--separator);overflow:hidden; }
+        .team-chat-messages { max-height:200px;overflow-y:auto;padding:10px;display:flex;flex-direction:column;gap:6px; }
+        .team-chat-msg { font-size:12px;padding:6px 10px;border-radius:8px;max-width:85%; }
+        .team-chat-msg.agent { background:var(--bg-secondary);align-self:flex-start;border:0.5px solid var(--separator); }
+        .team-chat-msg .agent-name { font-weight:600;color:var(--orange);font-size:11px;margin-bottom:2px; }
+        .team-chat-composer { display:flex;gap:6px;padding:8px;border-top:0.5px solid var(--separator); }
+        .team-chat-composer input { flex:1;background:var(--bg-secondary);border:0.5px solid var(--separator);color:var(--text);padding:6px 10px;border-radius:8px;font-size:12px;outline:none; }
+        .team-chat-composer input:focus { border-color:var(--accent); }
+
+        /* ─── CRM / Kontakte Tab ─── */
+        .crm-split { display:flex;gap:16px; }
+        .crm-list-col { width:320px;flex-shrink:0;max-height:calc(100vh - 260px);overflow-y:auto; }
+        .crm-detail-col { flex:1;min-width:0; }
+        .contact-card { background:var(--bg-secondary);border:0.5px solid var(--separator);border-radius:var(--radius);padding:10px 12px;margin-bottom:6px;cursor:pointer;transition:var(--transition);display:flex;align-items:center;gap:10px; }
+        .contact-card:hover { border-color:rgba(120,120,128,0.4); }
+        .contact-card.selected { border-color:var(--accent);background:rgba(0,148,51,0.06); }
+        .contact-avatar { width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0; }
+        .contact-avatar.active { background:rgba(48,209,88,0.15);color:var(--green); }
+        .contact-avatar.lead { background:rgba(96,165,250,0.15);color:#60a5fa; }
+        .contact-avatar.customer { background:rgba(255,199,56,0.15);color:var(--orange); }
+        .contact-avatar.inactive { background:var(--fill);color:var(--text-tertiary); }
+        .contact-info { flex:1;min-width:0; }
+        .contact-info .c-name { font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+        .contact-info .c-company { font-size:11px;color:var(--text-tertiary); }
+        .contact-status { font-size:9px;font-weight:600;padding:2px 8px;border-radius:12px;text-transform:uppercase;letter-spacing:0.3px; }
+        .contact-status.active { background:rgba(48,209,88,0.12);color:var(--green); }
+        .contact-status.lead { background:rgba(96,165,250,0.12);color:#60a5fa; }
+        .contact-status.customer { background:rgba(255,199,56,0.12);color:var(--orange); }
+        .contact-status.inactive { background:rgba(120,120,128,0.12);color:var(--text-tertiary); }
+        .contact-detail { padding:20px;background:var(--bg-secondary);border:0.5px solid var(--separator);border-radius:var(--radius-lg); }
+        .contact-detail .cd-name { font-size:18px;font-weight:700;margin-bottom:2px; }
+        .contact-detail .cd-title { font-size:13px;color:var(--text-secondary); }
+        .cd-grid { display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:16px; }
+        .cd-field-label { font-size:10px;font-weight:600;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:0.3px;margin-bottom:2px; }
+        .cd-field-value { font-size:13px;color:var(--text); }
+        .company-grid { display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px; }
+        .company-card { background:var(--bg-secondary);border:0.5px solid var(--separator);border-radius:var(--radius);padding:14px;transition:var(--transition); }
+        .company-card:hover { border-color:rgba(120,120,128,0.4); }
+        .company-name { font-size:14px;font-weight:600;margin-bottom:4px; }
+        .company-industry { font-size:11px;color:var(--text-secondary); }
+        .company-website { font-size:11px;color:var(--accent);margin-top:4px;display:flex;align-items:center;gap:4px; }
+        .kanban-board { display:flex;gap:12px;overflow-x:auto;padding-bottom:12px; }
+        .kanban-column { min-width:200px;flex:1;display:flex;flex-direction:column;gap:8px; }
+        .kanban-col-header { display:flex;align-items:center;gap:6px;padding:8px 10px;border-radius:8px;font-size:12px;font-weight:600;background:var(--bg-secondary);border:0.5px solid var(--separator); }
+        .kanban-col-header .stage-dot { width:8px;height:8px;border-radius:50%;flex-shrink:0; }
+        .kanban-col-header .stage-count { margin-left:auto;font-size:10px;color:var(--text-tertiary);font-family:'SF Mono',monospace; }
+        .kanban-card { background:var(--bg-secondary);border:0.5px solid var(--separator);border-radius:8px;padding:10px;transition:var(--transition); }
+        .kanban-card:hover { border-color:rgba(120,120,128,0.4); }
+        .kanban-card .deal-title { font-size:13px;font-weight:600;margin-bottom:4px; }
+        .kanban-card .deal-value { font-size:14px;font-weight:700;color:var(--green); }
+        .kanban-card .deal-contact { font-size:11px;color:var(--text-tertiary);margin-top:2px; }
+        .kanban-card .deal-actions { display:flex;gap:4px;margin-top:6px; }
+        .activity-item { display:flex;gap:10px;padding:10px 0;border-bottom:0.5px solid var(--separator); }
+        .activity-item:last-child { border-bottom:none; }
+        .activity-icon { width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0; }
+        .activity-icon i { width:13px;height:13px; }
+        .activity-icon.note { background:rgba(96,165,250,0.12);color:#60a5fa; }
+        .activity-icon.call { background:rgba(74,222,128,0.12);color:#4ade80; }
+        .activity-icon.email { background:rgba(255,199,56,0.12);color:var(--orange); }
+        .activity-icon.meeting { background:rgba(191,90,242,0.12);color:#bf5af2; }
+        .activity-body { flex:1;min-width:0; }
+        .activity-body .a-title { font-size:13px;font-weight:600; }
+        .activity-body .a-desc { font-size:12px;color:var(--text-secondary);margin-top:2px; }
+        .activity-body .a-meta { font-size:10px;color:var(--text-tertiary);margin-top:4px;display:flex;gap:8px; }
+        @media(max-width:768px){
+          .crm-split{flex-direction:column-reverse;position:relative}
+          .crm-list-col{width:100%;max-height:0;overflow:hidden;transition:max-height .3s ease;border-radius:var(--radius);position:absolute;bottom:100%;left:0;right:0;z-index:20;background:var(--bg-primary);box-shadow:0 -4px 20px rgba(0,0,0,.3)}
+          .crm-list-col.mobile-open{max-height:50vh;overflow-y:auto;border:0.5px solid var(--separator)}
+          .crm-detail-col{width:100%}
+          .kanban-board{flex-direction:column}
+          .kanban-column{min-width:100%}
+        }
+
+        /* ─── Workflows Tab ─── */
+        .workflow-card { background:var(--bg-secondary);border:0.5px solid var(--separator);border-radius:var(--radius);padding:14px;margin-bottom:10px;cursor:pointer;transition:var(--transition); }
+        .workflow-card:hover { border-color:rgba(120,120,128,0.4); }
+        .workflow-card.selected { border-color:var(--accent);background:rgba(0,148,51,0.06); }
+        .wf-card-header { display:flex;align-items:center;gap:10px; }
+        .wf-card-name { font-size:15px;font-weight:600;flex:1; }
+        .wf-card-nodes { font-size:11px;color:var(--text-tertiary);background:var(--fill);padding:2px 8px;border-radius:12px; }
+        .wf-canvas { background:var(--bg-primary);border:0.5px solid var(--separator);border-radius:var(--radius-lg);overflow:hidden; }
+        .wf-toolbar { display:flex;gap:4px;padding:10px;border-bottom:0.5px solid var(--separator);flex-wrap:wrap;align-items:center; }
+        .wf-toolbar-title { font-size:14px;font-weight:700;margin-right:8px; }
+        .wf-node-btn { font-size:10px;padding:4px 10px;border-radius:6px;border:0.5px solid var(--separator);background:var(--fill);color:var(--text-secondary);cursor:pointer;transition:var(--transition);display:flex;align-items:center;gap:4px;font-family:inherit; }
+        .wf-node-btn:hover { background:var(--accent-secondary);color:#1a1a1a;border-color:var(--accent-secondary); }
+        .wf-node-btn i { width:12px;height:12px; }
+        .wf-flow-list { padding:16px;display:flex;flex-direction:column;gap:2px; }
+        .wf-canvas-area { position:relative;min-height:600px;overflow:hidden;background:var(--bg-primary);background-image:radial-gradient(circle,rgba(120,120,128,.15) 1px,transparent 1px);background-size:24px 24px;cursor:default; }
+        .wf-conn-svg { position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:1;transform-origin:0 0; }
+        .wf-conn-svg path { stroke:var(--accent-primary);stroke-width:2;fill:none; }
+        .wf-conn-svg path:hover { stroke:var(--accent-secondary);stroke-width:3;cursor:pointer;pointer-events:stroke; }
+        .wf-conn-svg .wf-conn-preview { stroke:var(--accent-secondary);stroke-dasharray:6 3;opacity:.7; }
+        .wf-node-layer { position:absolute;top:0;left:0;width:100%;height:100%;z-index:2;transform-origin:0 0; }
+        .wf-node { position:absolute;width:130px;min-height:70px;border-radius:8px;background:var(--bg-secondary);border:1px solid var(--separator);box-shadow:0 2px 8px rgba(0,0,0,.2);cursor:grab;user-select:none;transition:box-shadow .2s; }
+        .wf-node:active { cursor:grabbing; }
+        .wf-node.selected { border-color:var(--accent-primary);box-shadow:0 0 12px rgba(0,210,106,.3); }
+        .wf-node.waiting { opacity:0.5;border-style:dashed; }
+        .wf-node.running { animation:wfGlow 1.5s ease-in-out infinite;border-color:var(--accent-primary); }
+        .wf-node.success { border-color:#30d158;box-shadow:0 0 10px rgba(48,209,88,.3); }
+        .wf-node.error { box-shadow:0 0 12px rgba(255,60,60,.4);border-color:#ff3c3c; }
+        @keyframes wfGlow { 0%,100%{box-shadow:0 0 8px rgba(0,210,106,.2)} 50%{box-shadow:0 0 16px rgba(0,210,106,.5)} }
+        .wf-node-hdr { padding:4px 8px;border-radius:7px 7px 0 0;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#fff;display:flex;align-items:center;gap:4px; }
+        .wf-node-body { padding:6px 8px;font-size:11px;color:var(--text-secondary); }
+        .wf-port { width:14px;height:14px;border-radius:50%;background:var(--accent-primary);border:2px solid var(--bg-secondary);position:absolute;cursor:crosshair;transition:all .15s;z-index:3; }
+        .wf-port:hover { width:18px;height:18px;box-shadow:0 0 10px var(--accent-primary); }
+        .wf-port.snap-target { width:18px;height:18px;background:#50fa7b;box-shadow:0 0 12px rgba(80,250,123,.6);animation:portPulse .8s ease-in-out infinite; }
+        @keyframes portPulse { 0%,100%{box-shadow:0 0 8px rgba(80,250,123,.4)} 50%{box-shadow:0 0 16px rgba(80,250,123,.8)} }
+        .wf-port.top { top:-7px;left:50%;transform:translateX(-50%); }
+        .wf-port.top:hover,.wf-port.top.snap-target { top:-9px; }
+        .wf-port.bottom { bottom:-7px;left:50%;transform:translateX(-50%); }
+        .wf-port.bottom:hover,.wf-port.bottom.snap-target { bottom:-9px; }
+        .wf-port.left { left:-7px;top:50%;transform:translateY(-50%); }
+        .wf-port.left:hover,.wf-port.left.snap-target { left:-9px; }
+        .wf-port.right { right:-7px;top:50%;transform:translateY(-50%); }
+        .wf-port.right:hover,.wf-port.right.snap-target { right:-9px; }
+        .wf-inspector { position:absolute;right:0;top:0;width:280px;height:100%;background:var(--bg-secondary);border-left:1px solid var(--separator);overflow-y:auto;padding:14px;font-size:12px;z-index:10;display:none; }
+        .wf-inspector.open { display:block; }
+        .wf-insp-label { font-size:11px;color:var(--text-tertiary);margin-bottom:3px; }
+        .wf-insp-section { border-top:1px solid var(--separator);padding-top:8px;margin-top:8px; }
+        .wf-insp-conn { display:flex;align-items:center;gap:6px;padding:4px 6px;border-radius:6px;font-size:11px;margin-bottom:4px;background:rgba(255,255,255,.03); }
+        .wf-insp-conn:hover { background:rgba(255,255,255,.06); }
+        .wf-insp-conn .arrow { font-size:13px;opacity:.6; }
+        .wf-insp-conn .conn-name { flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+        .wf-insp-conn .conn-btn { background:none;border:none;cursor:pointer;padding:2px;border-radius:4px;color:var(--text-secondary);font-size:11px; }
+        .wf-insp-conn .conn-btn:hover { background:rgba(255,255,255,.1);color:var(--text-primary); }
+        .wf-insp-banner { padding:8px 10px;border-radius:6px;font-size:11px;margin-bottom:8px;line-height:1.4; }
+        .wf-insp-banner.info { background:rgba(80,250,123,.08);border:1px solid rgba(80,250,123,.2);color:var(--accent-primary); }
+        .wf-insp-banner.warn { background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);color:#ef4444; }
+        .wf-zoom-controls { position:absolute;bottom:12px;left:12px;display:flex;gap:4px;z-index:10;align-items:center; }
+        .wf-step { display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--bg-secondary);border-radius:10px;border:0.5px solid var(--separator);transition:var(--transition); }
+        .wf-step:hover { border-color:rgba(120,120,128,0.4); }
+        .wf-step-icon { width:28px;height:28px;border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:13px; }
+        .wf-step-icon.trigger { background:rgba(242,64,64,0.12);color:var(--red); }
+        .wf-step-icon.agent { background:rgba(255,199,56,0.12);color:var(--orange); }
+        .wf-step-icon.tool { background:rgba(48,209,88,0.12);color:var(--green); }
+        .wf-step-icon.condition { background:rgba(251,191,36,0.12);color:#fbbf24; }
+        .wf-step-icon.output { background:rgba(255,199,56,0.12);color:var(--orange); }
+        .wf-step-icon.delay { background:var(--fill);color:var(--text-tertiary); }
+        .wf-step-icon.webhook { background:rgba(255,199,56,0.12);color:var(--orange); }
+        .wf-step-icon.loop { background:rgba(51,191,234,0.12);color:var(--teal); }
+        .wf-step-icon.team { background:rgba(191,90,242,0.12);color:#bf5af2; }
+        .wf-step-icon.note { background:var(--fill);color:var(--text-tertiary); }
+        .wf-step-info { flex:1;min-width:0; }
+        .wf-step-title { font-size:13px;font-weight:600; }
+        .wf-step-type { font-size:10px;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:0.3px; }
+        .wf-step-status { width:8px;height:8px;border-radius:50%;flex-shrink:0; }
+        .wf-step-status.idle { background:var(--fill); }
+        .wf-step-status.running { background:var(--green);box-shadow:0 0 6px var(--green);animation:sttPulse 1s ease-in-out infinite; }
+        .wf-step-status.success { background:var(--green); }
+        .wf-step-status.error { background:var(--red); }
+        .wf-arrow { text-align:center;color:var(--text-tertiary);font-size:16px;padding:2px 0; }
+        .wf-output { background:var(--bg-primary);border:0.5px solid var(--separator);border-radius:8px;padding:12px;margin:12px 16px 16px;max-height:200px;overflow-y:auto;font-size:12px;font-family:'SF Mono',monospace;white-space:pre-wrap;color:var(--text-secondary); }
+        .wf-node-stream { position:absolute;top:100%;left:-10px;width:200px;max-height:100px;background:var(--bg-primary);border:1px solid var(--accent-primary);border-radius:0 0 8px 8px;padding:6px 8px;font-size:10px;font-family:'SF Mono',monospace;color:var(--text-secondary);overflow-y:auto;white-space:pre-wrap;z-index:5;box-shadow:0 4px 12px rgba(0,0,0,.3);word-break:break-word; }
+        .wf-node-stream .ns-label { font-size:9px;color:var(--accent-primary);font-weight:700;text-transform:uppercase;margin-bottom:2px;display:block; }
+        .wf-chat-view { display:flex;flex-direction:column;height:100%;min-height:500px; }
+        .wf-chat-header { display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--separator); }
+        .wf-chat-body { flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:8px; }
+        .wf-chat-msg { max-width:85%;padding:10px 14px;border-radius:12px;font-size:13px;line-height:1.5;word-break:break-word; }
+        .wf-chat-msg.node-msg { align-self:flex-start;background:var(--bg-secondary);border:1px solid var(--separator); }
+        .wf-chat-msg.system-msg { align-self:center;background:rgba(255,199,56,.1);color:var(--accent-secondary);font-size:11px;padding:6px 14px;border-radius:20px; }
+        .wf-chat-msg.output-msg { align-self:flex-start;background:rgba(0,148,51,.08);border:1px solid rgba(0,148,51,.2);max-width:95%; }
+        .wf-chat-msg .msg-label { font-size:10px;font-weight:700;color:var(--accent-primary);margin-bottom:4px; }
+        .wf-chat-msg .msg-time { font-size:9px;color:var(--text-tertiary);margin-top:4px; }
+        .wf-chat-msg pre { font-size:11px;font-family:'SF Mono',monospace;white-space:pre-wrap;margin:4px 0 0;max-height:200px;overflow-y:auto; }
+        .wf-edit-form { background:var(--bg-primary);border:0.5px solid var(--accent);border-radius:8px;padding:10px;margin-top:6px; }
         </style>
         </head>
         <body>
@@ -1769,6 +1989,10 @@ final class WebAppServer: @unchecked Sendable {
             <div class="nav-item" onclick="switchTab('voice',this)"><i data-lucide="mic"></i><span>Sprechen</span></div>
             <div class="nav-item" onclick="switchTab('memory',this)"><i data-lucide="brain"></i><span>Gedächtnis</span></div>
             <div class="nav-item" onclick="switchTab('settings',this)"><i data-lucide="settings"></i><span>Einstellungen</span></div>
+            <div class="nav-section">Mehr</div>
+            <div class="nav-item" onclick="switchTab('teams',this)"><i data-lucide="users"></i><span>Teams</span></div>
+            <div class="nav-item" onclick="switchTab('crm',this)"><i data-lucide="contact"></i><span>Kontakte</span></div>
+            <div class="nav-item" onclick="switchTab('workflows',this)"><i data-lucide="workflow"></i><span>Workflows</span></div>
           </div>
           <div class="sidebar-footer" id="versionFooter">KoboldOS <span class="version-badge">v0.3.71</span></div>
         </div>
@@ -1841,6 +2065,7 @@ final class WebAppServer: @unchecked Sendable {
                     oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,120)+'px'"></textarea>
                   <button class="stt-btn" id="sttBtn" onclick="toggleSTT()" title="Spracheingabe"><i data-lucide="mic"></i></button>
                   <button class="send-btn" id="sendBtn" onclick="sendMsg()"><i data-lucide="send"></i></button>
+                  <button class="send-btn" id="stopBtn" onclick="stopAgent()" style="display:none;background:var(--red,#ef4444)"><i data-lucide="square"></i></button>
                 </div>
               </div>
             </div>
@@ -1958,7 +2183,7 @@ final class WebAppServer: @unchecked Sendable {
               <div class="add-mem-form" id="memForm">
                 <textarea id="memText" placeholder="Neue Erinnerung..."></textarea>
                 <div class="form-row">
-                  <select class="form-select" id="memType"><option value="kurzzeit">Kurzzeit</option><option value="langzeit">Langzeit</option><option value="wissen">Wissen</option><option value="lösungen">Lösungen</option><option value="fehler">Fehler</option></select>
+                  <select class="form-select" id="memType"><option value="kurzzeit">Kurzzeit</option><option value="langzeit">Langzeit</option><option value="wissen">Wissen</option><option value="lösungen">Lösungen</option><option value="fehler">Fehler</option><option value="regeln">Regeln</option><option value="verhalten">Verhalten</option></select>
                   <input class="form-input" id="memTags" placeholder="Tags (kommagetrennt)" style="flex:1;margin:0">
                   <button class="btn btn-primary" onclick="createMemory()">Speichern</button>
                   <button class="btn btn-secondary" onclick="toggleMemForm()">Abbrechen</button>
@@ -1977,6 +2202,8 @@ final class WebAppServer: @unchecked Sendable {
                 <span class="pill" onclick="setMemType('wissen',this)">Wissen</span>
                 <span class="pill" onclick="setMemType('lösungen',this)">Lösungen</span>
                 <span class="pill" onclick="setMemType('fehler',this)">Fehler</span>
+                <span class="pill" onclick="setMemType('regeln',this)">Regeln</span>
+                <span class="pill" onclick="setMemType('verhalten',this)">Verhalten</span>
               </div>
               <div class="tag-row" id="memTagBar"></div>
               <div id="memEntries"></div>
@@ -1998,6 +2225,8 @@ final class WebAppServer: @unchecked Sendable {
                 <span class="settings-tab" onclick="switchSettingsTab('personality',this)">Persönlichkeit</span>
                 <span class="settings-tab" onclick="switchSettingsTab('speech',this)">Sprache & Audio</span>
                 <span class="settings-tab" onclick="switchSettingsTab('security',this)">Sicherheit</span>
+                <span class="settings-tab" onclick="switchSettingsTab('contacts-settings',this)">Kontakte</span>
+                <span class="settings-tab" onclick="switchSettingsTab('teams-settings',this)">Teams</span>
                 <span class="settings-tab" onclick="switchSettingsTab('connections',this)">Integrationen</span>
                 <span class="settings-tab" onclick="switchSettingsTab('about',this)">Über</span>
               </div>
@@ -2011,15 +2240,13 @@ final class WebAppServer: @unchecked Sendable {
                     <button class="btn btn-secondary btn-sm" onclick="resetMetrics()"><i data-lucide="rotate-ccw"></i>Zurücksetzen</button>
                   </div>
                 </div>
-                <div class="fbox gold">
-                  <div class="fbox-header"><i data-lucide="cpu"></i>Modell</div>
-                  <div id="modelList"></div>
-                </div>
+                <!-- Modell-Auswahl jetzt im Agenten-Tab als General/Coder/Web -->
                 <div class="fbox emerald">
                   <div class="fbox-header"><i data-lucide="settings"></i>Allgemein</div>
                   <div class="settings-row"><div class="s-left"><span class="settings-label">Arbeitsverzeichnis</span><span class="s-desc">Standard-Pfad für Dateien</span></div><input class="form-input" style="width:200px;font-size:12px" data-key="kobold.defaultWorkDir"></div>
                   <div class="settings-row"><div class="s-left"><span class="settings-label">Auto-Updates prüfen</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.autoCheckUpdates"><span class="slider"></span></label></div>
                   <div class="settings-row"><div class="s-left"><span class="settings-label">Erweiterte Statistiken</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.showAdvancedStats"><span class="slider"></span></label></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Medien einbetten</span><span class="s-desc">Links als Preview anzeigen</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.chat.autoEmbed"><span class="slider"></span></label></div>
                 </div>
                 <div class="fbox gold">
                   <div class="fbox-header"><i data-lucide="user"></i>Profil</div>
@@ -2036,6 +2263,32 @@ final class WebAppServer: @unchecked Sendable {
                 <div class="fbox gold">
                   <div class="fbox-header"><i data-lucide="scroll-text"></i>Aktivitäts-Log</div>
                   <div id="activityLog" style="max-height:300px;overflow-y:auto;font-size:13px;color:var(--text-secondary)">Lade...</div>
+                </div>
+                <div class="fbox emerald">
+                  <div class="fbox-header"><i data-lucide="heart-pulse"></i>Heartbeat</div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Heartbeat aktivieren</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.proactive.heartbeat.enabled"><span class="slider"></span></label></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Intervall (Sekunden)</span></div><select class="s-select" data-key="kobold.proactive.heartbeat.intervalSec"><option value="30">30s</option><option value="60">60s</option><option value="120">120s</option><option value="300">300s</option></select></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Im Dashboard zeigen</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.proactive.heartbeat.showInDashboard"><span class="slider"></span></label></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Log-Aufbewahrung</span></div><select class="s-select" data-key="kobold.proactive.heartbeat.logRetention"><option value="25">25</option><option value="50">50</option><option value="100">100</option><option value="200">200</option></select></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Benachrichtigen</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.proactive.heartbeat.notify"><span class="slider"></span></label></div>
+                  <div style="margin-top:8px;font-size:12px;color:var(--text-secondary)">Live-Log:</div>
+                  <div id="heartbeatLog" style="height:180px;overflow-y:auto;font-family:monospace;font-size:11px;background:#0a0a1a;padding:8px;border-radius:8px;margin-top:4px;color:var(--text-secondary)">Lade Heartbeat-Log...</div>
+                  <div style="margin-top:6px;display:flex;gap:6px"><button class="btn btn-secondary btn-sm" onclick="refreshHeartbeatLog()"><i data-lucide="refresh-cw"></i>Aktualisieren</button><button class="btn btn-secondary btn-sm" onclick="document.getElementById('heartbeatLog').innerHTML=''"><i data-lucide="trash-2"></i>Leeren</button></div>
+                </div>
+                <div class="fbox gold">
+                  <div class="fbox-header"><i data-lucide="coffee"></i>Idle-Task-Einstellungen</div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Min Idle-Minuten</span><span class="s-desc">Warten bis Idle-Task startet</span></div><select class="s-select" data-key="kobold.proactive.idle.minIdleMinutes"><option value="1">1</option><option value="3">3</option><option value="5">5</option><option value="10">10</option></select></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Max pro Stunde</span></div><select class="s-select" data-key="kobold.proactive.idle.maxPerHour"><option value="2">2</option><option value="5">5</option><option value="10">10</option><option value="20">20</option></select></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Shell erlauben</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.proactive.idle.allowShell"><span class="slider"></span></label></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Netzwerk erlauben</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.proactive.idle.allowNetwork"><span class="slider"></span></label></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Dateien schreiben erlauben</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.proactive.idle.allowFileWrite"><span class="slider"></span></label></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Nur hohe Priorität</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.proactive.idle.onlyHighPriority"><span class="slider"></span></label></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Ruhezeiten</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.proactive.idle.quietHoursEnabled"><span class="slider"></span></label></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Ruhezeit Start</span></div><select class="s-select" data-key="kobold.proactive.idle.quietHoursStart"><option value="20">20:00</option><option value="21">21:00</option><option value="22">22:00</option><option value="23">23:00</option></select></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Ruhezeit Ende</span></div><select class="s-select" data-key="kobold.proactive.idle.quietHoursEnd"><option value="6">06:00</option><option value="7">07:00</option><option value="8">08:00</option><option value="9">09:00</option></select></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Bei Ausführung benachrichtigen</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.proactive.idle.notifyOnExecution"><span class="slider"></span></label></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Bei Nutzeraktivität pausieren</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.proactive.idle.pauseOnUserActivity"><span class="slider"></span></label></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Telegram Min-Priorität</span></div><select class="s-select" data-key="kobold.proactive.idle.telegramMinPriority"><option value="off">Aus</option><option value="low">Niedrig</option><option value="medium">Mittel</option><option value="high">Hoch</option></select></div>
                 </div>
               </div>
 
@@ -2057,6 +2310,22 @@ final class WebAppServer: @unchecked Sendable {
                   <div class="settings-row"><div class="s-left"><span class="settings-label">Sub-Agent Timeout</span><span class="s-desc">Sekunden bis Abbruch</span></div><select class="s-select" data-key="kobold.subagent.timeout"><option value="120">120s</option><option value="300">300s</option><option value="600">600s</option><option value="900">900s</option></select></div>
                   <div class="settings-row"><div class="s-left"><span class="settings-label">Max Sub-Agenten</span><span class="s-desc">Parallele Sub-Agenten</span></div><select class="s-select" data-key="kobold.subagent.maxConcurrent"><option value="3">3</option><option value="5">5</option><option value="10">10</option><option value="20">20</option><option value="50">50</option></select></div>
                   <div class="settings-row"><div class="s-left"><span class="settings-label">Worker Pool</span><span class="s-desc">Anzahl Worker-Threads</span></div><select class="s-select" data-key="kobold.workerPool.size"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="5">5</option></select></div>
+                </div>
+                <div class="fbox gold">
+                  <div class="fbox-header" style="cursor:pointer" onclick="document.getElementById('agentLoopInfo').style.display=document.getElementById('agentLoopInfo').style.display==='none'?'block':'none'"><i data-lucide="info"></i>So funktioniert der Agenten-Loop <span style="font-size:11px;opacity:.6">(klicken)</span></div>
+                  <div id="agentLoopInfo" style="display:none;font-size:12px;line-height:1.6;color:var(--text-secondary);padding:8px">
+                    <p><strong>1.</strong> Deine Nachricht geht an den <strong>General-Agent</strong> (Orchestrator).</p>
+                    <p><strong>2.</strong> General analysiert die Aufgabe und entscheidet welche Tools noetig sind.</p>
+                    <p><strong>3.</strong> Wenn ein Tool einem anderen Agent zugewiesen ist (z.B. <code>shell</code> nur beim Coder), delegiert General die Teilaufgabe via <code>call_subordinate</code> an diesen Agent.</p>
+                    <p><strong>4.</strong> Der Sub-Agent arbeitet die Aufgabe ab und gibt das Ergebnis an General zurueck.</p>
+                    <p><strong>5.</strong> General fasst zusammen und antwortet dir.</p>
+                    <p style="margin-top:8px;padding:6px;background:rgba(0,210,106,.1);border-radius:6px"><strong>Tipp:</strong> Tool-Routing bestimmt welcher Agent welche Tools nutzen darf. Wenn <code>shell</code> nur dem Coder zugewiesen ist, wird General automatisch einen Coder-Sub-Agent fuer Shell-Befehle delegieren.</p>
+                  </div>
+                </div>
+                <div class="fbox emerald">
+                  <div class="fbox-header"><i data-lucide="route"></i>Tool-Routing</div>
+                  <div style="font-size:11px;color:var(--text-secondary);margin-bottom:8px">Welcher Agent darf welche Tools nutzen? Nicht zugewiesene Tools werden vom General delegiert.</div>
+                  <div id="toolRoutingArea" style="font-size:12px">Lade...</div>
                 </div>
               </div>
 
@@ -2174,6 +2443,7 @@ final class WebAppServer: @unchecked Sendable {
                   <div class="fbox-header"><i data-lucide="bell"></i>Benachrichtigungen</div>
                   <div class="settings-row"><div class="s-left"><span class="settings-label">Chat-Schritte bis Benachrichtigung</span><span class="s-desc">Nach X Agent-Schritten benachrichtigen</span></div><select class="s-select" data-key="kobold.notify.chatStepThreshold"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="5">5</option><option value="10">10</option></select></div>
                   <div class="settings-row"><div class="s-left"><span class="settings-label">Tasks immer bei Abschluss</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.notify.taskAlways"><span class="slider"></span></label></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Workflows immer bei Abschluss</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.notify.workflowAlways"><span class="slider"></span></label></div>
                   <div class="settings-row"><div class="s-left"><span class="settings-label">Benachrichtigungssound</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.notify.sound"><span class="slider"></span></label></div>
                   <div class="settings-row"><div class="s-left"><span class="settings-label">System-Benachrichtigungen</span><span class="s-desc">macOS Banner oben rechts</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.notify.systemNotifications"><span class="slider"></span></label></div>
                   <div class="settings-row"><div class="s-left"><span class="settings-label">Kanal</span><span class="s-desc">Wohin benachrichtigen</span></div><select class="s-select" data-key="kobold.notify.channel"><option value="system">System</option><option value="telegram">Telegram</option></select></div>
@@ -2209,6 +2479,22 @@ final class WebAppServer: @unchecked Sendable {
                   </div>
                 </div>
                 <div class="fbox emerald">
+                  <div class="fbox-header"><i data-lucide="mic-2"></i>Spracheingabe (Mikrofon)</div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Voice Activity Detection</span><span class="s-desc">Auto-Erkennung ob gesprochen wird</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.voice.vadEnabled"><span class="slider"></span></label></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Stille-Timeout</span></div><div class="s-slider-wrap"><input type="range" class="s-slider" data-key="kobold.voice.silenceTimeout" min="5" max="50" step="5"><span class="s-slider-val">15</span></div></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Auto-TTS im Sprechen-Tab</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.voice.autoRespond"><span class="slider"></span></label></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Max Antwortlänge (Wörter)</span></div><div class="s-slider-wrap"><input type="range" class="s-slider" data-key="kobold.voice.maxResponseWords" min="10" max="200" step="10"><span class="s-slider-val">50</span></div></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Sprechen-Tab Modus</span></div><select class="s-select" data-key="kobold.voice.mode"><option value="native">Native (Browser)</option><option value="elevenlabs_live">ElevenLabs Live</option></select></div>
+                </div>
+                <div class="fbox gold">
+                  <div class="fbox-header"><i data-lucide="phone-call"></i>ElevenLabs Conversational AI</div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">ConvAI Agent-ID</span></div><input class="form-input" style="width:220px;font-size:12px" data-key="kobold.elevenlabs.convai.agentId" placeholder="Agent ID von ElevenLabs"></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Aufgabe synchronisieren</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.elevenlabs.convai.syncPurpose"><span class="slider"></span></label></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Persönlichkeit übertragen</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.elevenlabs.convai.syncPersonality"><span class="slider"></span></label></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Custom LLM (Ollama)</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.elevenlabs.convai.customLLM"><span class="slider"></span></label></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Twilio Voice-Modus</span></div><select class="s-select" data-key="kobold.twilio.voiceMode"><option value="native">Native</option><option value="elevenlabs">ElevenLabs</option></select></div>
+                </div>
+                <div class="fbox emerald">
                   <div class="fbox-header"><i data-lucide="mic"></i>Speech-to-Text</div>
                   <div class="settings-row"><div class="s-left"><span class="settings-label">Auto-Transkribieren</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.stt.autoTranscribe"><span class="slider"></span></label></div>
                   <div class="settings-row"><div class="s-left"><span class="settings-label">STT-Modell</span></div><select class="s-select" data-key="kobold.stt.model"><option value="tiny">Tiny (75 MB)</option><option value="base">Base (142 MB)</option><option value="small">Small (466 MB)</option><option value="large-v3-turbo-q5_0">Turbo Q5 (574 MB)</option><option value="large-v3-turbo-q8_0">Turbo Q8 (874 MB)</option><option value="medium">Medium (1.5 GB)</option><option value="large-v3-turbo">Turbo (1.6 GB)</option></select></div>
@@ -2234,40 +2520,74 @@ final class WebAppServer: @unchecked Sendable {
                 <div class="fbox gold">
                   <div class="fbox-header"><i data-lucide="lock"></i>Datenschutz</div>
                   <div class="settings-row"><div class="s-left"><span class="settings-label">Daemon Port</span><span class="s-desc">Nur lokal (readonly)</span></div><span class="settings-value" id="daemonPortInfo">—</span></div>
-                  <div class="settings-row"><div class="s-left"><span class="settings-label">Daten-Persistenz</span><span class="s-desc">Daten nach Löschen behalten</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.data.persistAfterDelete"><span class="slider"></span></label></div>
                 </div>
                 <div class="fbox emerald">
                   <div class="fbox-header"><i data-lucide="radio"></i>Proaktive Engine</div>
                   <div class="settings-row"><div class="s-left"><span class="settings-label">Proaktiv aktivieren</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.proactive.enabled"><span class="slider"></span></label></div>
                   <div class="settings-row"><div class="s-left"><span class="settings-label">Prüf-Intervall</span><span class="s-desc">Minuten zwischen Checks</span></div><select class="s-select" data-key="kobold.proactive.interval"><option value="5">5 min</option><option value="10">10 min</option><option value="15">15 min</option><option value="30">30 min</option></select></div>
-                  <div class="settings-row"><div class="s-left"><span class="settings-label">Morgen-Briefing</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.proactive.morningBriefing"><span class="slider"></span></label></div>
-                  <div class="settings-row"><div class="s-left"><span class="settings-label">Abend-Zusammenfassung</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.proactive.eveningSummary"><span class="slider"></span></label></div>
                   <div class="settings-row"><div class="s-left"><span class="settings-label">Fehler-Alerts</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.proactive.errorAlerts"><span class="slider"></span></label></div>
                   <div class="settings-row"><div class="s-left"><span class="settings-label">System-Health</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.proactive.systemHealth"><span class="slider"></span></label></div>
                   <div class="settings-row"><div class="s-left"><span class="settings-label">Idle-Tasks</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.proactive.idleTasks"><span class="slider"></span></label></div>
                 </div>
                 <div class="fbox gold">
-                  <div class="fbox-header"><i data-lucide="heart-pulse"></i>Heartbeat</div>
-                  <div class="settings-row"><div class="s-left"><span class="settings-label">Heartbeat aktivieren</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.proactive.heartbeat.enabled"><span class="slider"></span></label></div>
-                  <div class="settings-row"><div class="s-left"><span class="settings-label">Intervall (Sekunden)</span></div><select class="s-select" data-key="kobold.proactive.heartbeat.intervalSec"><option value="30">30s</option><option value="60">60s</option><option value="120">120s</option><option value="300">300s</option></select></div>
-                  <div class="settings-row"><div class="s-left"><span class="settings-label">Im Dashboard zeigen</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.proactive.heartbeat.showInDashboard"><span class="slider"></span></label></div>
-                  <div class="settings-row"><div class="s-left"><span class="settings-label">Log-Aufbewahrung</span></div><select class="s-select" data-key="kobold.proactive.heartbeat.logRetention"><option value="25">25</option><option value="50">50</option><option value="100">100</option><option value="200">200</option></select></div>
-                  <div class="settings-row"><div class="s-left"><span class="settings-label">Benachrichtigen</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.proactive.heartbeat.notify"><span class="slider"></span></label></div>
+                  <div class="fbox-header"><i data-lucide="key-round"></i>Passwort-Manager</div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Auth-Token</span><span class="s-desc">Bearer-Token fuer Daemon-API</span></div><div style="display:flex;gap:6px;align-items:center"><input type="password" class="form-input" style="width:180px;font-size:12px" id="vaultAuthToken" readonly><button class="btn btn-secondary btn-sm" onclick="toggleVaultTokenVisibility()"><i data-lucide="eye"></i></button><button class="btn btn-secondary btn-sm" onclick="copyVaultToken()"><i data-lucide="copy"></i></button></div></div>
+                  <div style="margin:12px 0 6px;display:flex;align-items:center;justify-content:space-between">
+                    <span style="font-size:12px;color:var(--text-secondary);font-weight:600">Gespeicherte Eintraege</span>
+                    <div style="display:flex;gap:4px;flex-wrap:wrap" id="vaultFilterTags"></div>
+                  </div>
+                  <div style="margin-bottom:8px"><input class="form-input" id="vaultSearch" placeholder="Suchen..." style="width:100%;font-size:12px" oninput="renderVaultEntries()"></div>
+                  <div id="vaultEntries"></div>
+                  <div style="margin-top:10px;padding:10px;background:var(--bg-tertiary);border-radius:8px">
+                    <div style="font-size:11px;font-weight:600;margin-bottom:6px;color:var(--text-secondary)">Neuer Eintrag</div>
+                    <div style="display:flex;gap:6px;margin-bottom:6px">
+                      <input class="form-input" id="vaultNewName" placeholder="Name (z.B. GitHub Token)" style="flex:1;font-size:12px">
+                      <input type="password" class="form-input" id="vaultNewValue" placeholder="Wert / Passwort" style="flex:1;font-size:12px">
+                    </div>
+                    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:6px" id="vaultNewTags"></div>
+                    <button class="btn btn-primary btn-sm" onclick="addVaultEntry()"><i data-lucide="plus"></i>Speichern</button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Kontakte-Einstellungen -->
+              <div class="settings-panel" id="sp-contacts-settings">
+                <div class="fbox gold">
+                  <div class="fbox-header"><i data-lucide="contact"></i>Nutzungsmodus</div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Modus</span><span class="s-desc">Privat oder Business CRM</span></div><select class="s-select" data-key="kobold.contacts.mode"><option value="private">Privat</option><option value="business">Business CRM</option></select></div>
                 </div>
                 <div class="fbox emerald">
-                  <div class="fbox-header"><i data-lucide="coffee"></i>Idle-Task-Einstellungen</div>
-                  <div class="settings-row"><div class="s-left"><span class="settings-label">Min Idle-Minuten</span><span class="s-desc">Warten bis Idle-Task startet</span></div><select class="s-select" data-key="kobold.proactive.idle.minIdleMinutes"><option value="1">1</option><option value="3">3</option><option value="5">5</option><option value="10">10</option></select></div>
-                  <div class="settings-row"><div class="s-left"><span class="settings-label">Max pro Stunde</span></div><select class="s-select" data-key="kobold.proactive.idle.maxPerHour"><option value="2">2</option><option value="5">5</option><option value="10">10</option><option value="20">20</option></select></div>
-                  <div class="settings-row"><div class="s-left"><span class="settings-label">Shell erlauben</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.proactive.idle.allowShell"><span class="slider"></span></label></div>
-                  <div class="settings-row"><div class="s-left"><span class="settings-label">Netzwerk erlauben</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.proactive.idle.allowNetwork"><span class="slider"></span></label></div>
-                  <div class="settings-row"><div class="s-left"><span class="settings-label">Dateien schreiben erlauben</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.proactive.idle.allowFileWrite"><span class="slider"></span></label></div>
-                  <div class="settings-row"><div class="s-left"><span class="settings-label">Nur hohe Priorität</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.proactive.idle.onlyHighPriority"><span class="slider"></span></label></div>
-                  <div class="settings-row"><div class="s-left"><span class="settings-label">Ruhezeiten</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.proactive.idle.quietHoursEnabled"><span class="slider"></span></label></div>
-                  <div class="settings-row"><div class="s-left"><span class="settings-label">Ruhezeit Start</span></div><select class="s-select" data-key="kobold.proactive.idle.quietHoursStart"><option value="20">20:00</option><option value="21">21:00</option><option value="22">22:00</option><option value="23">23:00</option></select></div>
-                  <div class="settings-row"><div class="s-left"><span class="settings-label">Ruhezeit Ende</span></div><select class="s-select" data-key="kobold.proactive.idle.quietHoursEnd"><option value="6">06:00</option><option value="7">07:00</option><option value="8">08:00</option><option value="9">09:00</option></select></div>
-                  <div class="settings-row"><div class="s-left"><span class="settings-label">Bei Ausführung benachrichtigen</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.proactive.idle.notifyOnExecution"><span class="slider"></span></label></div>
-                  <div class="settings-row"><div class="s-left"><span class="settings-label">Bei Nutzeraktivität pausieren</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.proactive.idle.pauseOnUserActivity"><span class="slider"></span></label></div>
-                  <div class="settings-row"><div class="s-left"><span class="settings-label">Telegram Min-Priorität</span></div><select class="s-select" data-key="kobold.proactive.idle.telegramMinPriority"><option value="off">Aus</option><option value="low">Niedrig</option><option value="medium">Mittel</option><option value="high">Hoch</option></select></div>
+                  <div class="fbox-header"><i data-lucide="layout-grid"></i>Sichtbare Module (CRM)</div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Firmen</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.contacts.showCompanies"><span class="slider"></span></label></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Deals & Pipeline</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.contacts.showDeals"><span class="slider"></span></label></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Aktivitäten</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.contacts.showActivities"><span class="slider"></span></label></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Pipeline-Board</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.contacts.showPipeline"><span class="slider"></span></label></div>
+                </div>
+                <div class="fbox gold">
+                  <div class="fbox-header"><i data-lucide="eye"></i>Sichtbare Felder</div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Telefonnummern</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.contacts.showPhone"><span class="slider"></span></label></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">E-Mail-Adressen</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.contacts.showEmail"><span class="slider"></span></label></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Adressen</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.contacts.showAddress"><span class="slider"></span></label></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Geburtstage</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.contacts.showBirthday"><span class="slider"></span></label></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Social Media</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.contacts.showSocial"><span class="slider"></span></label></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Tags</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.contacts.showTags"><span class="slider"></span></label></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Notizen</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.contacts.showNotes"><span class="slider"></span></label></div>
+                </div>
+                <div class="fbox emerald">
+                  <div class="fbox-header"><i data-lucide="refresh-cw"></i>Synchronisierung</div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Apple Kontakte Sync</span><span class="s-desc">Automatisch synchronisieren</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.contacts.autoSync"><span class="slider"></span></label></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Google Kontakte Sync</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.contacts.googleSync"><span class="slider"></span></label></div>
+                </div>
+              </div>
+
+              <!-- Teams-Einstellungen -->
+              <div class="settings-panel" id="sp-teams-settings">
+                <div class="fbox gold">
+                  <div class="fbox-header"><i data-lucide="users"></i>Team-Defaults</div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Standard Routing</span><span class="s-desc">Wie Nachrichten verteilt werden</span></div><select class="s-select" data-key="kobold.teams.defaultRouting"><option value="sequential">Sequential</option><option value="leader">Leader</option><option value="round-robin">Round-Robin</option></select></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Max. Diskussionsrunden</span></div><select class="s-select" data-key="kobold.teams.defaultMaxRounds"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="5">5</option><option value="10">10</option></select></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Kritisches Denken</span><span class="s-desc">Agenten hinterfragen sich gegenseitig</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.teams.criticalThinking"><span class="slider"></span></label></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Zusammenfassung anzeigen</span><span class="s-desc">Nach Team-Diskussion</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.teams.showSummary"><span class="slider"></span></label></div>
                 </div>
               </div>
 
@@ -2291,6 +2611,7 @@ final class WebAppServer: @unchecked Sendable {
                   <div class="settings-row"><div class="s-left"><span class="settings-label">Tool-Sandboxing</span><span class="s-desc">Tools in isolierter Umgebung</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.security.sandboxTools"><span class="slider"></span></label></div>
                   <div class="settings-row"><div class="s-left"><span class="settings-label">Netzwerk-Einschränkungen</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.security.networkRestrict"><span class="slider"></span></label></div>
                   <div class="settings-row"><div class="s-left"><span class="settings-label">Gefährliche Aktionen bestätigen</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.security.confirmDangerous"><span class="slider"></span></label></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Mindest-Risikostufe</span><span class="s-desc">Ab welcher Stufe bestätigen</span></div><select class="s-select" data-key="kobold.security.confirmThreshold"><option value="medium">Medium</option><option value="high">High</option><option value="critical">Critical</option></select></div>
                 </div>
               </div>
 
@@ -2304,8 +2625,59 @@ final class WebAppServer: @unchecked Sendable {
                 </div>
                 <div class="fbox cyan">
                   <div class="fbox-header"><i data-lucide="plug"></i>Integrationen</div>
-                  <p style="font-size:12px;color:var(--text-tertiary);margin-bottom:12px">OAuth-Integrationen müssen in der Desktop-App eingerichtet werden.</p>
                   <div id="connectionsArea" style="font-size:13px;color:var(--text-secondary)"></div>
+                </div>
+                <div class="fbox gold">
+                  <div class="fbox-header"><i data-lucide="bot"></i>Telegram Bot</div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Bot Token</span></div><input class="s-input" type="password" style="width:250px" data-key="kobold.telegram.token" placeholder="123456:ABC..."></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Chat ID</span></div><input class="form-input" style="width:180px;font-size:12px" data-key="kobold.telegram.chatId" placeholder="123456789"></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Gruppen-IDs</span><span class="s-desc">Kommagetrennt</span></div><input class="form-input" style="width:220px;font-size:12px" data-key="kobold.telegram.groupIds" placeholder="-100123,-100456"></div>
+                </div>
+                <div class="fbox emerald">
+                  <div class="fbox-header"><i data-lucide="cloud"></i>Google OAuth</div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Client ID</span></div><input class="form-input" style="width:250px;font-size:12px" data-key="kobold.google.clientId" placeholder="...apps.googleusercontent.com"></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Client Secret</span></div><input class="s-input" type="password" style="width:220px" data-key="kobold.google.clientSecret"></div>
+                </div>
+                <div class="fbox gold">
+                  <div class="fbox-header"><i data-lucide="github"></i>GitHub</div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Client ID</span></div><input class="form-input" style="width:220px;font-size:12px" data-key="kobold.github.clientId"></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Client Secret</span></div><input class="s-input" type="password" style="width:220px" data-key="kobold.github.clientSecret"></div>
+                </div>
+                <div class="fbox emerald">
+                  <div class="fbox-header"><i data-lucide="mail"></i>E-Mail (SMTP/IMAP)</div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">E-Mail</span></div><input class="form-input" style="width:220px;font-size:12px" data-key="kobold.email.address" placeholder="user@gmail.com"></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Passwort</span></div><input class="s-input" type="password" style="width:180px" data-key="kobold.email.password"></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">SMTP Host</span></div><input class="form-input" style="width:180px;font-size:12px" data-key="kobold.email.smtpHost" placeholder="smtp.gmail.com"></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">SMTP Port</span></div><input class="form-input" style="width:80px;font-size:12px" data-key="kobold.email.smtpPort" placeholder="587"></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">IMAP Host</span></div><input class="form-input" style="width:180px;font-size:12px" data-key="kobold.email.imapHost" placeholder="imap.gmail.com"></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">IMAP Port</span></div><input class="form-input" style="width:80px;font-size:12px" data-key="kobold.email.imapPort" placeholder="993"></div>
+                </div>
+                <div class="fbox gold">
+                  <div class="fbox-header"><i data-lucide="phone"></i>Twilio (SMS/Telefonie)</div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Account SID</span></div><input class="form-input" style="width:250px;font-size:12px" data-key="kobold.twilio.accountSid"></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Auth Token</span></div><input class="s-input" type="password" style="width:220px" data-key="kobold.twilio.authToken"></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Absendernummer</span></div><input class="form-input" style="width:180px;font-size:12px" data-key="kobold.twilio.fromNumber" placeholder="+49..."></div>
+                </div>
+                <div class="fbox emerald">
+                  <div class="fbox-header"><i data-lucide="cloud"></i>Cloudflare Tunnel</div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Auto-Start</span></div><label class="s-toggle"><input type="checkbox" data-key="kobold.tunnel.autoStart"><span class="slider"></span></label></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">E-Mail</span></div><input class="form-input" style="width:200px;font-size:12px" data-key="kobold.cloudflare.email"></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">API Key</span></div><input class="s-input" type="password" style="width:200px" data-key="kobold.cloudflare.apiKey"></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Account ID</span></div><input class="form-input" style="width:200px;font-size:12px" data-key="kobold.cloudflare.accountId"></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Domain</span></div><input class="form-input" style="width:200px;font-size:12px" data-key="kobold.cloudflare.domain"></div>
+                </div>
+                <div class="fbox gold">
+                  <div class="fbox-header"><i data-lucide="key"></i>Weitere API-Keys</div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Microsoft Client ID</span></div><input class="form-input" style="width:220px;font-size:12px" data-key="kobold.microsoft.clientId"></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Microsoft Secret</span></div><input class="s-input" type="password" style="width:200px" data-key="kobold.microsoft.clientSecret"></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Slack Client ID</span></div><input class="form-input" style="width:220px;font-size:12px" data-key="kobold.slack.clientId"></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Slack Secret</span></div><input class="s-input" type="password" style="width:200px" data-key="kobold.slack.clientSecret"></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Notion Client ID</span></div><input class="form-input" style="width:220px;font-size:12px" data-key="kobold.notion.clientId"></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Notion Secret</span></div><input class="s-input" type="password" style="width:200px" data-key="kobold.notion.clientSecret"></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">HuggingFace Token</span></div><input class="s-input" type="password" style="width:220px" data-key="kobold.huggingface.apiToken"></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Suno API Key</span></div><input class="s-input" type="password" style="width:220px" data-key="kobold.suno.apiKey"></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Reddit Client ID</span></div><input class="form-input" style="width:220px;font-size:12px" data-key="kobold.reddit.clientId"></div>
+                  <div class="settings-row"><div class="s-left"><span class="settings-label">Reddit Secret</span></div><input class="s-input" type="password" style="width:200px" data-key="kobold.reddit.clientSecret"></div>
                 </div>
                 <div class="fbox gold">
                   <div class="fbox-header"><i data-lucide="globe"></i>A2A (Agent-to-Agent)</div>
@@ -2352,12 +2724,251 @@ final class WebAppServer: @unchecked Sendable {
               </div>
             </div>
           </div>
+
+          <!-- Teams -->
+          <div class="tab" id="tab-teams">
+            <div class="page-header">
+              <h2>Teams</h2>
+              <div class="subtitle">Multi-Agent Teams verwalten</div>
+              <div style="flex:1"></div>
+              <button class="btn btn-primary btn-sm" onclick="toggleTeamForm()"><i data-lucide="plus"></i>Neues Team</button>
+            </div>
+            <div class="page-body">
+              <div class="add-task-form" id="teamForm">
+                <input class="form-input" id="teamName" placeholder="Teamname">
+                <textarea class="form-input" id="teamDesc" placeholder="Beschreibung" style="resize:vertical;min-height:50px"></textarea>
+                <div style="margin:8px 0">
+                  <div style="font-size:12px;color:var(--text-secondary);margin-bottom:6px">Routing-Modus</div>
+                  <div class="schedule-presets" id="routingPresets">
+                    <button class="sched-pill active" onclick="pickRouting(this,'sequential')">Sequential</button>
+                    <button class="sched-pill" onclick="pickRouting(this,'leader')">Leader</button>
+                    <button class="sched-pill" onclick="pickRouting(this,'round-robin')">Round-Robin</button>
+                  </div>
+                </div>
+                <div class="form-row">
+                  <button class="btn btn-primary" onclick="createTeam()">Erstellen</button>
+                  <button class="btn btn-secondary" onclick="toggleTeamForm()">Abbrechen</button>
+                </div>
+              </div>
+              <div id="teamsArea"></div>
+            </div>
+            <!-- Team Chat View (Content-Area innerhalb Teams-Tab) -->
+            <div id="teamChatView" class="tcm-view" style="display:none">
+              <div class="tcm-header">
+                <button class="tcm-back" onclick="closeTeamChat()"><i data-lucide="arrow-left" style="width:14px;height:14px"></i>Zurueck</button>
+                <h3 id="tcmTitle">Team Chat</h3>
+                <div class="tcm-controls">
+                  <select class="form-select" id="tcmRounds" style="width:80px;font-size:11px"><option value="1">1 Runde</option><option value="2">2 Runden</option><option value="3" selected>3 Runden</option><option value="5">5 Runden</option></select>
+                  <select class="form-select" id="tcmOutput" style="width:100px;font-size:11px"><option value="summary">Zusammenfassung</option><option value="code">Code</option><option value="decision">Entscheidung</option><option value="full">Volle Diskussion</option></select>
+                </div>
+              </div>
+              <div class="tcm-info" id="tcmInfo"></div>
+              <div class="tcm-body" id="tcmBody"></div>
+              <div class="tcm-composer">
+                <input id="tcmInput" placeholder="Aufgabe fuer das Team..." onkeydown="if(event.key==='Enter')sendModalTeamChat()">
+                <button class="btn btn-primary" onclick="sendModalTeamChat()"><i data-lucide="send"></i>Senden</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- CRM / Kontakte -->
+          <div class="tab" id="tab-crm">
+            <div class="page-header">
+              <h2>Kontakte & CRM</h2>
+              <div style="flex:1"></div>
+              <span id="crmStats" style="font-size:11px;color:var(--text-tertiary)"></span>
+            </div>
+            <div class="page-body">
+              <div class="settings-tabs" id="crmTabs">
+                <span class="settings-tab active" onclick="switchCRMTab('contacts',this)">Kontakte</span>
+                <span class="settings-tab" onclick="switchCRMTab('companies',this)">Firmen</span>
+                <span class="settings-tab" onclick="switchCRMTab('deals',this)">Deals</span>
+                <span class="settings-tab" onclick="switchCRMTab('activities',this)">Aktivitäten</span>
+              </div>
+              <!-- Kontakte -->
+              <div class="settings-panel active" id="crm-contacts">
+                <div style="display:flex;gap:8px;margin-bottom:12px">
+                  <button class="btn btn-primary btn-sm" onclick="toggleCrmContactForm()"><i data-lucide="plus"></i>Neuer Kontakt</button>
+                </div>
+                <div class="add-task-form" id="crmContactForm">
+                  <div style="display:flex;gap:8px;margin-bottom:8px">
+                    <input class="form-input" id="crmFirstName" placeholder="Vorname" style="flex:1;margin:0">
+                    <input class="form-input" id="crmLastName" placeholder="Nachname" style="flex:1;margin:0">
+                  </div>
+                  <div style="display:flex;gap:8px;margin-bottom:8px">
+                    <input class="form-input" id="crmEmail" placeholder="E-Mail" style="flex:1;margin:0">
+                    <input class="form-input" id="crmPhone" placeholder="Telefon" style="flex:1;margin:0">
+                  </div>
+                  <div style="display:flex;gap:8px;margin-bottom:8px">
+                    <input class="form-input" id="crmCompany" placeholder="Firma" style="flex:1;margin:0">
+                    <input class="form-input" id="crmJobTitle" placeholder="Position" style="flex:1;margin:0">
+                  </div>
+                  <div style="display:flex;gap:8px;margin-bottom:8px">
+                    <select class="form-select" id="crmStatus"><option value="active">Aktiv</option><option value="lead">Lead</option><option value="customer">Kunde</option><option value="inactive">Inaktiv</option></select>
+                    <input class="form-input" id="crmTags" placeholder="Tags (kommagetrennt)" style="flex:1;margin:0">
+                  </div>
+                  <textarea class="form-input" id="crmNotes" placeholder="Notizen" style="resize:vertical;min-height:40px"></textarea>
+                  <div class="form-row" style="margin-top:8px">
+                    <button class="btn btn-primary" onclick="createContact()">Speichern</button>
+                    <button class="btn btn-secondary" onclick="toggleCrmContactForm()">Abbrechen</button>
+                  </div>
+                </div>
+                <div class="search-bar" style="margin-bottom:8px">
+                  <div class="search-wrapper"><i data-lucide="search"></i><input class="search-field" id="crmContactSearch" placeholder="Kontakte durchsuchen..." oninput="filterCrmContacts()"></div>
+                </div>
+                <div class="filter-row" id="crmStatusFilter">
+                  <span class="pill active" onclick="setCrmFilter('all',this)">Alle</span>
+                  <span class="pill" onclick="setCrmFilter('active',this)">Aktiv</span>
+                  <span class="pill" onclick="setCrmFilter('lead',this)">Lead</span>
+                  <span class="pill" onclick="setCrmFilter('customer',this)">Kunde</span>
+                  <span class="pill" onclick="setCrmFilter('inactive',this)">Inaktiv</span>
+                </div>
+                <button class="btn btn-secondary btn-sm crm-mobile-toggle" id="crmMobileToggle" onclick="toggleMobileContactList()" style="display:none;margin-bottom:8px"><i data-lucide="users"></i>Kontakte anzeigen</button>
+                <div class="crm-split">
+                  <div class="crm-list-col" id="crmContactList"></div>
+                  <div class="crm-detail-col" id="crmContactDetail">
+                    <div class="empty-state"><i data-lucide="user"></i><p>Kontakt auswählen</p></div>
+                  </div>
+                </div>
+              </div>
+              <!-- Firmen -->
+              <div class="settings-panel" id="crm-companies">
+                <div style="margin-bottom:12px"><button class="btn btn-primary btn-sm" onclick="toggleCrmCompanyForm()"><i data-lucide="plus"></i>Neue Firma</button></div>
+                <div class="add-task-form" id="crmCompanyForm">
+                  <div style="display:flex;gap:8px;margin-bottom:8px">
+                    <input class="form-input" id="compName" placeholder="Firmenname" style="flex:1;margin:0">
+                    <input class="form-input" id="compIndustry" placeholder="Branche" style="flex:1;margin:0">
+                  </div>
+                  <div style="display:flex;gap:8px;margin-bottom:8px">
+                    <input class="form-input" id="compWebsite" placeholder="Website" style="flex:1;margin:0">
+                    <select class="form-select" id="compSize"><option value="">Größe</option><option value="1-10">1-10</option><option value="11-50">11-50</option><option value="51-200">51-200</option><option value="201-500">201-500</option><option value="500+">500+</option></select>
+                  </div>
+                  <div class="form-row"><button class="btn btn-primary" onclick="createCompany()">Erstellen</button><button class="btn btn-secondary" onclick="toggleCrmCompanyForm()">Abbrechen</button></div>
+                </div>
+                <div class="company-grid" id="crmCompanyGrid"></div>
+              </div>
+              <!-- Deals -->
+              <div class="settings-panel" id="crm-deals">
+                <div style="margin-bottom:12px"><button class="btn btn-primary btn-sm" onclick="toggleCrmDealForm()"><i data-lucide="plus"></i>Neuer Deal</button></div>
+                <div class="add-task-form" id="crmDealForm">
+                  <input class="form-input" id="dealTitle" placeholder="Deal-Titel">
+                  <div style="display:flex;gap:8px;margin-bottom:8px">
+                    <input class="form-input" id="dealValue" type="number" placeholder="Wert (€)" style="flex:1;margin:0">
+                    <input class="form-input" id="dealProbability" type="number" placeholder="Wahrsch. %" min="0" max="100" style="flex:1;margin:0">
+                  </div>
+                  <div style="display:flex;gap:8px;margin-bottom:8px">
+                    <select class="form-select" id="dealContact" style="flex:1"><option value="">Kontakt wählen</option></select>
+                    <select class="form-select" id="dealStage" style="flex:1"><option value="">Stage wählen</option></select>
+                  </div>
+                  <div class="form-row"><button class="btn btn-primary" onclick="createDeal()">Erstellen</button><button class="btn btn-secondary" onclick="toggleCrmDealForm()">Abbrechen</button></div>
+                </div>
+                <div class="kanban-board" id="crmKanban"></div>
+              </div>
+              <!-- Aktivitäten -->
+              <div class="settings-panel" id="crm-activities">
+                <div style="margin-bottom:12px"><button class="btn btn-primary btn-sm" onclick="toggleCrmActivityForm()"><i data-lucide="plus"></i>Neue Aktivität</button></div>
+                <div class="add-task-form" id="crmActivityForm">
+                  <div style="display:flex;gap:8px;margin-bottom:8px">
+                    <select class="form-select" id="actType"><option value="note">Notiz</option><option value="call">Anruf</option><option value="email">E-Mail</option><option value="meeting">Meeting</option></select>
+                    <select class="form-select" id="actContact" style="flex:1"><option value="">Kontakt wählen</option></select>
+                  </div>
+                  <input class="form-input" id="actTitle" placeholder="Titel">
+                  <textarea class="form-input" id="actDesc" placeholder="Beschreibung" style="resize:vertical;min-height:40px"></textarea>
+                  <div class="form-row" style="margin-top:8px"><button class="btn btn-primary" onclick="createActivity()">Erstellen</button><button class="btn btn-secondary" onclick="toggleCrmActivityForm()">Abbrechen</button></div>
+                </div>
+                <div id="crmActivityList"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Workflows -->
+          <div class="tab" id="tab-workflows">
+            <div class="page-header">
+              <h2>Workflows</h2>
+              <div class="subtitle">Automatisierungspipelines</div>
+              <div style="flex:1"></div>
+              <button class="btn btn-secondary btn-sm" id="wfBackBtn" onclick="deselectWorkflow()" style="display:none"><i data-lucide="arrow-left"></i>Zurück</button>
+              <button class="btn btn-primary btn-sm" id="wfNewBtn" onclick="toggleWfForm()"><i data-lucide="plus"></i>Neuer Workflow</button>
+              <button class="btn btn-primary btn-sm" id="wfRunBtn" onclick="runWorkflow()" style="display:none"><i data-lucide="play"></i>Starten</button>
+              <button class="btn btn-danger btn-sm" id="wfStopBtn" onclick="stopWorkflow()" style="display:none"><i data-lucide="square"></i>Stoppen</button>
+              <button class="btn btn-secondary btn-sm" id="wfChatBtn" onclick="openWorkflowChat()" style="display:none"><i data-lucide="message-square"></i>Chat</button>
+            </div>
+            <div class="page-body">
+              <div class="add-task-form" id="wfForm">
+                <input class="form-input" id="wfName" placeholder="Workflow-Name">
+                <textarea class="form-input" id="wfDesc" placeholder="Beschreibung" style="resize:vertical;min-height:40px"></textarea>
+                <div class="form-row"><button class="btn btn-primary" onclick="createWorkflow()">Erstellen</button><button class="btn btn-secondary" onclick="toggleWfForm()">Abbrechen</button></div>
+              </div>
+              <div id="wfProjectList"></div>
+              <div id="wfCanvasWrap" style="display:none">
+                <div class="wf-canvas">
+                  <div class="wf-toolbar" id="wfToolbar">
+                    <span class="wf-toolbar-title" id="wfCanvasTitle"></span>
+                    <select id="wfNodeTypeSelect" class="s-select" style="min-width:200px;font-size:12px">
+                      <option value="">+ Node hinzufuegen...</option>
+                      <optgroup label="Eingabe">
+                        <option value="trigger">Trigger</option>
+                        <option value="input">Input</option>
+                        <option value="webhook">Webhook</option>
+                      </optgroup>
+                      <optgroup label="Verarbeitung">
+                        <option value="agent">Agent</option>
+                        <option value="tool">Tool</option>
+                        <option value="team">Team</option>
+                        <option value="formula">Formel</option>
+                        <option value="sub-workflow">Sub-Workflow</option>
+                      </optgroup>
+                      <optgroup label="Logik">
+                        <option value="condition">Bedingung</option>
+                        <option value="switch">Switch</option>
+                        <option value="loop">Loop</option>
+                        <option value="delay">Delay</option>
+                        <option value="merger">Merger</option>
+                      </optgroup>
+                      <optgroup label="Fehlerbehandlung">
+                        <option value="error-handler">Error Handler</option>
+                        <option value="retry">Retry</option>
+                      </optgroup>
+                      <optgroup label="Ausgabe">
+                        <option value="output">Output</option>
+                        <option value="task">Task</option>
+                        <option value="note">Notiz</option>
+                      </optgroup>
+                    </select>
+                    <button class="btn btn-primary btn-sm" onclick="addNodeFromSelect()">Hinzufuegen</button>
+                    <div style="flex:1"></div>
+                    <button class="btn btn-secondary btn-sm" onclick="saveWorkflowState()"><i data-lucide="save"></i>Speichern</button>
+                  </div>
+                  <div class="wf-canvas-area" id="wfCanvasArea" oncontextmenu="return false">
+                    <svg class="wf-conn-svg" id="wfConnSvg"></svg>
+                    <div class="wf-node-layer" id="wfNodeLayer"></div>
+                    <div class="wf-zoom-controls">
+                      <button class="btn btn-secondary btn-sm" onclick="wfZoom(0.1)">+</button>
+                      <button class="btn btn-secondary btn-sm" onclick="wfZoom(-0.1)">&minus;</button>
+                      <button class="btn btn-secondary btn-sm" onclick="wfResetView()">&#x27F3;</button>
+                      <span id="wfZoomLabel" style="font-size:11px;color:var(--text-secondary)">100%</span>
+                    </div>
+                  </div>
+                  <div class="wf-inspector" id="wfInspector"></div>
+                </div>
+                <div class="wf-output" id="wfOutput" style="display:none"></div>
+              </div>
+              <div id="wfChatView" class="wf-chat-view" style="display:none">
+                <div class="wf-chat-header">
+                  <button class="btn btn-secondary btn-sm" onclick="closeWorkflowChat()"><i data-lucide="arrow-left"></i>Zurueck</button>
+                  <h3 style="flex:1;font-size:15px;margin:0">Workflow Chat</h3>
+                  <button class="btn btn-secondary btn-sm" onclick="_wfChatMsgs=[];renderWorkflowChat()"><i data-lucide="trash-2"></i>Leeren</button>
+                </div>
+                <div class="wf-chat-body" id="wfChatBody"></div>
+              </div>
+            </div>
+          </div>
         </div>
 
         <script>
         const API='/api';
         let currentTab='chat', memoryEntries=[], memoryTags={}, filterType=null, filterTag=null, isSending=false;
-        let sessions=[], activeSessionId=null, contextUsage=0;
+        let sessions=[], activeSessionId=null, contextUsage=0, chatAbort=null;
         const STORAGE_KEY='koboldos_sessions';
 
         // ─── Auth ───
@@ -2509,6 +3120,7 @@ final class WebAppServer: @unchecked Sendable {
 
         // ─── Tab Switch ───
         function switchTab(name,el) {
+          const prevTab=currentTab;
           document.querySelectorAll('.tab').forEach(t=>{t.style.display='none';t.classList.remove('active')});
           document.querySelectorAll('.nav-item').forEach(n=>{
             if(!n.id||n.id!=='newChatBtn') n.classList.remove('active');
@@ -2522,6 +3134,12 @@ final class WebAppServer: @unchecked Sendable {
           if(name==='voice') initVoiceTab();
           if(name==='memory') loadMemory();
           if(name==='settings') loadSettings();
+          if(name==='teams') loadTeams();
+          if(name==='crm') loadCRM();
+          if(name==='workflows'){
+            if(prevTab==='workflows'&&selectedWfId){deselectWorkflow();}
+            else{loadWorkflows();}
+          }
           lucide.createIcons();
         }
 
@@ -2531,13 +3149,14 @@ final class WebAppServer: @unchecked Sendable {
           const panel=document.getElementById('sp-'+name);
           if(panel) panel.classList.add('active');
           if(el) el.classList.add('active');
-          if(name==='settings'||name==='system'){ loadSettings(); loadAllSettings(); }
-          if(name==='agents') loadAgentModels();
+          if(name==='settings'||name==='system'){ loadSettings(); loadAllSettings(); startHeartbeatPolling(); }
+          if(name==='agents'){ loadAgentModels(); loadToolRouting(); }
           if(name==='connections') loadConnections();
           if(name==='memory-settings') loadAllSettings();
           if(name==='skills') loadSkills();
+          if(name==='privacy'){ loadAllSettings(); loadVault(); }
           // Lade Settings-Werte für alle Tabs mit data-key Elementen
-          if(['personality','permissions','notifications','speech','privacy','security','agents','skills','connections'].includes(name)) loadAllSettings();
+          if(['personality','permissions','notifications','speech','privacy','security','skills','connections'].includes(name)) loadAllSettings();
           if(name==='speech'){loadBrowserVoices();toggleElevenLabs();}
           lucide.createIcons();
         }
@@ -2774,8 +3393,9 @@ final class WebAppServer: @unchecked Sendable {
           pendingAttachments=[];
           showAttachmentBadge();
           isSending=true;
-          document.getElementById('sendBtn').disabled=true;
-          // Status wird im Header-Bereich nicht mehr angezeigt
+          chatAbort=new AbortController();
+          document.getElementById('sendBtn').style.display='none';
+          document.getElementById('stopBtn').style.display='';
 
           const area=document.getElementById('chatArea');
           const welcome=document.getElementById('chatWelcome');
@@ -2838,7 +3458,9 @@ final class WebAppServer: @unchecked Sendable {
               const s2=getSession();
               if(s2){ s2.messages.push({role:'assistant',content:vText}); saveSessions(); }
               isSending=false;
-              document.getElementById('sendBtn').disabled=false;
+              chatAbort=null;
+              document.getElementById('sendBtn').style.display='';
+              document.getElementById('stopBtn').style.display='none';
               area.scrollTop=area.scrollHeight;
               lucide.createIcons();
               return;
@@ -2848,7 +3470,8 @@ final class WebAppServer: @unchecked Sendable {
               method:'POST',
               credentials:'same-origin',
               headers:sseHeaders,
-              body:JSON.stringify({message:fullMsg,conversation_history:history})
+              body:JSON.stringify({message:fullMsg,conversation_history:history}),
+              signal:chatAbort.signal
             });
 
             if(!resp.ok) throw new Error('HTTP '+resp.status);
@@ -2970,10 +3593,19 @@ final class WebAppServer: @unchecked Sendable {
           clearInterval(timer);
           area.scrollTop=area.scrollHeight;
           isSending=false;
-          document.getElementById('sendBtn').disabled=false;
-          // chatStatus entfernt — kein Sub-Header mehr
+          chatAbort=null;
+          document.getElementById('sendBtn').style.display='';
+          document.getElementById('stopBtn').style.display='none';
           input.focus();
           lucide.createIcons();
+        }
+
+        function stopAgent(){
+          if(chatAbort){chatAbort.abort();chatAbort=null;}
+          isSending=false;
+          document.getElementById('sendBtn').style.display='';
+          document.getElementById('stopBtn').style.display='none';
+          fetch(API+'/agent/cancel',{method:'POST',headers:{'Authorization':getAuthHeader()}}).catch(()=>{});
         }
 
         function clearChat(){
@@ -3351,15 +3983,23 @@ final class WebAppServer: @unchecked Sendable {
             memoryEntries=data.entries||[];
             memoryTags={};
             memoryEntries.forEach(e=>(e.tags||[]).forEach(t=>{memoryTags[t]=(memoryTags[t]||0)+1}));
-            const byType={kurzzeit:0,langzeit:0,wissen:0,lösungen:0,fehler:0};
+            const byType={kurzzeit:0,langzeit:0,wissen:0,lösungen:0,fehler:0,regeln:0,verhalten:0};
             memoryEntries.forEach(e=>{const t=e.memoryType||e.type||'kurzzeit';byType[t]=(byType[t]||0)+1});
-            document.getElementById('memStats').innerHTML=
-              '<div class="mem-stat"><div class="num" style="color:var(--teal)">'+byType.kurzzeit+'</div><div class="lbl">Kurzzeit</div></div>'+
-              '<div class="mem-stat"><div class="num" style="color:var(--accent)">'+byType.langzeit+'</div><div class="lbl">Langzeit</div></div>'+
-              '<div class="mem-stat"><div class="num" style="color:var(--orange)">'+byType.wissen+'</div><div class="lbl">Wissen</div></div>'+
-              '<div class="mem-stat"><div class="num" style="color:#4da6ff">'+byType.lösungen+'</div><div class="lbl">Lösungen</div></div>'+
-              '<div class="mem-stat"><div class="num" style="color:#ef4444">'+byType.fehler+'</div><div class="lbl">Fehler</div></div>'+
-              '<div class="mem-stat"><div class="num">'+memoryEntries.length+'</div><div class="lbl">Gesamt</div></div>';
+            const _mBoxes=[
+              {key:'kurzzeit',lbl:'Kurzzeit',color:'var(--teal)'},
+              {key:'langzeit',lbl:'Langzeit',color:'var(--accent)'},
+              {key:'wissen',lbl:'Wissen',color:'var(--orange)'},
+              {key:'lösungen',lbl:'Lösungen',color:'#4da6ff'},
+              {key:'fehler',lbl:'Fehler',color:'#ef4444'},
+              {key:'regeln',lbl:'Regeln',color:'#a78bfa'},
+              {key:'verhalten',lbl:'Verhalten',color:'#f472b6'},
+              {key:null,lbl:'Gesamt',color:'var(--text-primary)'}
+            ];
+            document.getElementById('memStats').innerHTML=_mBoxes.map(b=>{
+              const cnt=b.key?byType[b.key]||0:memoryEntries.length;
+              const act=filterType===b.key?' active':'';
+              return '<div class="mem-stat'+act+'" onclick="setMemTypeFromBox('+(b.key?'\\''+b.key+'\\'':'null')+',this)"><div class="num" style="color:'+b.color+'">'+cnt+'</div><div class="lbl">'+b.lbl+'</div></div>';
+            }).join('');
             renderTagBar();filterMemory();
           }catch(e){
             document.getElementById('memEntries').innerHTML='<div class="empty-state"><i data-lucide="alert-circle"></i><p>Fehler beim Laden</p></div>';
@@ -3377,10 +4017,26 @@ final class WebAppServer: @unchecked Sendable {
 
         function setMemType(type,el){
           filterType=(filterType===type)?null:type;
+          _syncMemFilterUI();
+          filterMemory();
+        }
+
+        function setMemTypeFromBox(type){
+          filterType=(filterType===type)?null:type;
+          _syncMemFilterUI();
+          filterMemory();
+          loadMemory(); // Boxen-Highlight aktualisieren
+        }
+
+        function _syncMemFilterUI(){
           document.querySelectorAll('#memTypeFilter .pill').forEach(c=>c.classList.remove('active'));
           if(filterType===null) document.querySelector('#memTypeFilter .pill').classList.add('active');
-          else if(el) el.classList.add('active');
-          filterMemory();
+          else{
+            document.querySelectorAll('#memTypeFilter .pill').forEach(p=>{
+              if(p.textContent.toLowerCase()===filterType) p.classList.add('active');
+            });
+          }
+          document.querySelectorAll('.mem-stat').forEach(b=>b.classList.remove('active'));
         }
 
         function setMemTag(tag){
@@ -3467,15 +4123,7 @@ final class WebAppServer: @unchecked Sendable {
               '<div class="settings-row"><span class="settings-label">Modell</span><span class="settings-value">'+(metrics.model||'?')+'</span></div>';
             document.getElementById('aboutVersion').textContent='Alpha '+(health.version||'v\(KoboldVersion.current)');
 
-            const modelList=document.getElementById('modelList');
-            const available=models.models||[];
-            const active=models.active||'';
-            if(available.length){
-              const opts=available.map(m=>{const name=m.name||m;const sel=name===active;return '<option value="'+esc(name)+'"'+(sel?' selected':'')+'>'+esc(name)+(m.size?' ('+m.size+')':'')+'</option>'}).join('');
-              modelList.innerHTML='<div class="settings-row"><div class="s-left"><span class="settings-label">Aktives Modell</span><span class="s-desc">'+available.length+' verfügbar</span></div><select class="s-select" onchange="setModel(this.value)" style="min-width:200px">'+opts+'</select></div>';
-            } else {
-              modelList.innerHTML='<div style="color:var(--text-secondary);font-size:13px">Keine Modelle verfügbar — ist Ollama aktiv?</div>';
-            }
+            // Modell-Auswahl ist jetzt im Agenten-Tab (loadAgentModels)
           }catch(e){
             document.getElementById('settingsMetrics').innerHTML='<div style="color:var(--red);font-size:13px;grid-column:1/-1">Daemon nicht erreichbar</div>';
             document.getElementById('daemonInfo').innerHTML='<div style="color:var(--red);font-size:13px">Offline</div>';
@@ -3525,24 +4173,64 @@ final class WebAppServer: @unchecked Sendable {
           }catch(e){alert('Fehler: '+e.message)}
         }
 
-        // ─── Agent Models ───
+        // ─── Agent Models (per-agent persistence via kobold.agentConfigs) ───
+        // Helper: agentConfigs aus beliebigem Format (Desktop-Array oder WebGUI-Object) in Lookup umwandeln
+        function _parseAgentConfigs(raw){
+          const out={};
+          if(!raw) return out;
+          try{
+            const p=typeof raw==='string'?JSON.parse(raw):raw;
+            if(Array.isArray(p)){
+              // Desktop-Format: [{id:'general',modelName:'...',provider:'ollama'}, ...]
+              p.forEach(c=>{if(c&&c.id) out[c.id]=c;});
+            } else if(typeof p==='object'){
+              // WebGUI-Format (alt): {general:{modelName:'...'}}
+              Object.assign(out,p);
+            }
+          }catch(e){}
+          return out;
+        }
         async function loadAgentModels(){
           try{
-            const models=await api('/models');
+            // Parallel laden: Modelle + frische Settings (nicht auf Cache vertrauen)
+            const [models,settings]=await Promise.all([api('/models'),api('/settings')]);
+            Object.assign(_settingsCache,settings);
             const available=models.models||[];
             const active=models.active||'';
+            const agentConfigs=_parseAgentConfigs(settings['kobold.agentConfigs']);
+            const agents=[
+              {id:'general',label:'General',desc:'Orchestrator — Hauptmodell',fallback:active},
+              {id:'coder',label:'Coder',desc:'Code-Spezialist',fallback:active},
+              {id:'web',label:'Web',desc:'Web-Recherche',fallback:active}
+            ];
             const area=document.getElementById('agentModelsArea');
-            const agents=['General','Coder','Web'];
-            const opts=available.map(m=>{const name=m.name||m;const sel=name===active;return '<option value="'+esc(name)+'"'+(sel?' selected':'')+'>'+esc(name)+'</option>'}).join('');
             let html='';
             agents.forEach(agent=>{
-              html+='<div class="settings-row"><div class="s-left"><span class="settings-label">'+agent+'</span><span class="s-desc">Agent-Modell</span></div><select class="s-select" onchange="setModel(this.value)" style="min-width:180px">'+opts+'</select></div>';
+              const currentModel=(agentConfigs[agent.id]&&agentConfigs[agent.id].modelName)||agent.fallback;
+              const opts=available.map(m=>{const name=m.name||m;return '<option value="'+esc(name)+'"'+(name===currentModel?' selected':'')+'>'+esc(name)+'</option>'}).join('');
+              html+='<div class="settings-row"><div class="s-left"><span class="settings-label">'+agent.label+'</span><span class="s-desc">'+agent.desc+'</span></div><select class="s-select" onchange="setAgentModel(\\''+agent.id+'\\',this.value)" style="min-width:180px">'+opts+'</select></div>';
             });
             area.innerHTML=html;
             lucide.createIcons();
           }catch(e){
             document.getElementById('agentModelsArea').innerHTML='<div style="color:var(--red);font-size:13px">Fehler: '+esc(e.message)+'</div>';
           }
+        }
+        async function setAgentModel(agentId,modelName){
+          const configs=_parseAgentConfigs(_settingsCache['kobold.agentConfigs']);
+          if(!configs[agentId])configs[agentId]={id:agentId,provider:'ollama'};
+          configs[agentId].modelName=modelName;
+          if(!configs[agentId].id) configs[agentId].id=agentId;
+          if(!configs[agentId].provider) configs[agentId].provider='ollama';
+          // Desktop-kompatibles Array-Format: [{id,modelName,provider}, ...]
+          const arr=Object.values(configs).map(c=>({id:c.id||'',modelName:c.modelName||'',provider:c.provider||'ollama'}));
+          const jsonStr=JSON.stringify(arr);
+          await saveSetting('kobold.agentConfigs',jsonStr);
+          _settingsCache['kobold.agentConfigs']=jsonStr;
+          if(agentId==='general'){
+            try{await api('/models/set',{method:'POST',body:JSON.stringify({model:modelName})});}catch(e){}
+          }
+          showToast(agentId+' → '+modelName,'success');
         }
 
         // ─── Connections (read-only) ───
@@ -3612,14 +4300,34 @@ final class WebAppServer: @unchecked Sendable {
         // Auto-save für Toggles, Selects, Sliders
         function initSettingsListeners(){
           document.querySelectorAll('.s-toggle input[data-key]').forEach(el=>{
-            el.addEventListener('change',()=>saveSetting(el.dataset.key,el.checked));
+            el.addEventListener('change',async()=>{
+              await saveSetting(el.dataset.key,el.checked);
+              // Shell-Tier Mutual Exclusion
+              const k=el.dataset.key;
+              if(k==='kobold.shell.powerTier'&&el.checked){
+                for(const o of ['kobold.shell.safeTier','kobold.shell.normalTier']){
+                  const oe=document.querySelector('[data-key="'+o+'"]');if(oe){oe.checked=false;await saveSetting(o,false);}
+                }
+              }else if(k==='kobold.shell.normalTier'&&el.checked){
+                const oe=document.querySelector('[data-key="kobold.shell.safeTier"]');if(oe){oe.checked=false;await saveSetting('kobold.shell.safeTier',false);}
+                const pe=document.querySelector('[data-key="kobold.shell.powerTier"]');if(pe){pe.checked=false;await saveSetting('kobold.shell.powerTier',false);}
+              }else if(k==='kobold.shell.safeTier'&&el.checked){
+                for(const o of ['kobold.shell.normalTier','kobold.shell.powerTier']){
+                  const oe=document.querySelector('[data-key="'+o+'"]');if(oe){oe.checked=false;await saveSetting(o,false);}
+                }
+              }
+            });
           });
           document.querySelectorAll('.s-select[data-key]').forEach(el=>{
-            el.addEventListener('change',()=>{
+            el.addEventListener('change',async()=>{
               const v=el.value;
               // Int-Werte korrekt senden
               const num=parseInt(v);
-              saveSetting(el.dataset.key,isNaN(num)?v:num);
+              await saveSetting(el.dataset.key,isNaN(num)?v:num);
+              // Autonomie-Level → Berechtigungen anpassen
+              if(el.dataset.key==='kobold.autonomyLevel'){
+                await applyAutonomyPreset(parseInt(v));
+              }
             });
           });
           document.querySelectorAll('.s-slider[data-key]').forEach(el=>{
@@ -3642,6 +4350,231 @@ final class WebAppServer: @unchecked Sendable {
             });
             el.addEventListener('blur',()=>saveSetting(el.dataset.key,el.value));
           });
+        }
+
+        // Autonomie-Preset → Berechtigungen setzen (wie Desktop applyAutonomyPreset)
+        async function applyAutonomyPreset(level){
+          const presets={
+            1:{shell:false,fileWrite:false,network:false,confirmAdmin:true},
+            2:{shell:true,fileWrite:true,network:true,confirmAdmin:true},
+            3:{shell:true,fileWrite:true,network:true,confirmAdmin:false}
+          };
+          const p=presets[level];if(!p) return;
+          for(const [k,v] of Object.entries(p)){
+            const key='kobold.perm.'+k;
+            await saveSetting(key,v);
+            const el=document.querySelector('[data-key="'+key+'"]');
+            if(el) el.checked=v;
+          }
+          showToast('Autonomie-Level '+level+' angewendet','success');
+        }
+
+        // ─── Tool Routing (49 Tools × 3 Agents) ───
+        const _toolCategories={
+          'Kern-System':{shell:'Terminal',file:'Dateisystem',browser:'Browser',calculator:'Rechner',response:'Antwort',checklist:'Checkliste'},
+          'Gedaechtnis':{core_memory_read:'Kern lesen',core_memory_append:'Kern schreiben',core_memory_replace:'Kern ersetzen',archival_memory_search:'Archiv suchen',archival_memory_insert:'Archiv speichern',memory_save:'Merken',memory_recall:'Erinnern',memory_forget:'Vergessen'},
+          'Aufgaben':{task_manage:'Aufgaben',workflow_manage:'Workflows',skill_write:'Skills'},
+          'Delegation':{call_subordinate:'Delegation',delegate_parallel:'Parallel'},
+          'macOS-System':{applescript:'AppleScript',calendar:'Kalender',contacts:'Kontakte',screen_control:'Bildschirm',vision:'Vision',self_awareness:'Selbstpruefung',settings_read:'Einstellungen',secrets:'Geheimnisse'},
+          'Benachrichtigung':{notify:'Benachrichtigung',speak:'Sprache'},
+          'Kommunikation':{telegram_send:'Telegram',email:'E-Mail',whatsapp_api:'WhatsApp',slack_api:'Slack',twilio_sms:'SMS',phone_call:'Telefon'},
+          'Cloud-Dienste':{google_api:'Google',microsoft_api:'Microsoft',github_api:'GitHub',soundcloud_api:'SoundCloud',notion_api:'Notion',suno_api:'Suno',reddit_api:'Reddit',uber_api:'Uber',huggingface_api:'HuggingFace',lieferando_api:'Lieferando',document_search:'Dokumente'},
+          'Infrastruktur':{cloudflare_tunnel:'Cloudflare',elevenlabs:'ElevenLabs',claude_code:'Claude Code',mqtt:'MQTT',rss_reader:'RSS',webhook:'Webhook',caldav:'CalDAV'}
+        };
+        const _toolDefaults={shell:['general','coder'],file:['general','coder'],browser:['general','web'],calculator:['general','coder'],response:['general','coder','web'],checklist:['general','coder'],core_memory_read:['general','coder','web'],core_memory_append:['general'],core_memory_replace:['general'],archival_memory_search:['general','coder','web'],archival_memory_insert:['general'],memory_save:['general','coder','web'],memory_recall:['general','coder','web'],memory_forget:['general'],task_manage:['general'],workflow_manage:['general'],skill_write:['general','coder'],call_subordinate:['general'],delegate_parallel:['general'],applescript:['general'],calendar:['general'],contacts:['general'],screen_control:['general'],vision:['general'],self_awareness:['general'],settings_read:['general'],secrets:['general'],notify:['general','coder','web'],speak:['general'],telegram_send:['general'],email:['general'],whatsapp_api:['general'],slack_api:['general'],twilio_sms:['general'],phone_call:['general'],google_api:['general','web'],microsoft_api:['general'],github_api:['general','coder'],soundcloud_api:['general'],notion_api:['general'],suno_api:['general'],reddit_api:['general','web'],uber_api:['general'],huggingface_api:['general','coder'],lieferando_api:['general'],document_search:['general','coder'],cloudflare_tunnel:['general'],elevenlabs:['general'],claude_code:['coder'],mqtt:['general','coder'],rss_reader:['general','web'],webhook:['general','coder'],caldav:['general']};
+        let _toolRouting={};
+        async function loadToolRouting(){
+          const area=document.getElementById('toolRoutingArea');if(!area) return;
+          try{
+            const raw=_settingsCache['kobold.toolRouting'];
+            _toolRouting=raw?JSON.parse(typeof raw==='string'?raw:JSON.stringify(raw)):{};
+          }catch(e){_toolRouting={};}
+          let html='';
+          for(const [cat,tools] of Object.entries(_toolCategories)){
+            html+='<div style="margin-bottom:10px"><div style="font-weight:600;font-size:12px;color:var(--accent-primary);margin-bottom:4px;cursor:pointer" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display===\\'none\\'?\\'block\\':\\'none\\'">'+cat+' ('+Object.keys(tools).length+')</div><div>';
+            for(const [tool,label] of Object.entries(tools)){
+              const agents=_toolRouting[tool]||_toolDefaults[tool]||['general'];
+              html+='<div style="display:flex;align-items:center;gap:8px;padding:3px 0;border-bottom:1px solid rgba(255,255,255,.04)"><span style="width:110px;font-size:11px;color:var(--text-secondary)">'+label+'</span>';
+              for(const a of ['general','coder','web']){
+                const checked=agents.includes(a)?'checked':'';
+                html+='<label style="display:flex;align-items:center;gap:2px;font-size:10px;cursor:pointer"><input type="checkbox" '+checked+' onchange="toggleToolAgent(\\''+tool+'\\',\\''+a+'\\',this.checked)" style="width:13px;height:13px">'+a.charAt(0).toUpperCase()+'</label>';
+              }
+              html+='</div>';
+            }
+            html+='</div></div>';
+          }
+          area.innerHTML=html;
+        }
+        async function toggleToolAgent(tool,agent,enabled){
+          const current=_toolRouting[tool]||_toolDefaults[tool]||['general'];
+          if(enabled&&!current.includes(agent)) current.push(agent);
+          else if(!enabled) {const idx=current.indexOf(agent);if(idx>=0) current.splice(idx,1);}
+          _toolRouting[tool]=current;
+          await saveSetting('kobold.toolRouting',JSON.stringify(_toolRouting));
+        }
+
+        // ─── Vault / Passwort-Manager ───
+        const _vaultTags=['passwort','api-key','token','zugangsdaten','mail','sonstiges'];
+        const _vaultTagColors={'passwort':'#ef4444','api-key':'#f59e0b','token':'#10b981','zugangsdaten':'#6366f1','mail':'#3b82f6','sonstiges':'#6b7280'};
+        let _vaultEntries=[];
+        let _vaultFilterTag='';
+        let _vaultNewSelectedTags=[];
+        async function loadVault(){
+          // Auth-Token
+          const tokenEl=document.getElementById('vaultAuthToken');
+          if(tokenEl){
+            const t=_settingsCache['kobold.authToken']||'';
+            tokenEl.value=t?t.substring(0,4)+'****':'(nicht gesetzt)';
+            tokenEl.dataset.full=t;
+          }
+          // Einträge laden
+          try{
+            const raw=_settingsCache['kobold.vault.entries'];
+            _vaultEntries=raw?JSON.parse(raw):[];
+          }catch(e){_vaultEntries=[];}
+          // Migration: alte kobold.vault.* Keys importieren falls entries leer
+          if(!_vaultEntries.length){
+            const oldKeys=['email','phone','address','openaiKey','anthropicKey','groqKey','huggingfaceKey','replicateKey'];
+            for(const k of oldKeys){
+              const val=_settingsCache['kobold.vault.'+k];
+              if(val) _vaultEntries.push({id:Date.now()+Math.random(),name:k.replace(/([A-Z])/g,' $1').trim(),value:val,tags:[k.includes('Key')?'api-key':k.includes('mail')?'mail':'sonstiges']});
+            }
+            for(let i=1;i<=3;i++){
+              const lbl=_settingsCache['kobold.vault.custom'+i+'.label'];
+              const val=_settingsCache['kobold.vault.custom'+i+'.value'];
+              if(lbl&&val) _vaultEntries.push({id:Date.now()+Math.random()+i,name:lbl,value:val,tags:['sonstiges']});
+            }
+            if(_vaultEntries.length) await saveVaultEntries();
+          }
+          renderVaultFilterTags();
+          renderVaultNewTags();
+          renderVaultEntries();
+        }
+        async function saveVaultEntries(){
+          const json=JSON.stringify(_vaultEntries);
+          await saveSetting('kobold.vault.entries',json);
+          _settingsCache['kobold.vault.entries']=json;
+        }
+        function renderVaultFilterTags(){
+          const el=document.getElementById('vaultFilterTags');if(!el) return;
+          let html='<button class="pill'+(!_vaultFilterTag?' active':'')+'" onclick="_vaultFilterTag=\\'\\';renderVaultEntries()" style="font-size:10px;padding:2px 8px">Alle</button>';
+          _vaultTags.forEach(t=>{
+            html+='<button class="pill'+(_vaultFilterTag===t?' active':'')+'" onclick="_vaultFilterTag=\\''+t+'\\';renderVaultEntries()" style="font-size:10px;padding:2px 8px;border-color:'+(_vaultTagColors[t]||'#666')+'">'+t+'</button>';
+          });
+          el.innerHTML=html;
+        }
+        function renderVaultNewTags(){
+          const el=document.getElementById('vaultNewTags');if(!el) return;
+          let html='<span style="font-size:10px;color:var(--text-secondary);margin-right:4px">Tags:</span>';
+          _vaultTags.forEach(t=>{
+            const active=_vaultNewSelectedTags.includes(t);
+            html+='<button class="pill'+(active?' active':'')+'" onclick="toggleVaultNewTag(\\''+t+'\\')" style="font-size:10px;padding:2px 8px;'+(active?'background:'+(_vaultTagColors[t]||'#666')+';color:#fff;border-color:'+(_vaultTagColors[t]||'#666'):'')+'">'+t+'</button>';
+          });
+          el.innerHTML=html;
+        }
+        function toggleVaultNewTag(tag){
+          const idx=_vaultNewSelectedTags.indexOf(tag);
+          if(idx>=0) _vaultNewSelectedTags.splice(idx,1); else _vaultNewSelectedTags.push(tag);
+          renderVaultNewTags();
+        }
+        function renderVaultEntries(){
+          const el=document.getElementById('vaultEntries');if(!el) return;
+          const search=(document.getElementById('vaultSearch')||{}).value||'';
+          let filtered=_vaultEntries;
+          if(_vaultFilterTag) filtered=filtered.filter(e=>(e.tags||[]).includes(_vaultFilterTag));
+          if(search) filtered=filtered.filter(e=>e.name.toLowerCase().includes(search.toLowerCase()));
+          if(!filtered.length){el.innerHTML='<div style="text-align:center;padding:16px;color:var(--text-secondary);font-size:12px"><i data-lucide="lock" style="width:24px;height:24px;margin-bottom:4px"></i><br>'+(search||_vaultFilterTag?'Keine Treffer':'Noch keine Eintraege — erstelle deinen ersten unten')+'</div>';lucide.createIcons();return;}
+          let html='';
+          filtered.forEach((entry,i)=>{
+            const realIdx=_vaultEntries.indexOf(entry);
+            const tags=(entry.tags||[]).map(t=>'<span style="font-size:9px;padding:1px 6px;border-radius:8px;background:'+(_vaultTagColors[t]||'#444')+';color:#fff;margin-left:3px">'+esc(t)+'</span>').join('');
+            html+='<div class="settings-row" style="padding:6px 0"><div class="s-left" style="min-width:0"><span class="settings-label" style="font-size:12px">'+esc(entry.name)+tags+'</span></div>';
+            html+='<div style="display:flex;gap:3px;align-items:center">';
+            html+='<input type="password" class="form-input" style="width:140px;font-size:11px" id="ve_'+realIdx+'" value="'+esc(entry.value||'')+'">';
+            html+='<button class="btn btn-secondary btn-sm" onclick="toggleVaultVis('+realIdx+')" title="Anzeigen"><i data-lucide="eye"></i></button>';
+            html+='<button class="btn btn-secondary btn-sm" onclick="copyVaultEntry('+realIdx+')" title="Kopieren"><i data-lucide="copy"></i></button>';
+            html+='<button class="btn btn-secondary btn-sm" onclick="saveVaultEntry('+realIdx+')" title="Speichern"><i data-lucide="save"></i></button>';
+            html+='<button class="btn btn-secondary btn-sm" onclick="deleteVaultEntry('+realIdx+')" title="Loeschen" style="color:var(--red)"><i data-lucide="trash-2"></i></button>';
+            html+='</div></div>';
+          });
+          el.innerHTML=html;
+          lucide.createIcons();
+        }
+        function toggleVaultVis(idx){
+          const el=document.getElementById('ve_'+idx);if(!el) return;
+          el.type=el.type==='password'?'text':'password';
+          if(el.type==='text') setTimeout(()=>{el.type='password';},10000);
+        }
+        function copyVaultEntry(idx){
+          const entry=_vaultEntries[idx];if(!entry) return;
+          navigator.clipboard.writeText(entry.value||'');showToast(entry.name+' kopiert (30s)','success');
+          setTimeout(()=>{try{navigator.clipboard.writeText('');}catch(e){}},30000);
+        }
+        async function saveVaultEntry(idx){
+          const el=document.getElementById('ve_'+idx);if(!el) return;
+          _vaultEntries[idx].value=el.value;
+          await saveVaultEntries();
+          showToast('Gespeichert','success');
+        }
+        async function deleteVaultEntry(idx){
+          const entry=_vaultEntries[idx];if(!entry) return;
+          if(!confirm('Eintrag "'+entry.name+'" wirklich loeschen?')) return;
+          _vaultEntries.splice(idx,1);
+          await saveVaultEntries();
+          renderVaultEntries();
+          showToast('Geloescht','info');
+        }
+        async function addVaultEntry(){
+          const nameEl=document.getElementById('vaultNewName');
+          const valEl=document.getElementById('vaultNewValue');
+          if(!nameEl||!nameEl.value.trim()){showToast('Name eingeben','error');return;}
+          if(!valEl||!valEl.value.trim()){showToast('Wert eingeben','error');return;}
+          const tags=_vaultNewSelectedTags.length?[..._vaultNewSelectedTags]:['sonstiges'];
+          _vaultEntries.push({id:Date.now(),name:nameEl.value.trim(),value:valEl.value,tags:tags});
+          await saveVaultEntries();
+          nameEl.value='';valEl.value='';_vaultNewSelectedTags=[];
+          renderVaultNewTags();renderVaultEntries();
+          showToast('Eintrag gespeichert','success');
+        }
+        function toggleVaultTokenVisibility(){
+          const el=document.getElementById('vaultAuthToken');if(!el) return;
+          if(el.type==='password'){el.type='text';el.value=el.dataset.full||'';}
+          else{el.type='password';const t=el.dataset.full||'';el.value=t?t.substring(0,4)+'****':'(nicht gesetzt)';}
+        }
+        function copyVaultToken(){
+          const el=document.getElementById('vaultAuthToken');
+          navigator.clipboard.writeText(el.dataset.full||'');showToast('Token kopiert','success');
+        }
+
+        // ─── Heartbeat Live Log ───
+        async function refreshHeartbeatLog(){
+          const el=document.getElementById('heartbeatLog');if(!el) return;
+          try{
+            const data=await api('/trace');
+            const events=(data.timeline||data.events||[]).slice(-50).reverse();
+            if(!events.length){el.innerHTML='<span style="color:#666">Keine Events vorhanden</span>';return;}
+            let html='';
+            for(const ev of events){
+              const ts=ev.timestamp?new Date(ev.timestamp).toLocaleTimeString('de-DE'):'--:--';
+              const evType=(ev.event||ev.type||'info').toLowerCase();
+              let color='#888';
+              if(evType.includes('heartbeat')||evType.includes('start')) color='#00d26a';
+              else if(evType.includes('idle')||evType.includes('task')||evType.includes('tool')) color='#4da6ff';
+              else if(evType.includes('error')||evType.includes('fail')) color='#ff4444';
+              else if(evType.includes('health')||evType.includes('system')) color='#aaa';
+              else if(evType.includes('chat')||evType.includes('modell')) color='#c084fc';
+              else if(evType.includes('gedächtnis')||evType.includes('memory')) color='#fbbf24';
+              const detail=ev.detail||ev.message||ev.description||'';
+              html+='<div style="margin-bottom:2px"><span style="color:#666">'+ts+'</span> <span style="color:'+color+';font-weight:600">['+esc(ev.event||ev.type||'info')+']</span> '+esc(detail)+'</div>';
+            }
+            el.innerHTML=html;
+          }catch(e){el.innerHTML='<span style="color:#ff4444">Fehler: '+e.message+'</span>';}
+        }
+        let _heartbeatInterval=null;
+        function startHeartbeatPolling(){
+          refreshHeartbeatLog();
+          if(_heartbeatInterval) clearInterval(_heartbeatInterval);
+          _heartbeatInterval=setInterval(refreshHeartbeatLog,10000);
         }
 
         // Skills laden
@@ -4558,6 +5491,1300 @@ final class WebAppServer: @unchecked Sendable {
           t.textContent=msg;
           container.appendChild(t);
           setTimeout(()=>t.remove(),3000);
+        }
+
+        // ═══════════════════════════════════════════════
+        // ─── Teams Tab ───
+        // ═══════════════════════════════════════════════
+        let allTeams=[], expandedTeamId=null, teamRouting='sequential', teamChatMsgs={};
+
+        function toggleTeamForm(){ document.getElementById('teamForm').classList.toggle('show'); }
+        function pickRouting(el,mode){
+          teamRouting=mode;
+          document.querySelectorAll('#routingPresets .sched-pill').forEach(p=>p.classList.remove('active'));
+          el.classList.add('active');
+        }
+
+        async function loadTeams(){
+          try{
+            const r=await api('/teams');
+            allTeams=r.teams||r||[];
+            renderTeams();
+          }catch(e){ document.getElementById('teamsArea').innerHTML='<div class="empty-state"><i data-lucide="users"></i><p>Teams konnten nicht geladen werden</p></div>'; lucide.createIcons(); }
+        }
+
+        function renderTeams(){
+          const area=document.getElementById('teamsArea');
+          if(!allTeams.length){ area.innerHTML='<div class="empty-state"><i data-lucide="users"></i><p>Noch keine Teams erstellt</p></div>'; lucide.createIcons(); return; }
+          let html='';
+          allTeams.forEach(t=>{
+            const members=t.members||[];
+            const expanded=expandedTeamId===t.id;
+            const rc=t.routing||'sequential';
+            html+='<div class="team-card">';
+            html+='<div class="team-header">';
+            html+='<span class="team-name">'+esc(t.name||'Unbenannt')+'</span>';
+            html+='<span class="routing-badge '+rc+'">'+esc(rc)+'</span>';
+            html+='<span class="member-count">'+members.length+' Mitglieder</span>';
+            html+='<button class="btn btn-primary btn-sm" onclick="openTeamChat(\\''+t.id+'\\')" style="margin-left:auto"><i data-lucide="message-circle"></i>Chat</button>';
+            html+='<button class="btn btn-secondary btn-sm" onclick="toggleTeamExpand(\\''+t.id+'\\')"><i data-lucide="'+(expanded?'chevron-up':'chevron-down')+'"></i></button>';
+            html+='<button class="btn btn-danger btn-sm" onclick="deleteTeam(\\''+t.id+'\\')"><i data-lucide="trash-2"></i></button>';
+            html+='</div>';
+            if(t.description) html+='<div class="team-desc">'+esc(t.description)+'</div>';
+            html+='<div class="team-details'+(expanded?' open':'')+'" id="td-'+t.id+'">';
+            html+='<div class="section-divider"><i data-lucide="cpu"></i>Mitglieder</div>';
+            html+='<div class="member-list">';
+            members.forEach(m=>{
+              const initials=(m.name||'?').substring(0,2).toUpperCase();
+              const isEd=_editingMember&&_editingMember.teamId===t.id&&_editingMember.memberId===m.id;
+              if(isEd){
+                html+='<div class="member-item" style="flex-direction:column;align-items:stretch">';
+                html+='<div style="display:flex;gap:6px;margin-bottom:6px">';
+                html+='<input class="form-input" id="me-name-'+m.id+'" value="'+esc(m.name||'')+'" placeholder="Name" style="flex:1;margin:0;font-size:12px">';
+                html+='<input class="form-input" id="me-role-'+m.id+'" value="'+esc(m.role||'')+'" placeholder="Rolle" style="flex:1;margin:0;font-size:12px">';
+                html+='</div>';
+                html+='<textarea class="form-input" id="me-prompt-'+m.id+'" placeholder="System-Prompt (Agenten-Persoenlichkeit)..." style="font-size:11px;resize:vertical;min-height:50px;margin:0">'+esc(m.systemPrompt||'')+'</textarea>';
+                html+='<div style="display:flex;gap:6px;margin-top:6px;justify-content:flex-end">';
+                html+='<button class="btn btn-secondary btn-sm" onclick="cancelEditMember()">Abbrechen</button>';
+                html+='<button class="btn btn-primary btn-sm" onclick="saveTeamMember(\\''+t.id+'\\',\\''+m.id+'\\')"><i data-lucide="check"></i>Speichern</button>';
+                html+='</div></div>';
+              } else {
+                html+='<div class="member-item">';
+                html+='<div class="member-avatar">'+initials+'</div>';
+                html+='<div style="flex:1;min-width:0"><div style="display:flex;align-items:center;gap:6px"><span class="member-name" style="flex:none">'+esc(m.name||'')+'</span>';
+                if(m.role) html+='<span class="member-role">'+esc(m.role)+'</span>';
+                html+='</div>';
+                if(m.systemPrompt) html+='<div style="font-size:10px;color:var(--text-tertiary);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(m.systemPrompt)+'">'+esc(m.systemPrompt)+'</div>';
+                html+='</div>';
+                html+='<button class="btn btn-secondary btn-sm" onclick="editTeamMember(\\''+t.id+'\\',\\''+m.id+'\\')"><i data-lucide="pencil"></i></button>';
+                html+='<button class="btn btn-danger btn-sm" onclick="removeTeamMember(\\''+t.id+'\\',\\''+m.id+'\\')"><i data-lucide="x"></i></button>';
+                html+='</div>';
+              }
+            });
+            html+='</div>';
+            html+='<div style="margin-top:10px">';
+            html+='<div style="display:flex;gap:6px;margin-bottom:6px;align-items:flex-end">';
+            html+='<input class="form-input" id="mn-'+t.id+'" placeholder="Name" style="flex:1;margin:0;font-size:12px">';
+            html+='<input class="form-input" id="mr-'+t.id+'" placeholder="Rolle" style="flex:1;margin:0;font-size:12px">';
+            html+='</div>';
+            html+='<textarea class="form-input" id="mp-'+t.id+'" placeholder="System-Prompt (optional)" style="font-size:11px;resize:vertical;min-height:40px;margin:0 0 6px 0"></textarea>';
+            html+='<button class="btn btn-primary btn-sm" onclick="addTeamMember(\\''+t.id+'\\')"><i data-lucide="plus"></i>Hinzufuegen</button>';
+            html+='</div>';
+            html+='<div class="section-divider" style="margin-top:16px"><i data-lucide="message-square"></i>Team-Diskussion</div>';
+            html+='<div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap;align-items:center">';
+            html+='<select class="form-select" id="tcRounds-'+t.id+'" style="width:80px;font-size:11px"><option value="1">1 Runde</option><option value="2">2 Runden</option><option value="3" selected>3 Runden</option><option value="5">5 Runden</option></select>';
+            html+='<select class="form-select" id="tcOutput-'+t.id+'" style="width:100px;font-size:11px"><option value="summary">Zusammenfassung</option><option value="code">Code</option><option value="decision">Entscheidung</option><option value="full">Volle Diskussion</option></select>';
+            html+='</div>';
+            html+='<div class="team-chat-area">';
+            html+='<div class="team-chat-messages" id="tcm-'+t.id+'" style="max-height:400px;overflow-y:auto">';
+            const msgs=teamChatMsgs[t.id]||[];
+            msgs.forEach(m=>{
+              const isRound=m.agent==='---';
+              if(isRound){html+='<div style="text-align:center;font-size:10px;color:var(--text-tertiary);margin:8px 0;border-top:1px solid rgba(255,255,255,.06);padding-top:6px">'+esc(m.text)+'</div>';}
+              else{
+                const isSelf=m.agent==='Du';
+                const color=isSelf?'var(--accent-primary)':teamMemberColor(m.agent,t.members||[]);
+                const dots=m._typing?'<div class="team-typing-dots"><span></span><span></span><span></span></div>':'<div style="font-size:12px;white-space:pre-wrap">'+esc(m.text||'')+'</div>';
+                html+='<div class="team-chat-msg '+(isSelf?'user':'agent')+(m._typing?' typing':'')+'" style="border-left:3px solid '+color+';padding-left:8px;margin-bottom:6px"><div style="font-size:11px;font-weight:600;color:'+color+'">'+esc(m.agent)+(m.role?' <span style="font-weight:400;opacity:.6">('+esc(m.role)+')</span>':'')+'</div>'+dots+'</div>';
+              }
+            });
+            if(!msgs.length) html+='<div style="text-align:center;font-size:11px;color:var(--text-tertiary);padding:16px">Stelle dem Team eine Aufgabe</div>';
+            html+='</div>';
+            html+='<div class="team-chat-composer">';
+            html+='<input id="tci-'+t.id+'" placeholder="Aufgabe fuer das Team..." onkeydown="if(event.key===\\'Enter\\')sendTeamChat(\\''+t.id+'\\')">';
+            html+='<button class="btn btn-primary btn-sm" onclick="sendTeamChat(\\''+t.id+'\\')"><i data-lucide="send"></i></button>';
+            html+='</div></div>';
+            html+='</div></div>';
+          });
+          area.innerHTML=html;
+          lucide.createIcons();
+          // Modal auch aktualisieren wenn offen
+          if(_tcmTeamId) renderModalChat();
+        }
+
+        // ─── Team Chat View (Content-Area) ───
+        let _tcmTeamId=null;
+
+        function openTeamChat(teamId){
+          _tcmTeamId=teamId;
+          const team=allTeams.find(t=>t.id===teamId);
+          document.getElementById('tcmTitle').textContent=team?team.name:'Team Chat';
+          // Teams-Liste ausblenden, Chat-View einblenden (bleibt im Tab → Sidebar sichtbar)
+          const tab=document.getElementById('tab-teams');
+          const ph=tab.querySelector('.page-header');if(ph)ph.style.display='none';
+          const pb=tab.querySelector('.page-body');if(pb)pb.style.display='none';
+          const cv=document.getElementById('teamChatView');if(cv)cv.style.display='flex';
+          renderModalChat();
+          lucide.createIcons();
+          setTimeout(()=>{const inp=document.getElementById('tcmInput');if(inp)inp.focus();},100);
+        }
+
+        function closeTeamChat(){
+          const tab=document.getElementById('tab-teams');
+          const ph=tab.querySelector('.page-header');if(ph)ph.style.display='';
+          const pb=tab.querySelector('.page-body');if(pb)pb.style.display='';
+          const cv=document.getElementById('teamChatView');if(cv)cv.style.display='none';
+          _tcmTeamId=null;
+        }
+
+        function renderModalChat(){
+          if(!_tcmTeamId) return;
+          const team=allTeams.find(t=>t.id===_tcmTeamId);
+          const members=team?team.members||[]:[];
+          const routing=team?team.routing||'sequential':'sequential';
+          // Member-Info-Bar mit Avataren
+          const infoEl=document.getElementById('tcmInfo');
+          if(infoEl){
+            let ih='<span style="color:var(--text-tertiary)">'+members.length+' Mitglieder</span>';
+            ih+='<span class="routing-badge '+esc(routing)+'" style="font-size:10px;padding:2px 8px">'+esc(routing)+'</span>';
+            members.forEach(function(mm){
+              const c=teamMemberColor(mm.name,members);
+              ih+='<span class="tcm-member-pill"><span class="tcm-avatar" style="background:'+c+'">'+esc((mm.name||'?').charAt(0).toUpperCase())+'</span>'+esc(mm.name)+'</span>';
+            });
+            infoEl.innerHTML=ih;
+          }
+          // Messages mit alternierenden Seiten
+          const msgs=teamChatMsgs[_tcmTeamId]||[];
+          const body=document.getElementById('tcmBody');
+          let html='';
+          if(!msgs.length){
+            html='<div style="flex:1;display:flex;align-items:center;justify-content:center;color:var(--text-tertiary);font-size:14px">Stelle dem Team eine Aufgabe</div>';
+          } else {
+            msgs.forEach(function(m){
+              if(m.agent==='---'){html+='<div class="tcm-round">'+esc(m.text)+'</div>';return;}
+              const isSelf=m.agent==='Du';
+              const isSummary=m.agent==='Zusammenfassung';
+              const color=isSelf?'var(--accent-primary)':isSummary?'var(--gold)':teamMemberColor(m.agent,members);
+              // Seite: User=rechts, Summary=center, Agents=alternierend nach Member-Index
+              let cls;
+              if(isSelf) cls='user';
+              else if(isSummary) cls='summary';
+              else {
+                const mIdx=members.findIndex(function(mm){return mm.name===m.agent;});
+                cls=(mIdx%2===0)?'agent-left':'agent-right';
+              }
+              const initial=(m.agent||'?').charAt(0).toUpperCase();
+              const dots=m._typing?'<div class="team-typing-dots"><span></span><span></span><span></span></div>':'<div style="white-space:pre-wrap">'+esc(m.text||'')+'</div>';
+              html+='<div class="tcm-msg '+cls+'">';
+              html+='<div class="tcm-sender"><span style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:'+color+';font-size:9px;font-weight:700;color:#fff;margin-right:6px;vertical-align:middle">'+esc(initial)+'</span>';
+              html+='<span style="color:'+color+'">'+esc(m.agent)+'</span>'+(m.role?' <span class="tcm-role">('+esc(m.role)+')</span>':'')+'</div>';
+              html+=dots+'</div>';
+            });
+          }
+          body.innerHTML=html;
+          body.scrollTop=body.scrollHeight;
+        }
+
+        async function sendModalTeamChat(){
+          if(!_tcmTeamId) return;
+          const inp=document.getElementById('tcmInput');
+          const msg=(inp?inp.value:'').trim();
+          if(!msg) return;
+          if(inp) inp.value='';
+          sendTeamChat(_tcmTeamId,msg);
+        }
+
+        async function createTeam(){
+          const name=document.getElementById('teamName').value.trim();
+          if(!name){showToast('Name eingeben','error');return}
+          const desc=document.getElementById('teamDesc').value.trim();
+          try{
+            await api('/teams',{method:'POST',headers:{'Content-Type':'application/json','Authorization':getAuthHeader()},body:JSON.stringify({action:'create',data:{name:name,description:desc,routing:teamRouting,members:[]}})});
+            document.getElementById('teamName').value='';document.getElementById('teamDesc').value='';
+            toggleTeamForm();showToast('Team erstellt','success');loadTeams();
+          }catch(e){showToast('Fehler: '+e.message,'error')}
+        }
+
+        async function deleteTeam(id){
+          if(!confirm('Team wirklich löschen?'))return;
+          try{await api('/teams',{method:'POST',headers:{'Content-Type':'application/json','Authorization':getAuthHeader()},body:JSON.stringify({action:'delete',id:id})});showToast('Team gelöscht','success');loadTeams();}catch(e){showToast('Fehler','error')}
+        }
+
+        function toggleTeamExpand(id){ expandedTeamId=expandedTeamId===id?null:id; renderTeams(); }
+
+        let _editingMember=null;
+
+        async function addTeamMember(teamId){
+          const name=document.getElementById('mn-'+teamId).value.trim();
+          const role=document.getElementById('mr-'+teamId).value.trim();
+          const prompt=(document.getElementById('mp-'+teamId)||{}).value||'';
+          if(!name){showToast('Name eingeben','error');return}
+          const team=allTeams.find(t=>t.id===teamId);
+          if(!team)return;
+          const members=[...(team.members||[]),{id:crypto.randomUUID?crypto.randomUUID():Date.now().toString(),name:name,role:role,systemPrompt:prompt.trim()}];
+          try{await api('/teams',{method:'POST',headers:{'Content-Type':'application/json','Authorization':getAuthHeader()},body:JSON.stringify({action:'update',id:teamId,data:{members:members}})});showToast('Mitglied hinzugefuegt','success');loadTeams();}catch(e){showToast('Fehler','error')}
+        }
+
+        function editTeamMember(teamId,memberId){
+          _editingMember={teamId:teamId,memberId:memberId};
+          renderTeams();
+          setTimeout(function(){const el=document.getElementById('me-name-'+memberId);if(el)el.focus();},50);
+        }
+
+        function cancelEditMember(){
+          _editingMember=null;
+          renderTeams();
+        }
+
+        async function saveTeamMember(teamId,memberId){
+          const name=(document.getElementById('me-name-'+memberId)||{}).value||'';
+          const role=(document.getElementById('me-role-'+memberId)||{}).value||'';
+          const prompt=(document.getElementById('me-prompt-'+memberId)||{}).value||'';
+          if(!name.trim()){showToast('Name eingeben','error');return;}
+          const team=allTeams.find(t=>t.id===teamId);
+          if(!team)return;
+          const members=(team.members||[]).map(m=>{
+            if(m.id===memberId) return {id:m.id,name:name.trim(),role:role.trim(),systemPrompt:prompt.trim()};
+            return m;
+          });
+          try{
+            await api('/teams',{method:'POST',headers:{'Content-Type':'application/json','Authorization':getAuthHeader()},body:JSON.stringify({action:'update',id:teamId,data:{members:members}})});
+            _editingMember=null;showToast('Mitglied aktualisiert','success');loadTeams();
+          }catch(e){showToast('Fehler','error')}
+        }
+
+        async function removeTeamMember(teamId,memberId){
+          const team=allTeams.find(t=>t.id===teamId);
+          if(!team)return;
+          const members=(team.members||[]).filter(m=>m.id!==memberId);
+          try{await api('/teams',{method:'POST',headers:{'Content-Type':'application/json','Authorization':getAuthHeader()},body:JSON.stringify({action:'update',id:teamId,data:{members:members}})});loadTeams();}catch(e){showToast('Fehler','error')}
+        }
+
+        function teamMemberColor(name,members){
+          const colors=['#00d26a','#4da6ff','#ffb347','#ff6b9d','#c792ea','#89ddff','#f78c6c','#82aaff'];
+          const idx=members.findIndex(m=>m.name===name);
+          return colors[idx>=0?idx%colors.length:0];
+        }
+
+        async function sendTeamChat(teamId,msgOverride){
+          const inp=document.getElementById('tci-'+teamId);
+          const msg=msgOverride||(inp?inp.value.trim():'');
+          if(!msg)return;
+          if(inp&&!msgOverride) inp.value='';
+          if(!teamChatMsgs[teamId])teamChatMsgs[teamId]=[];
+          teamChatMsgs[teamId].push({agent:'Du',text:msg});
+          renderTeams();if(_tcmTeamId===teamId) renderModalChat();
+          const team=allTeams.find(t=>t.id===teamId);
+          if(!team||!team.members||!team.members.length){
+            teamChatMsgs[teamId].push({agent:'System',text:'Team hat keine Mitglieder. Fuege zuerst Mitglieder hinzu.'});
+            renderTeams();if(_tcmTeamId===teamId) renderModalChat();return;
+          }
+          // Runden/Output aus Modal oder Inline lesen
+          const isModal=_tcmTeamId===teamId;
+          const roundsEl=document.getElementById(isModal?'tcmRounds':'tcRounds-'+teamId);
+          const outputEl=document.getElementById(isModal?'tcmOutput':'tcOutput-'+teamId);
+          const maxRounds=parseInt(roundsEl?roundsEl.value:'3');
+          const outputType=outputEl?outputEl.value:'summary';
+          // SSE-Streaming: Jede Agent-Nachricht wird live angezeigt
+          try{
+            const ah=getAuthHeader();
+            const headers={'Content-Type':'application/json'};
+            if(ah) headers['Authorization']=ah;
+            const resp=await fetch(API+'/teams/chat',{method:'POST',headers:headers,body:JSON.stringify({team_id:teamId,message:msg,max_rounds:maxRounds,output_type:outputType})});
+            if(!resp.ok){teamChatMsgs[teamId].push({agent:'System',text:'HTTP '+resp.status});renderTeams();return;}
+            const reader=resp.body.getReader();
+            const decoder=new TextDecoder();
+            let buf='';
+            while(true){
+              const {done,value}=await reader.read();
+              if(done) break;
+              buf+=decoder.decode(value,{stream:true});
+              // SSE Events parsen
+              const parts=buf.split('\\n\\n');
+              buf=parts.pop()||'';
+              for(const part of parts){
+                let evType='message',evData='';
+                for(const line of part.split('\\n')){
+                  if(line.startsWith('event: ')) evType=line.slice(7);
+                  else if(line.startsWith('data: ')) evData=line.slice(6);
+                }
+                if(!evData) continue;
+                try{
+                  const d=JSON.parse(evData);
+                  if(evType==='round'){
+                    teamChatMsgs[teamId].push({agent:'---',text:d.marker||('Runde '+d.round)});
+                  }else if(evType==='typing'){
+                    // Typing-Indikator: temporaer anzeigen
+                    teamChatMsgs[teamId].push({agent:d.agent||'Agent',role:d.role||'',text:'...',_typing:true});
+                  }else if(evType==='message'){
+                    // Letzten Typing-Indikator entfernen
+                    const last=teamChatMsgs[teamId];
+                    if(last.length&&last[last.length-1]._typing) last.pop();
+                    teamChatMsgs[teamId].push({agent:d.agent||'Agent',role:d.role||'',text:d.text||''});
+                  }else if(evType==='error'){
+                    const last=teamChatMsgs[teamId];
+                    if(last.length&&last[last.length-1]._typing) last.pop();
+                    teamChatMsgs[teamId].push({agent:d.agent||'System',text:d.error||'Agent-Fehler'});
+                  }else if(evType==='summary'){
+                    const last=teamChatMsgs[teamId];
+                    if(last.length&&last[last.length-1]._typing) last.pop();
+                    teamChatMsgs[teamId].push({agent:'Zusammenfassung',role:'system',text:d.text||''});
+                  }
+                  renderTeams();if(_tcmTeamId===teamId) renderModalChat();
+                  const chatEl=document.getElementById('tcm-'+teamId);
+                  if(chatEl) chatEl.scrollTop=chatEl.scrollHeight;
+                }catch(pe){}
+              }
+            }
+          }catch(e){
+            teamChatMsgs[teamId].push({agent:'System',text:'Fehler: '+e.message});
+            renderTeams();if(_tcmTeamId===teamId) renderModalChat();
+          }
+        }
+
+        // ═══════════════════════════════════════════════
+        // ─── CRM / Kontakte Tab ───
+        // ═══════════════════════════════════════════════
+        let crmContacts=[],crmCompanies=[],crmDeals=[],crmActivities=[],crmStages=[];
+        let crmContactFilter='all',selectedCrmContactId=null,currentCrmTab='contacts';
+
+        function switchCRMTab(name,el){
+          document.querySelectorAll('#crmTabs .settings-tab').forEach(t=>t.classList.remove('active'));
+          ['contacts','companies','deals','activities'].forEach(n=>{const p=document.getElementById('crm-'+n);if(p)p.classList.remove('active')});
+          const panel=document.getElementById('crm-'+name);
+          if(panel)panel.classList.add('active');
+          if(el)el.classList.add('active');
+          currentCrmTab=name;
+          if(name==='deals')renderDeals();
+          if(name==='activities')renderActivities();
+        }
+
+        async function loadCRM(){
+          try{
+            const [contacts,companies,deals,activities,stages]=await Promise.all([
+              api('/contacts').catch(()=>({contacts:[]})),
+              api('/companies').catch(()=>({companies:[]})),
+              api('/deals').catch(()=>({deals:[]})),
+              api('/activities').catch(()=>({activities:[]})),
+              api('/pipeline-stages').catch(()=>({stages:[{id:'lead',name:'Lead',color:'#60a5fa'},{id:'qualified',name:'Qualifiziert',color:'#fbbf24'},{id:'proposal',name:'Angebot',color:'#f97316'},{id:'won',name:'Gewonnen',color:'#4ade80'},{id:'lost',name:'Verloren',color:'#f87171'}]}))
+            ]);
+            crmContacts=contacts.contacts||contacts||[];
+            crmCompanies=companies.companies||companies||[];
+            crmDeals=deals.deals||deals||[];
+            crmActivities=activities.activities||activities||[];
+            crmStages=stages.stages||stages||[{id:'lead',name:'Lead',color:'#60a5fa'},{id:'qualified',name:'Qualifiziert',color:'#fbbf24'},{id:'proposal',name:'Angebot',color:'#f97316'},{id:'won',name:'Gewonnen',color:'#4ade80'},{id:'lost',name:'Verloren',color:'#f87171'}];
+            const st=document.getElementById('crmStats');
+            if(st)st.textContent=crmContacts.length+' Kontakte · '+crmCompanies.length+' Firmen · '+crmDeals.length+' Deals';
+            populateDealSelectors();
+            renderContacts();
+            renderCompanies();
+            renderDeals();
+            renderActivities();
+          }catch(e){showToast('CRM laden fehlgeschlagen','error')}
+        }
+
+        function populateDealSelectors(){
+          const cs=document.getElementById('dealContact');
+          const ss=document.getElementById('dealStage');
+          const ac=document.getElementById('actContact');
+          if(cs){cs.innerHTML='<option value="">Kontakt wählen</option>';crmContacts.forEach(c=>{cs.innerHTML+='<option value="'+c.id+'">'+esc((c.firstName||'')+' '+(c.lastName||''))+'</option>'});}
+          if(ss){ss.innerHTML='<option value="">Stage wählen</option>';crmStages.forEach(s=>{ss.innerHTML+='<option value="'+s.id+'">'+esc(s.name)+'</option>'});}
+          if(ac){ac.innerHTML='<option value="">Kontakt wählen</option>';crmContacts.forEach(c=>{ac.innerHTML+='<option value="'+c.id+'">'+esc((c.firstName||'')+' '+(c.lastName||''))+'</option>'});}
+        }
+
+        function setCrmFilter(status,el){
+          crmContactFilter=status;
+          document.querySelectorAll('#crmStatusFilter .pill').forEach(p=>p.classList.remove('active'));
+          el.classList.add('active');
+          renderContacts();
+        }
+        function filterCrmContacts(){renderContacts()}
+
+        function toggleMobileContactList(){
+          const list=document.getElementById('crmContactList');
+          if(list) list.classList.toggle('mobile-open');
+        }
+        // Mobile Toggle sichtbar machen
+        function updateCrmMobileToggle(){
+          const btn=document.getElementById('crmMobileToggle');
+          if(btn) btn.style.display=window.innerWidth<=768?'':'none';
+        }
+        window.addEventListener('resize',updateCrmMobileToggle);
+
+        function renderContacts(){
+          const search=(document.getElementById('crmContactSearch')||{}).value||'';
+          const area=document.getElementById('crmContactList');
+          let filtered=crmContacts;
+          if(crmContactFilter!=='all')filtered=filtered.filter(c=>c.status===crmContactFilter);
+          if(search)filtered=filtered.filter(c=>((c.firstName||'')+' '+(c.lastName||'')+' '+(c.email||'')+' '+(c.company||'')).toLowerCase().includes(search.toLowerCase()));
+          if(!filtered.length){area.innerHTML='<div class="empty-state"><i data-lucide="user"></i><p>Keine Kontakte gefunden</p></div>';lucide.createIcons();return}
+          let html='';
+          filtered.forEach(c=>{
+            const name=(c.firstName||'')+' '+(c.lastName||'');
+            const initials=((c.firstName||'?')[0]+(c.lastName||'?')[0]).toUpperCase();
+            const sel=selectedCrmContactId===c.id?' selected':'';
+            const st=c.status||'active';
+            html+='<div class="contact-card'+sel+'" onclick="selectContact(\\''+c.id+'\\')">';
+            html+='<div class="contact-avatar '+st+'">'+initials+'</div>';
+            html+='<div class="contact-info"><div class="c-name">'+esc(name)+'</div>';
+            if(c.company)html+='<div class="c-company">'+esc(c.company)+'</div>';
+            html+='</div>';
+            html+='<span class="contact-status '+st+'">'+esc(st)+'</span>';
+            html+='</div>';
+          });
+          area.innerHTML=html;
+          lucide.createIcons();
+        }
+
+        async function selectContact(id){
+          selectedCrmContactId=id;
+          // Mobile: Liste zuklappen nach Auswahl
+          const list=document.getElementById('crmContactList');
+          if(list) list.classList.remove('mobile-open');
+          renderContacts();
+          const detail=document.getElementById('crmContactDetail');
+          const c=crmContacts.find(x=>x.id===id);
+          if(!c){detail.innerHTML='<div class="empty-state"><p>Nicht gefunden</p></div>';return}
+          const name=(c.firstName||'')+' '+(c.lastName||'');
+          const st=c.status||'active';
+          let html='<div class="contact-detail">';
+          html+='<div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">';
+          html+='<div class="contact-avatar '+st+'" style="width:48px;height:48px;font-size:16px">'+((c.firstName||'?')[0]+(c.lastName||'?')[0]).toUpperCase()+'</div>';
+          html+='<div><div class="cd-name">'+esc(name)+'</div>';
+          if(c.jobTitle)html+='<div class="cd-title">'+esc(c.jobTitle);
+          if(c.company)html+=' · '+esc(c.company);
+          html+='</div>';
+          html+='</div>';
+          html+='<span class="contact-status '+st+'" style="margin-left:auto">'+esc(st)+'</span>';
+          html+='<button class="btn btn-danger btn-sm" style="margin-left:8px" onclick="deleteContact(\\''+c.id+'\\')"><i data-lucide="trash-2"></i></button>';
+          html+='</div>';
+          html+='<div class="cd-grid">';
+          const email=Array.isArray(c.email)?c.email.join(', '):(c.email||'—');
+          const phone=Array.isArray(c.phone)?c.phone.join(', '):(c.phone||'—');
+          html+='<div><div class="cd-field-label">E-Mail</div><div class="cd-field-value">'+esc(email)+'</div></div>';
+          html+='<div><div class="cd-field-label">Telefon</div><div class="cd-field-value">'+esc(phone)+'</div></div>';
+          html+='<div><div class="cd-field-label">Firma</div><div class="cd-field-value">'+esc(c.company||'—')+'</div></div>';
+          html+='<div><div class="cd-field-label">Position</div><div class="cd-field-value">'+esc(c.jobTitle||'—')+'</div></div>';
+          html+='</div>';
+          if(c.tags&&c.tags.length){html+='<div style="margin-top:12px;display:flex;gap:4px;flex-wrap:wrap">';c.tags.forEach(tag=>{html+='<span class="tag-pill">'+esc(tag)+'</span>'});html+='</div>'}
+          if(c.notes)html+='<div style="margin-top:12px;font-size:13px;color:var(--text-secondary);line-height:1.5">'+esc(c.notes)+'</div>';
+          html+='</div>';
+          detail.innerHTML=html;
+          lucide.createIcons();
+        }
+
+        function toggleCrmContactForm(){document.getElementById('crmContactForm').classList.toggle('show')}
+        function toggleCrmCompanyForm(){document.getElementById('crmCompanyForm').classList.toggle('show')}
+        function toggleCrmDealForm(){document.getElementById('crmDealForm').classList.toggle('show')}
+        function toggleCrmActivityForm(){document.getElementById('crmActivityForm').classList.toggle('show')}
+
+        async function createContact(){
+          const data={firstName:document.getElementById('crmFirstName').value.trim(),lastName:document.getElementById('crmLastName').value.trim(),email:document.getElementById('crmEmail').value.trim(),phone:document.getElementById('crmPhone').value.trim(),company:document.getElementById('crmCompany').value.trim(),jobTitle:document.getElementById('crmJobTitle').value.trim(),status:document.getElementById('crmStatus').value,tags:(document.getElementById('crmTags').value||'').split(',').map(t=>t.trim()).filter(Boolean),notes:document.getElementById('crmNotes').value.trim()};
+          if(!data.firstName){showToast('Vorname eingeben','error');return}
+          try{await api('/contacts',{method:'POST',headers:{'Content-Type':'application/json','Authorization':getAuthHeader()},body:JSON.stringify({action:'create',data:data})});
+          ['crmFirstName','crmLastName','crmEmail','crmPhone','crmCompany','crmJobTitle','crmTags','crmNotes'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=''});
+          toggleCrmContactForm();showToast('Kontakt erstellt','success');loadCRM();}catch(e){showToast('Fehler: '+e.message,'error')}
+        }
+
+        async function deleteContact(id){
+          if(!confirm('Kontakt löschen?'))return;
+          try{await api('/contacts',{method:'POST',headers:{'Content-Type':'application/json','Authorization':getAuthHeader()},body:JSON.stringify({action:'delete',id:id})});
+          if(selectedCrmContactId===id){selectedCrmContactId=null;document.getElementById('crmContactDetail').innerHTML='<div class="empty-state"><i data-lucide="user"></i><p>Kontakt auswählen</p></div>'}
+          showToast('Kontakt gelöscht','success');loadCRM();}catch(e){showToast('Fehler','error')}
+        }
+
+        function renderCompanies(){
+          const area=document.getElementById('crmCompanyGrid');
+          if(!crmCompanies.length){area.innerHTML='<div class="empty-state"><i data-lucide="building-2"></i><p>Noch keine Firmen</p></div>';lucide.createIcons();return}
+          let html='';
+          crmCompanies.forEach(c=>{
+            html+='<div class="company-card">';
+            html+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><i data-lucide="building-2" style="width:16px;height:16px;color:var(--accent)"></i><span class="company-name">'+esc(c.name||'')+'</span><button class="btn btn-danger btn-sm" style="margin-left:auto" onclick="deleteCompany(\\''+c.id+'\\')"><i data-lucide="x"></i></button></div>';
+            if(c.industry)html+='<div class="company-industry">'+esc(c.industry)+'</div>';
+            if(c.website)html+='<div class="company-website"><i data-lucide="globe" style="width:11px;height:11px"></i>'+esc(c.website)+'</div>';
+            if(c.size)html+='<div style="font-size:10px;color:var(--text-tertiary);margin-top:4px">'+esc(c.size)+' Mitarbeiter</div>';
+            html+='</div>';
+          });
+          area.innerHTML=html;
+          lucide.createIcons();
+        }
+
+        async function createCompany(){
+          const data={name:document.getElementById('compName').value.trim(),industry:document.getElementById('compIndustry').value.trim(),website:document.getElementById('compWebsite').value.trim(),size:document.getElementById('compSize').value};
+          if(!data.name){showToast('Name eingeben','error');return}
+          try{await api('/companies',{method:'POST',headers:{'Content-Type':'application/json','Authorization':getAuthHeader()},body:JSON.stringify({action:'create',data:data})});
+          toggleCrmCompanyForm();showToast('Firma erstellt','success');loadCRM();}catch(e){showToast('Fehler','error')}
+        }
+
+        async function deleteCompany(id){
+          if(!confirm('Firma löschen?'))return;
+          try{await api('/companies',{method:'POST',headers:{'Content-Type':'application/json','Authorization':getAuthHeader()},body:JSON.stringify({action:'delete',id:id})});showToast('Firma gelöscht','success');loadCRM();}catch(e){showToast('Fehler','error')}
+        }
+
+        function renderDeals(){
+          const area=document.getElementById('crmKanban');
+          if(!crmStages.length){area.innerHTML='<div class="empty-state"><p>Keine Pipeline-Stages</p></div>';return}
+          let html='';
+          crmStages.forEach(stage=>{
+            const stageDeals=crmDeals.filter(d=>(d.stage||'lead')===stage.id);
+            html+='<div class="kanban-column">';
+            html+='<div class="kanban-col-header"><span class="stage-dot" style="background:'+stage.color+'"></span>'+esc(stage.name)+'<span class="stage-count">'+stageDeals.length+'</span></div>';
+            stageDeals.forEach(d=>{
+              const contact=crmContacts.find(c=>c.id===d.contactId);
+              const contactName=contact?((contact.firstName||'')+' '+(contact.lastName||'')).trim():'';
+              html+='<div class="kanban-card">';
+              html+='<div class="deal-title">'+esc(d.title||'')+'</div>';
+              if(d.value)html+='<div class="deal-value">'+Number(d.value).toLocaleString('de-DE')+'€</div>';
+              if(contactName)html+='<div class="deal-contact">'+esc(contactName)+'</div>';
+              if(d.probability!=null)html+='<div style="font-size:10px;color:var(--text-tertiary);margin-top:2px">'+d.probability+'% Wahrsch.</div>';
+              html+='<div class="deal-actions">';
+              html+='<select class="form-select" style="font-size:10px;padding:2px 6px" onchange="moveDeal(\\''+d.id+'\\',this.value)">';
+              crmStages.forEach(s=>{html+='<option value="'+s.id+'"'+(s.id===(d.stage||'lead')?' selected':'')+'>'+esc(s.name)+'</option>'});
+              html+='</select>';
+              html+='<button class="btn btn-danger btn-sm" onclick="deleteDeal(\\''+d.id+'\\')"><i data-lucide="x"></i></button>';
+              html+='</div></div>';
+            });
+            html+='</div>';
+          });
+          area.innerHTML=html;
+          lucide.createIcons();
+        }
+
+        async function createDeal(){
+          const data={title:document.getElementById('dealTitle').value.trim(),value:parseFloat(document.getElementById('dealValue').value)||0,probability:parseInt(document.getElementById('dealProbability').value)||50,contactId:document.getElementById('dealContact').value,stage:document.getElementById('dealStage').value||'lead'};
+          if(!data.title){showToast('Titel eingeben','error');return}
+          try{await api('/deals',{method:'POST',headers:{'Content-Type':'application/json','Authorization':getAuthHeader()},body:JSON.stringify({action:'create',data:data})});
+          toggleCrmDealForm();showToast('Deal erstellt','success');loadCRM();}catch(e){showToast('Fehler','error')}
+        }
+
+        async function deleteDeal(id){
+          try{await api('/deals',{method:'POST',headers:{'Content-Type':'application/json','Authorization':getAuthHeader()},body:JSON.stringify({action:'delete',id:id})});showToast('Deal gelöscht','success');loadCRM();}catch(e){showToast('Fehler','error')}
+        }
+
+        async function moveDeal(id,newStage){
+          try{await api('/deals',{method:'POST',headers:{'Content-Type':'application/json','Authorization':getAuthHeader()},body:JSON.stringify({action:'update',id:id,data:{stage:newStage}})});loadCRM();}catch(e){showToast('Fehler','error')}
+        }
+
+        function renderActivities(){
+          const area=document.getElementById('crmActivityList');
+          if(!crmActivities.length){area.innerHTML='<div class="empty-state"><i data-lucide="activity"></i><p>Keine Aktivitäten</p></div>';lucide.createIcons();return}
+          const iconMap={note:'file-text',call:'phone',email:'mail',meeting:'users'};
+          let html='';
+          const sorted=[...crmActivities].sort((a,b)=>new Date(b.timestamp||b.createdAt||0)-new Date(a.timestamp||a.createdAt||0));
+          sorted.forEach(a=>{
+            const type=a.type||'note';
+            const contact=crmContacts.find(c=>c.id===a.contactId);
+            const contactName=contact?((contact.firstName||'')+' '+(contact.lastName||'')).trim():'';
+            const date=a.timestamp?new Date(a.timestamp).toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'}):'';
+            html+='<div class="activity-item">';
+            html+='<div class="activity-icon '+type+'"><i data-lucide="'+(iconMap[type]||'file-text')+'"></i></div>';
+            html+='<div class="activity-body">';
+            html+='<div class="a-title">'+esc(a.title||a.description||type)+'</div>';
+            if(a.description&&a.title)html+='<div class="a-desc">'+esc(a.description)+'</div>';
+            html+='<div class="a-meta">';
+            if(contactName)html+='<span>'+esc(contactName)+'</span>';
+            if(date)html+='<span>'+date+'</span>';
+            html+='</div></div>';
+            html+='<button class="btn btn-danger btn-sm" onclick="deleteActivity(\\''+a.id+'\\')"><i data-lucide="x"></i></button>';
+            html+='</div>';
+          });
+          area.innerHTML=html;
+          lucide.createIcons();
+        }
+
+        async function createActivity(){
+          const data={type:document.getElementById('actType').value,contactId:document.getElementById('actContact').value,title:document.getElementById('actTitle').value.trim(),description:document.getElementById('actDesc').value.trim()};
+          if(!data.title){showToast('Titel eingeben','error');return}
+          try{await api('/activities',{method:'POST',headers:{'Content-Type':'application/json','Authorization':getAuthHeader()},body:JSON.stringify({action:'create',data:data})});
+          toggleCrmActivityForm();showToast('Aktivität erstellt','success');loadCRM();}catch(e){showToast('Fehler','error')}
+        }
+
+        async function deleteActivity(id){
+          try{await api('/activities',{method:'POST',headers:{'Content-Type':'application/json','Authorization':getAuthHeader()},body:JSON.stringify({action:'delete',id:id})});loadCRM();}catch(e){showToast('Fehler','error')}
+        }
+
+        // ═══════════════════════════════════════════════
+        // ─── Workflows Tab ───
+        // ═══════════════════════════════════════════════
+        let wfProjects=[],wfNodes=[],wfConnections=[],selectedWfId=null,wfRunning=false,wfAbort=null,_wfChatMsgs=[];
+        const wfNodeTypes={trigger:{icon:'zap',label:'Trigger'},input:{icon:'log-in',label:'Input'},agent:{icon:'bot',label:'Agent'},tool:{icon:'wrench',label:'Tool'},condition:{icon:'git-branch',label:'Bedingung'},output:{icon:'log-out',label:'Output'},delay:{icon:'timer',label:'Delay'},webhook:{icon:'globe',label:'Webhook'},loop:{icon:'repeat',label:'Loop'},team:{icon:'users',label:'Team'},merger:{icon:'git-merge',label:'Merger'},note:{icon:'sticky-note',label:'Notiz'},formula:{icon:'calculator',label:'Formel'},'error-handler':{icon:'alert-triangle',label:'Error-Handler'},'sub-workflow':{icon:'workflow',label:'Sub-Workflow'},task:{icon:'check-square',label:'Task'},retry:{icon:'refresh-cw',label:'Retry'},'switch':{icon:'list-tree',label:'Switch'}};
+
+        async function loadWorkflows(){
+          try{
+            const r=await api('/workflows');
+            wfProjects=r.workflows||r||[];
+            renderWorkflowList();
+          }catch(e){document.getElementById('wfProjectList').innerHTML='<div class="empty-state"><i data-lucide="workflow"></i><p>Workflows konnten nicht geladen werden</p></div>';lucide.createIcons()}
+        }
+
+        function renderWorkflowList(){
+          const area=document.getElementById('wfProjectList');
+          if(!wfProjects.length){area.innerHTML='<div class="empty-state"><i data-lucide="workflow"></i><p>Noch keine Workflows</p></div>';lucide.createIcons();return}
+          let html='';
+          wfProjects.forEach(p=>{
+            const sel=selectedWfId===p.id?' selected':'';
+            html+='<div class="workflow-card'+sel+'" onclick="selectWorkflow(\\''+p.id+'\\')">';
+            html+='<div class="wf-card-header">';
+            html+='<i data-lucide="workflow" style="width:16px;height:16px;color:var(--accent)"></i>';
+            html+='<span class="wf-card-name">'+esc(p.name||'Unbenannt')+'</span>';
+            html+='<button class="btn btn-danger btn-sm" onclick="event.stopPropagation();deleteWorkflow(\\''+p.id+'\\')"><i data-lucide="trash-2"></i></button>';
+            html+='</div>';
+            if(p.description)html+='<div style="font-size:12px;color:var(--text-secondary);margin-top:4px">'+esc(p.description)+'</div>';
+            html+='</div>';
+          });
+          area.innerHTML=html;
+          lucide.createIcons();
+        }
+
+        function toggleWfForm(){document.getElementById('wfForm').classList.toggle('show')}
+
+        async function createWorkflow(){
+          const name=document.getElementById('wfName').value.trim();
+          if(!name){showToast('Name eingeben','error');return}
+          const desc=document.getElementById('wfDesc').value.trim();
+          try{await api('/workflows',{method:'POST',headers:{'Content-Type':'application/json','Authorization':getAuthHeader()},body:JSON.stringify({action:'create',data:{name:name,description:desc}})});
+          document.getElementById('wfName').value='';document.getElementById('wfDesc').value='';
+          toggleWfForm();showToast('Workflow erstellt','success');loadWorkflows();}catch(e){showToast('Fehler','error')}
+        }
+
+        async function deleteWorkflow(id){
+          if(!confirm('Workflow löschen?'))return;
+          try{await api('/workflows',{method:'POST',headers:{'Content-Type':'application/json','Authorization':getAuthHeader()},body:JSON.stringify({action:'delete',id:id})});
+          if(selectedWfId===id)deselectWorkflow();
+          showToast('Workflow gelöscht','success');loadWorkflows();}catch(e){showToast('Fehler','error')}
+        }
+
+        async function selectWorkflow(id){
+          selectedWfId=id;
+          document.getElementById('wfProjectList').style.display='none';
+          document.getElementById('wfNewBtn').style.display='none';
+          document.getElementById('wfCanvasWrap').style.display='block';
+          document.getElementById('wfBackBtn').style.display='';
+          document.getElementById('wfRunBtn').style.display='';
+          const proj=wfProjects.find(p=>p.id===id);
+          document.getElementById('wfCanvasTitle').textContent=proj?proj.name:'Workflow';
+          try{
+            const r=await api('/workflow-state/'+id);
+            wfNodes=r.nodes||[];
+            wfConnections=r.connections||[];
+          }catch(e){wfNodes=[];wfConnections=[]}
+          renderWorkflowFlow();
+          lucide.createIcons();
+        }
+
+        function deselectWorkflow(){
+          selectedWfId=null;wfNodes=[];wfConnections=[];
+          document.getElementById('wfProjectList').style.display='';
+          document.getElementById('wfCanvasWrap').style.display='none';
+          document.getElementById('wfBackBtn').style.display='none';
+          document.getElementById('wfRunBtn').style.display='none';
+          document.getElementById('wfStopBtn').style.display='none';
+          document.getElementById('wfChatBtn').style.display='none';
+          document.getElementById('wfChatView').style.display='none';
+          document.getElementById('wfNewBtn').style.display='';
+          document.getElementById('wfOutput').style.display='none';
+          renderWorkflowList();
+        }
+
+        // ─── Canvas Workflow Rendering ───
+        const _wfColors={trigger:'#f24040',agent:'#ffc738',tool:'#30d158',condition:'#fbbf24',output:'#ffc738',delay:'#888',webhook:'#ff9f0a',loop:'#33bfea',team:'#bf5af2',note:'#888',formula:'#5ac8fa',retry:'#ff9f0a','error-handler':'#ef4444',merger:'#3b82f6',switch:'#a78bfa',input:'#30d158','sub-workflow':'#33bfea',task:'#10b981'};
+        let _wfZoom=1,_wfPanX=0,_wfPanY=0,_wfDrag=null,_wfConnDrag=null,_wfSelectedNode=null;
+
+        function renderWorkflowFlow(){
+          const layer=document.getElementById('wfNodeLayer');
+          const svg=document.getElementById('wfConnSvg');
+          if(!layer||!svg) return;
+          layer.style.transform='scale('+_wfZoom+') translate('+_wfPanX+'px,'+_wfPanY+'px)';
+          svg.style.transform='scale('+_wfZoom+') translate('+_wfPanX+'px,'+_wfPanY+'px)';
+          if(!wfNodes.length){layer.innerHTML='<div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;color:var(--text-tertiary);font-size:13px"><p>Nodes ueber die Toolbar hinzufuegen</p></div>';svg.innerHTML='';return}
+          let html='';
+          wfNodes.forEach(n=>{
+            const t=n.type||'agent';
+            const info=wfNodeTypes[t]||{icon:'box',label:t};
+            const color=_wfColors[t]||'#888';
+            const status=n.executionStatus||'idle';
+            const sel=_wfSelectedNode===n.id?' selected':'';
+            const statusCls=status==='running'?' running':status==='error'?' error':status==='success'?' success':status==='waiting'?' waiting':'';
+            html+='<div class="wf-node'+sel+statusCls+'" id="wfn-'+n.id+'" style="left:'+(n.x||100)+'px;top:'+(n.y||100)+'px" onpointerdown="onNodePointerDown(event,\\''+n.id+'\\')" ondblclick="selectWfNode(\\''+n.id+'\\')">';
+            html+='<div class="wf-port top" data-node="'+n.id+'" data-dir="top" onpointerdown="onPortPointerDown(event,\\''+n.id+'\\',\\'top\\')"></div>';
+            html+='<div class="wf-port left" data-node="'+n.id+'" data-dir="left" onpointerdown="onPortPointerDown(event,\\''+n.id+'\\',\\'left\\')"></div>';
+            html+='<div class="wf-port right" data-node="'+n.id+'" data-dir="right" onpointerdown="onPortPointerDown(event,\\''+n.id+'\\',\\'right\\')"></div>';
+            html+='<div class="wf-node-hdr" style="background:'+color+'"><i data-lucide="'+info.icon+'" style="width:11px;height:11px"></i>'+esc(info.label)+'</div>';
+            html+='<div class="wf-node-body">'+esc(n.title||info.label)+'</div>';
+            html+='<div class="wf-port bottom" data-node="'+n.id+'" data-dir="bottom" onpointerdown="onPortPointerDown(event,\\''+n.id+'\\',\\'bottom\\')"></div>';
+            html+='</div>';
+          });
+          layer.innerHTML=html;
+          redrawConnections();
+          lucide.createIcons();
+        }
+
+        function _guessDir(from,to){
+          // Gegenueberliegende Eingangsrichtung erraten
+          const dx=to.x-from.x,dy=to.y-from.y;
+          if(Math.abs(dx)>Math.abs(dy)) return dx>0?'left':'right';
+          return dy>0?'top':'bottom';
+        }
+
+        function _portXY(node,dir){
+          // Berechnet Port-Position in untransformiertem Canvas-Space aus Node-Daten
+          const el=document.getElementById('wfn-'+node.id);
+          const w=130,h=el?el.offsetHeight:70;
+          const nx=node.x||0,ny=node.y||0;
+          if(dir==='top')    return {x:nx+w/2, y:ny};
+          if(dir==='bottom') return {x:nx+w/2, y:ny+h};
+          if(dir==='left')   return {x:nx,     y:ny+h/2};
+          if(dir==='right')  return {x:nx+w,   y:ny+h/2};
+          return {x:nx+w/2,y:ny+h}; // fallback = bottom
+        }
+
+        function _bezierCtrl(pt,dir,offset){
+          // Control-Point je nach Richtung vom Port weg
+          if(dir==='top')    return {x:pt.x, y:pt.y-offset};
+          if(dir==='bottom') return {x:pt.x, y:pt.y+offset};
+          if(dir==='left')   return {x:pt.x-offset, y:pt.y};
+          if(dir==='right')  return {x:pt.x+offset, y:pt.y};
+          return {x:pt.x, y:pt.y+offset};
+        }
+
+        function redrawConnections(){
+          const svg=document.getElementById('wfConnSvg');if(!svg) return;
+          while(svg.firstChild) svg.removeChild(svg.firstChild);
+          const ns='http://www.w3.org/2000/svg';
+          (wfConnections||[]).forEach((c,i)=>{
+            const fromNode=wfNodes.find(n=>n.id===c.from);
+            const toNode=wfNodes.find(n=>n.id===c.to);
+            if(!fromNode||!toNode) return;
+            const fp=c.fromPort||'bottom', tp=c.toPort||'top';
+            const s=_portXY(fromNode,fp);
+            const e=_portXY(toNode,tp);
+            const dist=Math.sqrt((e.x-s.x)**2+(e.y-s.y)**2);
+            const offset=Math.max(40,Math.min(120,dist*0.35));
+            const c1=_bezierCtrl(s,fp,offset);
+            const c2=_bezierCtrl(e,tp,offset);
+            const isErr=c.connectionType==='error';
+            // Hauptpfad via createElementNS (zuverlaessiger als innerHTML fuer SVG)
+            const path=document.createElementNS(ns,'path');
+            path.setAttribute('d','M'+s.x+','+s.y+' C'+c1.x+','+c1.y+' '+c2.x+','+c2.y+' '+e.x+','+e.y);
+            path.setAttribute('data-conn',i);
+            if(isErr){path.style.stroke='#ef4444';path.style.strokeDasharray='6 3';}
+            path.style.pointerEvents='stroke';path.style.cursor='pointer';
+            path.addEventListener('pointerdown',function(ev){onConnClick(ev,i);});
+            svg.appendChild(path);
+            // Pfeilspitze
+            const ax=e.x,ay=e.y;
+            const adx=e.x-c2.x,ady=e.y-c2.y;
+            const al=Math.sqrt(adx*adx+ady*ady)||1;
+            const ux=adx/al,uy=ady/al;
+            const px=-uy,py=ux;
+            const arrow=document.createElementNS(ns,'path');
+            arrow.setAttribute('d','M'+(ax-ux*8+px*4)+','+(ay-uy*8+py*4)+' L'+ax+','+ay+' L'+(ax-ux*8-px*4)+','+(ay-uy*8-py*4));
+            arrow.style.stroke=isErr?'#ef4444':'var(--accent-primary)';
+            arrow.style.strokeWidth='1.5';arrow.style.fill='none';arrow.style.pointerEvents='none';
+            svg.appendChild(arrow);
+          });
+        }
+
+        function onNodePointerDown(e,nodeId){
+          if(e.target.classList.contains('wf-port')) return;
+          e.preventDefault();
+          const node=wfNodes.find(n=>n.id===nodeId);if(!node) return;
+          _wfDrag={nodeId:nodeId,startX:e.clientX,startY:e.clientY,origX:node.x||0,origY:node.y||0};
+          document.addEventListener('pointermove',_onNodeDragMove);
+          document.addEventListener('pointerup',_onNodeDragUp);
+        }
+
+        function _onNodeDragMove(e){
+          if(!_wfDrag) return;
+          const dx=(e.clientX-_wfDrag.startX)/_wfZoom;
+          const dy=(e.clientY-_wfDrag.startY)/_wfZoom;
+          const node=wfNodes.find(n=>n.id===_wfDrag.nodeId);
+          if(node){node.x=Math.round((_wfDrag.origX+dx)/12)*12;node.y=Math.round((_wfDrag.origY+dy)/12)*12;
+            const el=document.getElementById('wfn-'+node.id);
+            if(el){el.style.left=node.x+'px';el.style.top=node.y+'px';}
+            redrawConnections();
+          }
+        }
+
+        function _onNodeDragUp(e){
+          _wfDrag=null;
+          document.removeEventListener('pointermove',_onNodeDragMove);
+          document.removeEventListener('pointerup',_onNodeDragUp);
+        }
+
+        // ─── Connection Drag (Document-Level Listeners wie Node-Drag) ───
+        function _screenToCanvas(e){
+          const canvas=document.getElementById('wfCanvasArea');
+          if(!canvas) return {x:0,y:0};
+          const r=canvas.getBoundingClientRect();
+          return {x:(e.clientX-r.left)/_wfZoom-_wfPanX, y:(e.clientY-r.top)/_wfZoom-_wfPanY};
+        }
+
+        function onPortPointerDown(e,nodeId,dir){
+          e.preventDefault();e.stopPropagation();
+          _wfConnDrag={nodeId:nodeId,dir:dir};
+          // Document-Level Listeners — zuverlaessiger als setPointerCapture auf Divs
+          document.addEventListener('pointermove',_onConnDragMove);
+          document.addEventListener('pointerup',_onConnDragEnd);
+        }
+
+        const _SNAP_THRESHOLD=80;
+
+        function _findSnapTarget(m,excludeId){
+          let bestId=null,bestDir=null,bestDist=Infinity;
+          const dirs=['top','right','bottom','left'];
+          wfNodes.forEach(node=>{
+            if(node.id===excludeId) return;
+            dirs.forEach(dir=>{
+              const p=_portXY(node,dir);
+              const d=Math.sqrt((m.x-p.x)**2+(m.y-p.y)**2);
+              if(d<_SNAP_THRESHOLD&&d<bestDist){bestDist=d;bestId=node.id;bestDir=dir;}
+            });
+          });
+          return bestId?{nodeId:bestId,dir:bestDir,dist:bestDist}:null;
+        }
+
+        function _highlightSnapPorts(snapInfo){
+          document.querySelectorAll('.wf-port.snap-target').forEach(p=>p.classList.remove('snap-target'));
+          if(!snapInfo) return;
+          const portEl=document.querySelector('#wfn-'+snapInfo.nodeId+' .wf-port.'+snapInfo.dir);
+          if(portEl) portEl.classList.add('snap-target');
+        }
+
+        function _onConnDragMove(e){
+          if(!_wfConnDrag) return;
+          e.preventDefault();
+          const m=_screenToCanvas(e);
+          const srcNode=wfNodes.find(n=>n.id===_wfConnDrag.nodeId);
+          if(!srcNode) return;
+          const s=_portXY(srcNode,_wfConnDrag.dir);
+          // Snap-Ziel suchen und visuell hervorheben
+          const snap=_findSnapTarget(m,_wfConnDrag.nodeId);
+          _highlightSnapPorts(snap);
+          // Preview-Linie zum Snap-Ziel oder Maus zeichnen
+          const endPt=snap?_portXY(wfNodes.find(n=>n.id===snap.nodeId),snap.dir):m;
+          const endDir=snap?snap.dir:_guessDir(s,m);
+          const dist=Math.sqrt((endPt.x-s.x)**2+(endPt.y-s.y)**2);
+          const offset=Math.max(30,Math.min(80,dist*0.3));
+          const c1=_bezierCtrl(s,_wfConnDrag.dir,offset);
+          const c2=_bezierCtrl(endPt,endDir,offset);
+          const svg=document.getElementById('wfConnSvg');
+          if(!svg) return;
+          let preview=svg.querySelector('.wf-conn-preview');
+          if(!preview){preview=document.createElementNS('http://www.w3.org/2000/svg','path');preview.classList.add('wf-conn-preview');svg.appendChild(preview);}
+          preview.setAttribute('d','M'+s.x+','+s.y+' C'+c1.x+','+c1.y+' '+c2.x+','+c2.y+' '+endPt.x+','+endPt.y);
+        }
+
+        function _onConnDragEnd(e){
+          if(!_wfConnDrag) return;
+          document.removeEventListener('pointermove',_onConnDragMove);
+          document.removeEventListener('pointerup',_onConnDragEnd);
+          _highlightSnapPorts(null);
+          const m=_screenToCanvas(e);
+          const snap=_findSnapTarget(m,_wfConnDrag.nodeId);
+          const fromId=_wfConnDrag.nodeId,fromDir=_wfConnDrag.dir;
+          _wfConnDrag=null;
+          const svg=document.getElementById('wfConnSvg');
+          if(svg){const preview=svg.querySelector('.wf-conn-preview');if(preview) preview.remove();}
+          if(snap){
+            const dup=wfConnections.find(c=>c.from===fromId&&c.to===snap.nodeId&&c.fromPort===fromDir&&c.toPort===snap.dir);
+            if(!dup){
+              wfConnections.push({from:fromId,to:snap.nodeId,fromPort:fromDir,toPort:snap.dir});
+              redrawConnections();
+              saveWorkflowState();
+              showToast('Verbindung erstellt','success');
+              return;
+            }
+          }
+          redrawConnections();
+        }
+
+        function onConnClick(e,idx){
+          e.stopPropagation();
+          if(confirm('Verbindung loeschen?')){wfConnections.splice(idx,1);redrawConnections();}
+        }
+
+        function selectWfNode(id){
+          _wfSelectedNode=_wfSelectedNode===id?null:id;
+          renderWorkflowFlow();
+          renderWfInspector(id);
+        }
+
+        function renderWfInspector(nodeId){
+          const panel=document.getElementById('wfInspector');if(!panel) return;
+          if(!nodeId||_wfSelectedNode!==nodeId){panel.classList.remove('open');return;}
+          const node=wfNodes.find(n=>n.id===nodeId);if(!node){panel.classList.remove('open');return;}
+          panel.classList.add('open');
+          const t=node.type||'agent';const nid=nodeId;
+          const color=_wfColors[t]||'#888';
+          let h='';
+          // Header mit Farbe
+          h+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><div style="width:10px;height:10px;border-radius:50%;background:'+color+'"></div><div style="font-weight:700;font-size:14px;flex:1">'+esc(node.title||t)+'</div></div>';
+          // Typ-Selector (wie Desktop)
+          const typeOpts=Object.entries(wfNodeTypes).map(([k,v])=>'<option value="'+k+'"'+(k===t?' selected':'')+'>'+esc(v.label)+'</option>').join('');
+          h+='<div style="margin-bottom:8px"><div class="wf-insp-label">Typ</div><select class="form-select" style="font-size:12px" onchange="updateWfNodeField(\\''+nid+'\\',\\'type\\',this.value);renderWorkflowFlow();renderWfInspector(\\''+nid+'\\')">'+typeOpts+'</select></div>';
+          // Titel
+          h+='<div style="margin-bottom:8px"><div class="wf-insp-label">Titel</div><input class="form-input" value="'+esc(node.title||'')+'" onchange="updateWfNodeField(\\''+nid+'\\',\\'title\\',this.value);renderWorkflowFlow()" style="font-size:12px"></div>';
+          // Prompt (nicht fuer Note)
+          if(t!=='note') h+='<div style="margin-bottom:8px"><div class="wf-insp-label">Prompt / Anweisung</div><textarea class="form-input" onchange="updateWfNodeField(\\''+nid+'\\',\\'prompt\\',this.value)" style="font-size:11px;resize:vertical;min-height:60px">'+esc(node.prompt||'')+'</textarea></div>';
+          // ─── Typ-spezifische Felder (Desktop-Paritaet) ───
+          if(t==='trigger'){
+            const tm=node.triggerMode||'manual';
+            h+='<div style="margin-bottom:8px"><div class="wf-insp-label">Trigger-Modus</div><select class="form-select" style="font-size:12px" onchange="updateWfNodeField(\\''+nid+'\\',\\'triggerMode\\',this.value);renderWfInspector(\\''+nid+'\\')">';
+            ['manual','cron','webhook','filewatcher','app-event'].forEach(v=>{h+='<option value="'+v+'"'+(v===tm?' selected':'')+'>'+({manual:'Manuell',cron:'Zeitplan (Cron)',webhook:'Webhook',filewatcher:'Datei-Watcher','app-event':'App-Event'}[v])+'</option>';});
+            h+='</select></div>';
+            if(tm==='cron') h+='<div style="margin-bottom:8px"><div class="wf-insp-label">Cron-Ausdruck</div><input class="form-input" value="'+esc(node.cronExpression||'0 8 * * *')+'" onchange="updateWfNodeField(\\''+nid+'\\',\\'cronExpression\\',this.value)" placeholder="0 8 * * *" style="font-size:12px;font-family:monospace"></div>';
+            if(tm==='webhook') h+='<div style="margin-bottom:8px"><div class="wf-insp-label">Webhook-Pfad</div><input class="form-input" value="'+esc(node.webhookPath||'/hook/')+'" onchange="updateWfNodeField(\\''+nid+'\\',\\'webhookPath\\',this.value)" style="font-size:12px;font-family:monospace"></div>';
+            if(tm==='filewatcher') h+='<div style="margin-bottom:8px"><div class="wf-insp-label">Dateipfad</div><input class="form-input" value="'+esc(node.watchPath||'')+'" onchange="updateWfNodeField(\\''+nid+'\\',\\'watchPath\\',this.value)" placeholder="~/Documents/..." style="font-size:12px"></div>';
+            if(tm==='app-event'){
+              h+='<div style="margin-bottom:8px"><div class="wf-insp-label">Event</div><select class="form-select" style="font-size:12px" onchange="updateWfNodeField(\\''+nid+'\\',\\'eventName\\',this.value)">';
+              ['app_start','memory_update','task_complete','idle','connection_change'].forEach(v=>{h+='<option value="'+v+'"'+(v===(node.eventName||'app_start')?' selected':'')+'>'+v+'</option>';});
+              h+='</select></div>';
+            }
+          }
+          if(t==='agent'){
+            h+='<div style="margin-bottom:8px"><div class="wf-insp-label">Agent-Typ</div><select class="form-select" style="font-size:12px" onchange="updateWfNodeField(\\''+nid+'\\',\\'agentType\\',this.value)"><option value="general"'+(node.agentType==='general'?' selected':'')+'>General</option><option value="coder"'+(node.agentType==='coder'?' selected':'')+'>Coder</option><option value="web"'+(node.agentType==='web'?' selected':'')+'>Web</option></select></div>';
+            h+='<div style="margin-bottom:8px"><div class="wf-insp-label">Modell-Override</div><input class="form-input" value="'+esc(node.modelOverride||'')+'" onchange="updateWfNodeField(\\''+nid+'\\',\\'modelOverride\\',this.value)" placeholder="Standard-Modell" style="font-size:12px"></div>';
+            h+='<div style="margin-bottom:8px"><div class="wf-insp-label">Skill</div><input class="form-input" value="'+esc(node.skillName||'')+'" onchange="updateWfNodeField(\\''+nid+'\\',\\'skillName\\',this.value)" placeholder="Kein Skill" style="font-size:12px"></div>';
+          }
+          if(t==='condition') h+='<div style="margin-bottom:8px"><div class="wf-insp-label">Bedingung</div><input class="form-input" value="'+esc(node.conditionExpression||'')+'" onchange="updateWfNodeField(\\''+nid+'\\',\\'conditionExpression\\',this.value)" placeholder="contains(\\'error\\')" style="font-size:12px;font-family:monospace"></div>';
+          if(t==='delay') h+='<div style="margin-bottom:8px"><div class="wf-insp-label">Verzoegerung (Sekunden)</div><input class="form-input" type="number" min="0" value="'+(node.delaySeconds||5)+'" onchange="updateWfNodeField(\\''+nid+'\\',\\'delaySeconds\\',parseInt(this.value))" style="font-size:12px"></div>';
+          if(t==='formula') h+='<div style="margin-bottom:8px"><div class="wf-insp-label">Formel-Template</div><textarea class="form-input" onchange="updateWfNodeField(\\''+nid+'\\',\\'formulaTemplate\\',this.value)" placeholder="{{input}} + Transformation..." style="font-size:11px;font-family:monospace;resize:vertical;min-height:50px">'+esc(node.formulaTemplate||'')+'</textarea></div>';
+          if(t==='tool') h+='<div style="margin-bottom:8px"><div class="wf-insp-label">Tool-Name</div><input class="form-input" value="'+esc(node.toolName||'')+'" onchange="updateWfNodeField(\\''+nid+'\\',\\'toolName\\',this.value)" placeholder="z.B. file_read, shell_execute" style="font-size:12px"></div>';
+          if(t==='loop'){
+            h+='<div style="margin-bottom:8px"><div class="wf-insp-label">Trennzeichen</div><input class="form-input" value="'+esc(node.loopSeparator||'\\n')+'" onchange="updateWfNodeField(\\''+nid+'\\',\\'loopSeparator\\',this.value)" style="font-size:12px;font-family:monospace"></div>';
+            h+='<div style="margin-bottom:8px"><div class="wf-insp-label">Max Iterationen</div><input class="form-input" type="number" min="1" max="10000" value="'+(node.loopMaxIterations||100)+'" onchange="updateWfNodeField(\\''+nid+'\\',\\'loopMaxIterations\\',parseInt(this.value))" style="font-size:12px"></div>';
+          }
+          if(t==='webhook'){
+            h+='<div style="margin-bottom:8px"><div class="wf-insp-label">URL</div><input class="form-input" value="'+esc(node.webhookUrl||'')+'" onchange="updateWfNodeField(\\''+nid+'\\',\\'webhookUrl\\',this.value)" placeholder="https://..." style="font-size:12px"></div>';
+            h+='<div style="margin-bottom:8px"><div class="wf-insp-label">HTTP-Methode</div><select class="form-select" style="font-size:12px" onchange="updateWfNodeField(\\''+nid+'\\',\\'httpMethod\\',this.value)"><option value="POST"'+((node.httpMethod||'POST')==='POST'?' selected':'')+'>POST</option><option value="GET"'+(node.httpMethod==='GET'?' selected':'')+'>GET</option><option value="PUT"'+(node.httpMethod==='PUT'?' selected':'')+'>PUT</option></select></div>';
+          }
+          if(t==='retry'){
+            h+='<div style="margin-bottom:8px"><div class="wf-insp-label">Versuche</div><input class="form-input" type="number" min="1" max="20" value="'+(node.retryCount||3)+'" onchange="updateWfNodeField(\\''+nid+'\\',\\'retryCount\\',parseInt(this.value))" style="font-size:12px"></div>';
+            h+='<div style="margin-bottom:8px"><div class="wf-insp-label">Pause (Sekunden)</div><input class="form-input" type="number" min="0" value="'+(node.retryDelaySeconds||5)+'" onchange="updateWfNodeField(\\''+nid+'\\',\\'retryDelaySeconds\\',parseInt(this.value))" style="font-size:12px"></div>';
+          }
+          if(t==='switch'){
+            h+='<div class="wf-insp-section"><div class="wf-insp-label">Switch-Cases</div>';
+            const cases=node.switchCases||[{expr:'',port:0}];
+            cases.forEach((c,i)=>{
+              h+='<div style="display:flex;gap:4px;margin-bottom:4px"><input class="form-input" value="'+esc(c.expr||'')+'" onchange="updateWfSwitchCase(\\''+nid+'\\','+i+',\\'expr\\',this.value)" placeholder="Bedingung..." style="flex:1;font-size:11px"><button class="wf-insp-conn conn-btn" onclick="removeWfSwitchCase(\\''+nid+'\\','+i+');renderWfInspector(\\''+nid+'\\')">×</button></div>';
+            });
+            h+='<button class="btn btn-secondary btn-sm" onclick="addWfSwitchCase(\\''+nid+'\\');renderWfInspector(\\''+nid+'\\')"><i data-lucide="plus"></i>Case</button></div>';
+          }
+          if(t==='team'){
+            h+='<div style="margin-bottom:8px"><div class="wf-insp-label">Team</div><select class="form-select" style="font-size:12px" onchange="updateWfNodeField(\\''+nid+'\\',\\'teamId\\',this.value)"><option value="">— Team waehlen —</option>';
+            allTeams.forEach(tm=>{h+='<option value="'+esc(tm.id)+'"'+(node.teamId===tm.id?' selected':'')+'>'+esc(tm.name)+'</option>';});
+            h+='</select></div>';
+          }
+          if(t==='sub-workflow'){
+            h+='<div style="margin-bottom:8px"><div class="wf-insp-label">Ziel-Workflow</div><select class="form-select" style="font-size:12px" onchange="updateWfNodeField(\\''+nid+'\\',\\'subWorkflowProjectId\\',this.value)"><option value="">— Workflow waehlen —</option>';
+            wfProjects.filter(p=>p.id!==selectedWfId).forEach(p=>{h+='<option value="'+esc(p.id)+'"'+(node.subWorkflowProjectId===p.id?' selected':'')+'>'+esc(p.name)+'</option>';});
+            h+='</select></div>';
+          }
+          if(t==='task') h+='<div style="margin-bottom:8px"><div class="wf-insp-label">Task-ID / Name</div><input class="form-input" value="'+esc(node.taskIdRef||'')+'" onchange="updateWfNodeField(\\''+nid+'\\',\\'taskIdRef\\',this.value)" placeholder="task_id oder name" style="font-size:12px"></div>';
+          if(t==='error-handler') h+='<div class="wf-insp-banner warn">Error-Handler faengt Fehler von eingehenden Verbindungen ab und versucht Recovery via Prompt.</div>';
+          if(t==='note') h+='<div style="margin-bottom:8px"><div class="wf-insp-label">Notiz</div><textarea class="form-input" onchange="updateWfNodeField(\\''+nid+'\\',\\'noteText\\',this.value)" placeholder="Dokumentation..." style="font-size:11px;resize:vertical;min-height:80px">'+esc(node.noteText||'')+'</textarea></div>';
+          // ─── Verbindungen (wie Desktop-Inspector) ───
+          const incoming=wfConnections.map((c,i)=>({...c,_idx:i})).filter(c=>c.to===nid);
+          const outgoing=wfConnections.map((c,i)=>({...c,_idx:i})).filter(c=>c.from===nid);
+          if(incoming.length||outgoing.length){
+            h+='<div class="wf-insp-section"><div class="wf-insp-label">Verbindungen</div>';
+            incoming.forEach(c=>{
+              const src=wfNodes.find(n=>n.id===c.from);
+              const isErr=c.connectionType==='error';
+              h+='<div class="wf-insp-conn"><span class="arrow">&larr;</span><span class="conn-name" style="color:'+(isErr?'#ef4444':'var(--text-primary)')+'">'+(src?esc(src.title||src.type):'?')+' <span style="opacity:.5;font-size:10px">('+esc(c.fromPort||'?')+'&rarr;'+esc(c.toPort||'?')+')</span></span>';
+              h+='<button class="conn-btn" title="Normal/Error umschalten" onclick="toggleConnType('+c._idx+');renderWfInspector(\\''+nid+'\\')"><i data-lucide="'+(isErr?'alert-triangle':'arrow-right')+'" style="width:12px;height:12px"></i></button>';
+              h+='<button class="conn-btn" title="Loeschen" onclick="deleteConn('+c._idx+');renderWfInspector(\\''+nid+'\\')"><i data-lucide="x" style="width:12px;height:12px"></i></button></div>';
+            });
+            outgoing.forEach(c=>{
+              const tgt=wfNodes.find(n=>n.id===c.to);
+              const isErr=c.connectionType==='error';
+              h+='<div class="wf-insp-conn"><span class="arrow">&rarr;</span><span class="conn-name" style="color:'+(isErr?'#ef4444':'var(--text-primary)')+'">'+(tgt?esc(tgt.title||tgt.type):'?')+' <span style="opacity:.5;font-size:10px">'+(isErr?'Fehler-Pfad':'')+'</span></span>';
+              h+='<button class="conn-btn" title="Normal/Error umschalten" onclick="toggleConnType('+c._idx+');renderWfInspector(\\''+nid+'\\')"><i data-lucide="'+(isErr?'alert-triangle':'arrow-right')+'" style="width:12px;height:12px"></i></button>';
+              h+='<button class="conn-btn" title="Loeschen" onclick="deleteConn('+c._idx+');renderWfInspector(\\''+nid+'\\')"><i data-lucide="x" style="width:12px;height:12px"></i></button></div>';
+            });
+            h+='</div>';
+          }
+          // Aktionen
+          h+='<div style="margin-top:12px;display:flex;gap:6px;flex-wrap:wrap">';
+          h+='<button class="btn btn-danger btn-sm" onclick="removeWfNode(\\''+nid+'\\');renderWfInspector(null)"><i data-lucide="trash-2"></i>Node loeschen</button>';
+          h+='<button class="btn btn-secondary btn-sm" onclick="finishEditWfNode(\\''+nid+'\\')"><i data-lucide="check"></i>Fertig</button>';
+          h+='</div>';
+          panel.innerHTML=h;
+          lucide.createIcons();
+        }
+
+        function toggleConnType(idx){
+          if(!wfConnections[idx]) return;
+          wfConnections[idx].connectionType=wfConnections[idx].connectionType==='error'?'normal':'error';
+          redrawConnections();saveWorkflowState();
+        }
+        function deleteConn(idx){
+          wfConnections.splice(idx,1);
+          redrawConnections();saveWorkflowState();
+        }
+        function removeWfSwitchCase(nid,ci){
+          const node=wfNodes.find(n=>n.id===nid);
+          if(node&&node.switchCases) node.switchCases.splice(ci,1);
+        }
+
+        function wfZoom(delta){
+          _wfZoom=Math.min(3,Math.max(0.3,_wfZoom+delta));
+          const label=document.getElementById('wfZoomLabel');
+          if(label) label.textContent=Math.round(_wfZoom*100)+'%';
+          renderWorkflowFlow();
+        }
+
+        function wfResetView(){
+          _wfZoom=1;_wfPanX=0;_wfPanY=0;
+          const label=document.getElementById('wfZoomLabel');
+          if(label) label.textContent='100%';
+          renderWorkflowFlow();
+        }
+
+        function addNodeFromSelect(){
+          const sel=document.getElementById('wfNodeTypeSelect');
+          const type=sel.value;
+          if(!type)return;
+          addWfNode(type);
+          sel.value='';
+        }
+
+        function addWfNode(type){
+          const info=wfNodeTypes[type]||{label:type};
+          const maxY=wfNodes.reduce((m,n)=>Math.max(m,(n.y||0)+80),60);
+          const maxX=wfNodes.reduce((m,n)=>Math.max(m,n.x||0),0);
+          const x=wfNodes.length%2===0?120:280;
+          wfNodes.push({id:crypto.randomUUID?crypto.randomUUID():Date.now().toString(),type:type,title:info.label,prompt:'',x:x,y:maxY+20,lastOutput:'',conditionExpression:'',delaySeconds:5,executionStatus:'idle'});
+          renderWorkflowFlow();
+        }
+
+        function removeWfNode(id){
+          wfNodes=wfNodes.filter(n=>n.id!==id);
+          wfConnections=wfConnections.filter(c=>c.from!==id&&c.to!==id);
+          if(_wfSelectedNode===id) _wfSelectedNode=null;
+          renderWorkflowFlow();
+        }
+
+        function editWfNode(id){ selectWfNode(id); }
+
+        function finishEditWfNode(id){
+          _wfSelectedNode=null;
+          renderWorkflowFlow();
+          renderWfInspector(null);
+        }
+
+        function updateWfNodeField(id,field,value){
+          const node=wfNodes.find(n=>n.id===id);
+          if(node)node[field]=value;
+        }
+
+        function updateWfSwitchCase(id,ci,field,value){
+          const node=wfNodes.find(n=>n.id===id);
+          if(!node)return;
+          if(!node.switchCases)node.switchCases=[{expr:'',port:0}];
+          if(node.switchCases[ci])node.switchCases[ci][field]=value;
+        }
+
+        function addWfSwitchCase(id){
+          const node=wfNodes.find(n=>n.id===id);
+          if(!node)return;
+          if(!node.switchCases)node.switchCases=[];
+          node.switchCases.push({expr:'',port:node.switchCases.length});
+          renderWorkflowFlow();
+        }
+
+        async function saveWorkflowState(){
+          if(!selectedWfId)return;
+          const clean=wfNodes.map(n=>{const c={...n};delete c._editing;return c});
+          try{await api('/workflow-state/'+selectedWfId,{method:'POST',headers:{'Content-Type':'application/json','Authorization':getAuthHeader()},body:JSON.stringify({nodes:clean,connections:wfConnections})});
+          showToast('Workflow gespeichert','success');}catch(e){showToast('Fehler beim Speichern','error')}
+        }
+
+        // ─── Node-by-Node Workflow Execution ───
+        function _getNodeInput(nodeId){
+          return wfConnections.filter(c=>c.to===nodeId&&c.connectionType!=='error').map(c=>{
+            const src=wfNodes.find(n=>n.id===c.from);return src?src.lastOutput:'';
+          }).filter(Boolean).join('\\n');
+        }
+
+        async function _executeAgentNode(prompt,node,output,streamEl){
+          return new Promise(async function(resolve,reject){
+            try{
+              const resp=await fetch(API+'/agent/stream',{method:'POST',headers:{'Content-Type':'application/json','Authorization':getAuthHeader()},body:JSON.stringify({message:prompt,agent_type:node.agentType||'general'}),signal:wfAbort.signal});
+              const reader=resp.body.getReader();const decoder=new TextDecoder();
+              let result='',buf='';
+              if(streamEl){const sl=streamEl.querySelector('.ns-stream');if(sl)sl.textContent='Warte auf Antwort...';}
+              while(true){
+                const {done,value}=await reader.read();if(done) break;
+                buf+=decoder.decode(value,{stream:true});
+                const parts=buf.split('\\n\\n');buf=parts.pop()||'';
+                for(const part of parts){
+                  let evData='';
+                  for(const line of part.split('\\n')){if(line.startsWith('data: '))evData=line.slice(6);}
+                  if(!evData)continue;
+                  try{
+                    const d=JSON.parse(evData);
+                    if(d.thinking&&streamEl){const sl=streamEl.querySelector('.ns-stream');if(sl)sl.textContent='Denkt...';}
+                    if(d.token){result+=d.token;output.textContent+=d.token;if(streamEl){const sl=streamEl.querySelector('.ns-stream');if(sl){sl.textContent=result.length>140?'...'+result.slice(-140):result;streamEl.scrollTop=streamEl.scrollHeight;}}}
+                    if(d.tool_name&&streamEl){const sl=streamEl.querySelector('.ns-stream');if(sl)sl.textContent='Tool: '+d.tool_name+'...';}
+                  }catch(pe){result+=evData;output.textContent+=evData;}
+                }
+                output.scrollTop=output.scrollHeight;
+              }
+              resolve(result);
+            }catch(e){reject(e);}
+          });
+        }
+
+        async function runWorkflow(){
+          if(!selectedWfId||wfRunning)return;
+          wfRunning=true;
+          document.getElementById('wfRunBtn').style.display='none';
+          document.getElementById('wfStopBtn').style.display='';
+          const output=document.getElementById('wfOutput');
+          output.style.display='block';output.textContent='';
+          _wfChatMsgs=[{type:'system',text:'Workflow gestartet',time:new Date().toLocaleTimeString()}];
+          document.getElementById('wfChatBtn').style.display='none';
+          wfNodes.forEach(n=>{n.executionStatus='waiting';n.lastOutput='';});
+          renderWorkflowFlow();
+          const abortCtrl=new AbortController();
+          wfAbort=abortCtrl;
+          // Topologische Ausfuehrung: Start-Nodes → BFS entlang Connections
+          const startNodes=wfNodes.filter(n=>!wfConnections.some(c=>c.to===n.id));
+          if(!startNodes.length){
+            output.textContent='Kein Start-Node gefunden (kein Node ohne eingehende Verbindung).\\n';
+            wfRunning=false;wfAbort=null;
+            document.getElementById('wfRunBtn').style.display='';document.getElementById('wfStopBtn').style.display='none';
+            return;
+          }
+          const executed=new Set();
+          const queue=startNodes.map(n=>n.id);
+          try{
+            while(queue.length&&!abortCtrl.signal.aborted){
+              const nodeId=queue.shift();
+              if(executed.has(nodeId))continue;
+              // Warte bis alle Vorgaenger ausgefuehrt sind
+              const deps=wfConnections.filter(c=>c.to===nodeId&&c.connectionType!=='error').map(c=>c.from);
+              if(deps.some(d=>!executed.has(d))){queue.push(nodeId);continue;}
+              executed.add(nodeId);
+              const node=wfNodes.find(n=>n.id===nodeId);
+              if(!node)continue;
+              node.executionStatus='running';
+              renderWorkflowFlow();
+              output.textContent+='\\n▶ '+esc(node.title||node.type)+'\\n';
+              try{
+                let result='';
+                const input=_getNodeInput(nodeId);
+                const t=node.type||'agent';
+                if(t==='trigger'||t==='input'){
+                  result=node.prompt||input||'Start';
+                }else if(t==='agent'){
+                  const prompt=(node.prompt||'')+(input?'\\n\\nKontext:\\n'+input:'');
+                  const nEl=document.getElementById('wfn-'+nodeId);
+                  let sEl=null;
+                  if(nEl){sEl=document.createElement('div');sEl.className='wf-node-stream';sEl.innerHTML='<span class="ns-label">'+(node.agentType||'general')+'</span><span class="ns-stream"></span>';nEl.appendChild(sEl);}
+                  result=await _executeAgentNode(prompt||'Analysiere den bisherigen Kontext.',node,output,sEl);
+                  if(sEl)sEl.remove();
+                }else if(t==='condition'){
+                  result=input;
+                  output.textContent+='Bedingung: '+(node.conditionExpression||'true')+'\\n';
+                }else if(t==='delay'){
+                  const secs=node.delaySeconds||5;
+                  output.textContent+='Warte '+secs+'s...\\n';
+                  await new Promise(r=>setTimeout(r,secs*1000));
+                  result=input;
+                }else if(t==='tool'){
+                  output.textContent+='Tool: '+(node.toolName||'?')+'\\n';
+                  result=input||'Tool ausgefuehrt';
+                }else if(t==='formula'){
+                  result=(node.formulaTemplate||'').replace(/\\{\\{input\\}\\}/g,input);
+                  output.textContent+=result+'\\n';
+                }else if(t==='team'){
+                  output.textContent+='Team-Node: Leite an Team weiter\\n';
+                  result=input;
+                }else if(t==='output'){
+                  result=input;
+                  output.textContent+='═══ Ergebnis ═══\\n'+result+'\\n';
+                }else if(t==='loop'){
+                  const sep=node.loopSeparator||'\\n';
+                  const items=input.split(sep).slice(0,node.loopMaxIterations||100);
+                  output.textContent+='Loop: '+items.length+' Elemente\\n';
+                  result=items.join(sep);
+                }else if(t==='note'){
+                  result=input;
+                }else{
+                  result=input||node.prompt||'';
+                }
+                node.lastOutput=result;
+                node.executionStatus='success';
+                _wfChatMsgs.push({type:t==='output'?'output':'node',label:node.title||t,text:result,time:new Date().toLocaleTimeString()});
+              }catch(e){
+                if(e.name==='AbortError') throw e;
+                node.executionStatus='error';
+                node.lastOutput='Fehler: '+e.message;
+                output.textContent+='✗ Fehler: '+e.message+'\\n';
+                // Error-Connections folgen
+                wfConnections.filter(c=>c.from===nodeId&&c.connectionType==='error').forEach(c=>{
+                  if(!executed.has(c.to))queue.push(c.to);
+                });
+              }
+              renderWorkflowFlow();
+              output.scrollTop=output.scrollHeight;
+              // Normale Outgoing-Connections in Queue
+              if(node.executionStatus==='success'){
+                wfConnections.filter(c=>c.from===nodeId&&c.connectionType!=='error').forEach(c=>{
+                  if(!executed.has(c.to))queue.push(c.to);
+                });
+              }
+            }
+          }catch(e){
+            if(e.name!=='AbortError')output.textContent+='\\nAbbruch: '+e.message;
+          }
+          output.textContent+='\\n───────────────\\nWorkflow '+(abortCtrl.signal.aborted?'gestoppt':'abgeschlossen')+'.\\n';
+          _wfChatMsgs.push({type:'system',text:'Workflow '+(abortCtrl.signal.aborted?'gestoppt':'abgeschlossen'),time:new Date().toLocaleTimeString()});
+          wfRunning=false;wfAbort=null;
+          document.getElementById('wfRunBtn').style.display='';
+          document.getElementById('wfStopBtn').style.display='none';
+          if(_wfChatMsgs.length>2) document.getElementById('wfChatBtn').style.display='';
+          renderWorkflowFlow();
+          saveWorkflowState();
+        }
+
+        function stopWorkflow(){
+          if(wfAbort)wfAbort.abort();
+          wfRunning=false;
+          wfNodes.forEach(n=>{if(n.executionStatus==='running'||n.executionStatus==='waiting')n.executionStatus='idle';});
+          renderWorkflowFlow();
+          document.getElementById('wfRunBtn').style.display='';
+          document.getElementById('wfStopBtn').style.display='none';
+          if(_wfChatMsgs.length>1) document.getElementById('wfChatBtn').style.display='';
+          showToast('Workflow gestoppt','');
+        }
+
+        // ─── Workflow Chat ───
+        function openWorkflowChat(){
+          const wrap=document.getElementById('wfCanvasWrap');
+          const chat=document.getElementById('wfChatView');
+          if(wrap)wrap.style.display='none';
+          if(chat)chat.style.display='flex';
+          renderWorkflowChat();
+          lucide.createIcons();
+        }
+
+        function closeWorkflowChat(){
+          const wrap=document.getElementById('wfCanvasWrap');
+          const chat=document.getElementById('wfChatView');
+          if(chat)chat.style.display='none';
+          if(wrap)wrap.style.display='';
+        }
+
+        function renderWorkflowChat(){
+          const body=document.getElementById('wfChatBody');
+          if(!body)return;
+          if(!_wfChatMsgs.length){body.innerHTML='<div style="text-align:center;color:var(--text-tertiary);padding:40px;font-size:13px">Noch kein Workflow ausgefuehrt.<br>Starte einen Workflow um den Chat zu sehen.</div>';return;}
+          let h='';
+          _wfChatMsgs.forEach(function(m){
+            if(m.type==='system'){
+              h+='<div class="wf-chat-msg system-msg">'+esc(m.text)+' <span style="opacity:.6;font-size:9px">'+esc(m.time)+'</span></div>';
+            }else if(m.type==='output'){
+              h+='<div class="wf-chat-msg output-msg"><div class="msg-label">&#9654; '+esc(m.label)+' (Ergebnis)</div><pre>'+esc(m.text||'(leer)')+'</pre><div class="msg-time">'+esc(m.time)+'</div></div>';
+            }else{
+              h+='<div class="wf-chat-msg node-msg"><div class="msg-label">'+esc(m.label)+'</div><pre>'+esc(m.text||'(kein Output)')+'</pre><div class="msg-time">'+esc(m.time)+'</div></div>';
+            }
+          });
+          body.innerHTML=h;
+          body.scrollTop=body.scrollHeight;
         }
         </script>
         </body>

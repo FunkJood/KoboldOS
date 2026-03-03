@@ -1,5 +1,50 @@
 # KoboldOS Changelog
 
+## Alpha v0.3.8 — 2026-03-03
+
+### WebGUI — Teams Tab (Neu)
+- **Team-Verwaltung**: Teams erstellen, umbenennen, loeschen, Mitglieder hinzufuegen/entfernen
+- **Team Chat als Content View**: Sidebar bleibt sichtbar, Chat ersetzt nur den Inhaltsbereich (kein Overlay)
+- **Alternierende Seiten**: Agent-Nachrichten wechseln links/rechts basierend auf Member-Index
+- **Member-Info-Bar**: Farbige Avatar-Pills mit Initialen fuer alle Team-Mitglieder
+- **Member bearbeiten**: Inline-Edit mit Pencil-Button — Name, Rolle, System-Prompt aenderbar
+- **System-Prompt beim Hinzufuegen**: Neues Textarea-Feld beim Erstellen von Teammitgliedern
+
+### WebGUI — Workflow-Engine (Major Upgrade)
+- **Visueller Canvas**: 18 Node-Typen in 5 Kategorien (Eingabe, Verarbeitung, Logik, Fehlerbehandlung, Ausgabe)
+- **Inspector (Desktop-Paritaet)**: Alle Node-Typ-spezifischen Felder (Trigger-Modi, Agent-Typ, Cron, Bedingungen, Delay, Loop, Switch-Cases, Team-Auswahl, Sub-Workflow, Retry)
+- **Connection Snap**: 80px Snap-Threshold, gruener Glow-Feedback auf Ziel-Port, Bezier-Vorschau
+- **SVG Connections**: Bezier-Kurven mit Pfeilspitzen, Error-Connections (rot, gestrichelt), Click-to-Delete
+- **Node-by-Node Ausfuehrung**: Topologische BFS-Ausfuehrung entlang Verbindungen mit Dependency-Checking
+- **Visuelle Status-Anzeige**: waiting (gedimmt, gestrichelt) → running (gruen pulsierend) → success (gruen) / error (rot)
+- **Per-Node Thought Stream**: Live-Stream-Bubble unterhalb des laufenden Agent-Nodes zeigt SSE-Tokens, Thinking-Status und Tool-Calls
+- **Workflow Chat**: Dedizierter Chat-View mit chronologischen Node-Outputs — System-Messages, Node-Messages und Ergebnis-Messages (gruen hervorgehoben)
+- **Error-Routing**: Error-Connections werden nur bei Fehler verfolgt, normale nur bei Erfolg
+- **Kategorisiertes Dropdown**: Node-Auswahl als gruppiertes Select statt 18 einzelner Buttons
+
+### WebGUI — Weitere Verbesserungen
+- **CRM Modul**: Kontakte, Firmen, Deals, Aktivitaeten mit vollem CRUD
+- **Connections Tab**: OAuth-Status aller Verbindungen, Token-Verifizierung
+- **Login-System**: Authentifizierung mit Username/Passwort
+- **Einstellungen**: 191/211 Settings voll verbunden, 20 intentional Stubs
+
+### Desktop — Verbesserungen
+- **Team-Mitglieder bearbeitbar**: Pencil-Button pro Mitglied, Inline-Edit fuer Name, Rolle, System-Prompt
+- **Runden-Slider begrenzt**: Team-Runden auf max 5 begrenzt (vorher 20)
+
+### Bugfixes
+- **CSS Variable `--accent-primary`**: War in 13 Stellen referenziert aber nie definiert — SVG-Connections, Ports, Selection-Border jetzt sichtbar
+- **Datenpersistenz-Toggle entfernt**: Toggle ueberschrieb bei jedem Settings-Load die Modell-Auswahl
+- **Chat-Freeze bei langen Sessions**: Lazy Message Decoding (nur letzte 10 sofort, Rest im Background)
+- **Google Import 403**: Token-Refresh bei 401/403 + Race-Condition-Schutz
+- **Shell-Tier Mutual Exclusion**: safe/normal/power sind jetzt gegenseitig exklusiv
+
+### Statistik
+- **76.447 Lines of Code**
+- WebAppServer.swift: ~6.750 Zeilen (embedded HTML/CSS/JS)
+
+---
+
 ## Alpha v0.3.71 — 2026-03-02
 
 ### Google A2A Protocol — Vollständige Implementierung

@@ -281,6 +281,14 @@ public actor ConsciousnessEngine {
 
     public func recordError(text: String, toolName: String) async {
         guard let memoryStore = memoryStore else { return }
+        // Gate: "Fakten extrahieren" Toggle (kobold.memory.autoFragments)
+        let autoFragmentsEnabled = UserDefaults.standard.object(forKey: "kobold.memory.autoFragments") == nil
+            ? true : UserDefaults.standard.bool(forKey: "kobold.memory.autoFragments")
+        guard autoFragmentsEnabled else {
+            errorCount += 1
+            recordEvent(.init(type: .toolError, content: text, metadata: ["toolName": toolName]))
+            return
+        }
         let tags = ["auto_error", toolName]
         let _ = try? await memoryStore.add(
             text: text, memoryType: "fehler", tags: tags,
@@ -292,6 +300,14 @@ public actor ConsciousnessEngine {
 
     public func recordSolution(text: String, errorId: String, toolName: String) async {
         guard let memoryStore = memoryStore else { return }
+        // Gate: "Lösungen merken" Toggle (kobold.memory.autoSolutions)
+        let autoSolutionsEnabled = UserDefaults.standard.object(forKey: "kobold.memory.autoSolutions") == nil
+            ? true : UserDefaults.standard.bool(forKey: "kobold.memory.autoSolutions")
+        guard autoSolutionsEnabled else {
+            solutionCount += 1
+            recordEvent(.init(type: .errorResolved, content: text, metadata: ["resolvedErrorId": errorId, "toolName": toolName]))
+            return
+        }
         let tags = ["auto_solution", toolName]
         let _ = try? await memoryStore.add(
             text: text, memoryType: "lösungen", tags: tags,

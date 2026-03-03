@@ -1007,6 +1007,9 @@ struct SettingsView: View {
                     description: lang.shellSafeDesc,
                     isOn: $shellSafeTier
                 )
+                .onChange(of: shellSafeTier) { val in
+                    if val { shellNormalTier = false; shellPowerTier = false }
+                }
                 shellTierCard(
                     title: lang.shellNormal,
                     icon: "gearshape.fill",
@@ -1015,6 +1018,9 @@ struct SettingsView: View {
                     description: lang.shellNormalDesc,
                     isOn: $shellNormalTier
                 )
+                .onChange(of: shellNormalTier) { val in
+                    if val { shellSafeTier = false; shellPowerTier = false }
+                }
                 shellTierCard(
                     title: lang.shellPower,
                     icon: "bolt.fill",
@@ -1023,6 +1029,9 @@ struct SettingsView: View {
                     description: lang.shellPowerDesc,
                     isOn: $shellPowerTier
                 )
+                .onChange(of: shellPowerTier) { val in
+                    if val { shellSafeTier = false; shellNormalTier = false }
+                }
         }
 
         // Custom blacklist + whitelist

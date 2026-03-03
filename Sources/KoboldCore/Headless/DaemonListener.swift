@@ -268,6 +268,12 @@ public actor DaemonListener {
             }
         }
 
+        // Teams SSE streaming — jeder Agent-Turn wird einzeln gestreamt
+        if path == "/teams/chat" && method == "POST" {
+            await handleTeamChatStream(client: client, body: body)
+            return
+        }
+
         // OpenAI-compatible proxy (für ElevenLabs Custom LLM → Ollama)
         if path == "/v1/chat/completions" && method == "POST" {
             await handleOpenAIProxy(client: client, body: body)
@@ -610,6 +616,10 @@ public actor DaemonListener {
         case "/teams":
             if method == "POST", let body { return handleTeamsPost(body: body) }
             return handleTeamsList()
+
+        case "/teams/chat":
+            // Wird jetzt als SSE-Stream in handleParsedRequest abgefangen
+            return jsonError("Use SSE endpoint")
 
         default:
             // Dynamic routes: /sessions/{id}
@@ -2709,7 +2719,7 @@ public actor DaemonListener {
         "kobold.shell.customBlacklist", "kobold.shell.customAllowlist", "kobold.shell.timeout",
         "kobold.permission.virtualMouse",
         // Agent
-        "kobold.ollamaModel",
+        "kobold.ollamaModel", "kobold.agentConfigs",
         "kobold.agent.generalSteps", "kobold.agent.coderSteps", "kobold.agent.webSteps",
         "kobold.subagent.timeout", "kobold.subagent.maxConcurrent",
         "kobold.workerPool.size",
@@ -2783,9 +2793,48 @@ public actor DaemonListener {
         "kobold.a2a.perm.agent.read", "kobold.a2a.perm.agent.write",
         // Skills
         "kobold.skills.enabled",
+        // Tool Routing
+        "kobold.toolRouting",
+        // Vault (Secrets-Manager)
+        "kobold.vault.entries",
+        "kobold.vault.email", "kobold.vault.phone", "kobold.vault.address",
+        "kobold.vault.openaiKey", "kobold.vault.anthropicKey", "kobold.vault.groqKey",
+        "kobold.vault.huggingfaceKey", "kobold.vault.replicateKey",
+        "kobold.vault.custom1.label", "kobold.vault.custom1.value",
+        "kobold.vault.custom2.label", "kobold.vault.custom2.value",
+        "kobold.vault.custom3.label", "kobold.vault.custom3.value",
         // Cloudflare (non-secret settings)
         "kobold.cloudflare.email", "kobold.cloudflare.accountId", "kobold.cloudflare.zoneId",
         "kobold.cloudflare.tunnelId", "kobold.cloudflare.tunnelUrl", "kobold.cloudflare.domain",
+        // Contacts
+        "kobold.contacts.mode",
+        "kobold.contacts.showCompanies", "kobold.contacts.showDeals",
+        "kobold.contacts.showActivities", "kobold.contacts.showPipeline",
+        "kobold.contacts.showPhone", "kobold.contacts.showEmail", "kobold.contacts.showAddress",
+        "kobold.contacts.showBirthday", "kobold.contacts.showSocial",
+        "kobold.contacts.showTags", "kobold.contacts.showNotes",
+        "kobold.contacts.autoSync", "kobold.contacts.googleSync",
+        // Teams
+        "kobold.teams.defaultRouting", "kobold.teams.defaultMaxRounds",
+        "kobold.teams.criticalThinking", "kobold.teams.showSummary",
+        // Voice
+        "kobold.voice.vadEnabled", "kobold.voice.silenceTimeout",
+        "kobold.voice.autoRespond", "kobold.voice.maxResponseWords", "kobold.voice.mode",
+        // ElevenLabs ConvAI
+        "kobold.elevenlabs.convai.agentId", "kobold.elevenlabs.convai.syncPurpose",
+        "kobold.elevenlabs.convai.syncPersonality", "kobold.elevenlabs.convai.customLLM",
+        // Twilio (non-secret)
+        "kobold.twilio.voiceMode", "kobold.twilio.accountSid", "kobold.twilio.fromNumber",
+        // Chat & Tunnel
+        "kobold.chat.autoEmbed", "kobold.tunnel.autoStart",
+        // Integration non-secret config
+        "kobold.telegram.chatId", "kobold.telegram.groupIds",
+        "kobold.google.clientId",
+        "kobold.github.clientId",
+        "kobold.email.address", "kobold.email.smtpHost", "kobold.email.smtpPort",
+        "kobold.email.imapHost", "kobold.email.imapPort",
+        "kobold.microsoft.clientId", "kobold.slack.clientId",
+        "kobold.notion.clientId", "kobold.reddit.clientId",
     ]
 
     /// Keys die NIEMALS über die API geschrieben werden dürfen (Secrets, Tokens, Passwörter).
@@ -2801,7 +2850,7 @@ public actor DaemonListener {
         "kobold.email.password", "kobold.twilio.authToken",
         "kobold.uber.clientSecret", "kobold.uber.accessToken",
         "kobold.caldav.password", "kobold.mqtt.password",
-        "kobold.suno.apiKey", "kobold.huggingface.apiToken",
+        "kobold.suno.apiKey", "kobold.huggingface.apiToken", "kobold.reddit.clientSecret",
         "kobold.a2a.token",
         "kobold.elevenlabs.apiKey",
         "kobold.cloudflare.apiKey", "kobold.cloudflare.tunnelToken",
@@ -2824,7 +2873,11 @@ public actor DaemonListener {
             }
             let value = json["value"] as Any
             // Typ-aware speichern
-            if let b = value as? Bool { ud.set(b, forKey: key) }
+            // Spezialfall: kobold.agentConfigs als Data speichern (Desktop-kompatibel mit JSONDecoder)
+            if key == "kobold.agentConfigs", let s = value as? String, let data = s.data(using: .utf8) {
+                ud.set(data, forKey: key)
+            }
+            else if let b = value as? Bool { ud.set(b, forKey: key) }
             else if let i = value as? Int { ud.set(i, forKey: key) }
             else if let d = value as? Double { ud.set(d, forKey: key) }
             else if let s = value as? String { ud.set(s, forKey: key) }
@@ -2837,8 +2890,19 @@ public actor DaemonListener {
         // GET: Alle whitelisted Settings zurückgeben
         var result: [String: Any] = [:]
         for key in Self.settingsWhitelist {
-            let val = ud.object(forKey: key)
-            if let v = val { result[key] = v }
+            guard let val = ud.object(forKey: key) else { continue }
+            // Data → String konvertieren (z.B. JSONEncoder-Output von Desktop-AgentsStore)
+            // NSJSONSerialization wirft ObjC-Exception bei nicht-JSON-Typen (Data, Date etc.)
+            // und try? fängt ObjC-Exceptions NICHT ab → SIGABRT
+            if let data = val as? Data {
+                result[key] = String(data: data, encoding: .utf8) ?? ""
+            } else if val is String || val is Bool || val is Int || val is Double || val is NSNumber {
+                result[key] = val
+            } else if JSONSerialization.isValidJSONObject([key: val]) {
+                result[key] = val
+            } else {
+                result[key] = String(describing: val)
+            }
         }
         // Port als Info mitsenden (readonly)
         result["kobold.port"] = ud.integer(forKey: "kobold.port")
@@ -3458,9 +3522,37 @@ public actor DaemonListener {
     }
 
     private func jsonOK(_ obj: [String: Any]) -> String {
-        let data = (try? JSONSerialization.data(withJSONObject: obj, options: [.sortedKeys])) ?? Data()
+        // NSJSONSerialization wirft ObjC-Exceptions (nicht Swift Error!)
+        // bei nicht-JSON-Typen (Data, Date, NaN etc.) → try? fängt die NICHT ab → SIGABRT
+        // Daher: isValidJSONObject vorher prüfen, bei Bedarf sanitizen
+        let safe: [String: Any]
+        if JSONSerialization.isValidJSONObject(obj) {
+            safe = obj
+        } else {
+            safe = sanitizeForJSON(obj) as? [String: Any] ?? [:]
+        }
+        let data = (try? JSONSerialization.data(withJSONObject: safe, options: [.sortedKeys])) ?? Data()
         let body = String(data: data, encoding: .utf8) ?? "{}"
         return httpResponse(status: "200 OK", body: body)
+    }
+
+    /// Rekursiv nicht-JSON-Typen in serialisierbare Werte konvertieren
+    private func sanitizeForJSON(_ value: Any) -> Any {
+        if let dict = value as? [String: Any] {
+            return dict.mapValues { sanitizeForJSON($0) }
+        } else if let arr = value as? [Any] {
+            return arr.map { sanitizeForJSON($0) }
+        } else if let s = value as? String { return s }
+        else if value is NSNull { return value }
+        else if let num = value as? NSNumber {
+            let d = num.doubleValue
+            if d.isNaN || d.isInfinite { return String(describing: d) }
+            return num
+        } else if let data = value as? Data {
+            return String(data: data, encoding: .utf8) ?? ""
+        } else {
+            return String(describing: value)
+        }
     }
 
     private func jsonError(_ msg: String) -> String {
@@ -3802,8 +3894,14 @@ public actor DaemonListener {
 
     // MARK: - Google Contacts Import
 
+    private var isImportingGoogle = false
+
     private func handleGoogleContactsImport() async -> String {
-        let accessToken = UserDefaults.standard.string(forKey: "kobold.google.accessToken") ?? ""
+        guard !isImportingGoogle else { return jsonError("Import läuft bereits.") }
+        isImportingGoogle = true
+        defer { isImportingGoogle = false }
+
+        var accessToken = UserDefaults.standard.string(forKey: "kobold.google.accessToken") ?? ""
         guard !accessToken.isEmpty else {
             return jsonError("Google nicht verbunden. Bitte zuerst in Einstellungen > Verbindungen > Google anmelden.")
         }
@@ -3817,6 +3915,7 @@ public actor DaemonListener {
 
         var nextPageToken: String? = nil
         let fields = "names,emailAddresses,phoneNumbers,organizations,birthdays,urls,photos"
+        var didRefresh = false
 
         repeat {
             var urlStr = "https://people.googleapis.com/v1/people/me/connections?pageSize=100&personFields=\(fields)"
@@ -3830,7 +3929,13 @@ public actor DaemonListener {
             guard let (data, resp) = try? await URLSession.shared.data(for: req),
                   let httpResp = resp as? HTTPURLResponse else { break }
 
-            if httpResp.statusCode == 401 {
+            // Token-Refresh bei 401/403 (einmal versuchen)
+            if (httpResp.statusCode == 401 || httpResp.statusCode == 403) && !didRefresh {
+                didRefresh = true
+                if let newToken = await refreshGoogleAccessToken() {
+                    accessToken = newToken
+                    continue // Retry mit neuem Token
+                }
                 return jsonError("Google Token abgelaufen. Bitte in Einstellungen > Verbindungen > Google neu anmelden.")
             }
             guard httpResp.statusCode == 200 else {
@@ -3906,6 +4011,33 @@ public actor DaemonListener {
         }
 
         return jsonOK(["success": true, "imported": imported.count, "skipped": skipped, "total": ((crm["contacts"] as? [[String: Any]])?.count ?? 0)])
+    }
+
+    // MARK: - Google Token Refresh (für Import)
+
+    private func refreshGoogleAccessToken() async -> String? {
+        let defaults = UserDefaults.standard
+        guard let refreshToken = defaults.string(forKey: "kobold.google.refreshToken"), !refreshToken.isEmpty else { return nil }
+        let clientId = defaults.string(forKey: "kobold.google.clientId") ?? ""
+        let clientSecret = defaults.string(forKey: "kobold.google.clientSecret") ?? ""
+        guard !clientId.isEmpty, !clientSecret.isEmpty else { return nil }
+
+        guard let url = URL(string: "https://oauth2.googleapis.com/token") else { return nil }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        let body = "refresh_token=\(refreshToken)&client_id=\(clientId)&client_secret=\(clientSecret)&grant_type=refresh_token"
+        request.httpBody = body.data(using: .utf8)
+
+        do {
+            let (data, _) = try await URLSession.shared.data(for: request)
+            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let newToken = json["access_token"] as? String else { return nil }
+            let expiresIn = json["expires_in"] as? Int ?? 3600
+            defaults.set(newToken, forKey: "kobold.google.accessToken")
+            defaults.set(Date().addingTimeInterval(TimeInterval(expiresIn - 60)).timeIntervalSince1970, forKey: "kobold.google.tokenExpiry")
+            return newToken
+        } catch { return nil }
     }
 
     // MARK: - Teams Persistence
@@ -3984,6 +4116,254 @@ public actor DaemonListener {
 
         default:
             return jsonError("Unknown action: \(action)")
+        }
+    }
+
+    // MARK: - Team Chat (Multi-Agent Discussion)
+
+    private func handleTeamChat(body: Data) async -> String {
+        guard let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+              let teamId = json["team_id"] as? String,
+              let message = json["message"] as? String else {
+            return jsonError("Missing 'team_id' or 'message'")
+        }
+
+        let teams = loadTeams()
+        guard let team = teams.first(where: { ($0["id"] as? String) == teamId }) else {
+            return jsonError("Team nicht gefunden")
+        }
+
+        let members = team["members"] as? [[String: Any]] ?? []
+        guard !members.isEmpty else {
+            return jsonError("Team hat keine Mitglieder")
+        }
+
+        let maxRounds = json["max_rounds"] as? Int ?? 3
+        let routing = team["routing"] as? String ?? "sequential"
+        let outputType = json["output_type"] as? String ?? "summary"
+
+        var responses: [[String: Any]] = []
+        var context = ""
+        let memberList = members.map { m in
+            let n = m["name"] as? String ?? "?"
+            let r = m["role"] as? String ?? ""
+            return "\(n) (\(r))"
+        }.joined(separator: ", ")
+
+        for round in 1...maxRounds {
+            responses.append(["round_marker": "— Runde \(round) von \(maxRounds) —"])
+
+            let speakers = speakersForRound(round: round, totalRounds: maxRounds, members: members, routing: routing)
+
+            for (memberIdx, addressTarget) in speakers {
+                guard memberIdx < members.count else { continue }
+                let member = members[memberIdx]
+                let memberName = member["name"] as? String ?? "Agent"
+                let memberRole = member["role"] as? String ?? ""
+                let memberPrompt = member["systemPrompt"] as? String ?? ""
+
+                let prompt = """
+                TEAM-DISKUSSION — Du bist \(memberName) (\(memberRole)). \(memberPrompt)
+                TEAM-MITGLIEDER: \(memberList)
+                RICHTE DICH AN: \(addressTarget)
+
+                AUFGABE: \(message)
+
+                \(context.isEmpty ? "" : "BISHERIGE DISKUSSION:\n\(context)")
+
+                Antworte als \(memberName). Sei \(memberRole.isEmpty ? "konstruktiv" : memberRole). Max 200 Wörter.
+                """
+
+                let pool = AgentWorkerPool.shared
+                let agent = await pool.acquire()
+                let result: AgentResult
+                do {
+                    result = try await agent.run(userMessage: prompt, agentType: .general)
+                } catch {
+                    Task.detached { await pool.release(agent) }
+                    continue
+                }
+                Task.detached { await pool.release(agent) }
+
+                let text = result.finalOutput
+                context += "\(memberName) (\(memberRole)): \(text)\n\n"
+                responses.append([
+                    "agent": memberName,
+                    "role": memberRole,
+                    "text": text,
+                    "round": round
+                ] as [String: Any])
+            }
+        }
+
+        // Optional: Summary generieren
+        var summary = ""
+        if outputType == "summary" && responses.count > 2 {
+            let summaryPrompt = "Fasse die folgende Team-Diskussion in 2-3 Sätzen zusammen. Gib das Ergebnis/die Entscheidung an:\n\n\(context)"
+            let pool = AgentWorkerPool.shared
+            let agent = await pool.acquire()
+            do {
+                let sResult = try await agent.run(userMessage: summaryPrompt, agentType: .general)
+                summary = sResult.finalOutput
+            } catch { /* summary bleibt leer */ }
+            Task.detached { await pool.release(agent) }
+        }
+
+        var result: [String: Any] = ["messages": responses]
+        if !summary.isEmpty { result["summary"] = summary }
+
+        guard let data = try? JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]),
+              let str = String(data: data, encoding: .utf8) else {
+            return jsonError("Serialization failed")
+        }
+        return httpResponse(status: "200 OK", body: str)
+    }
+
+    // MARK: - Teams SSE Streaming
+
+    private func handleTeamChatStream(client: ClientSocket, body: Data?) async {
+        guard let body,
+              let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+              let teamId = json["team_id"] as? String,
+              let message = json["message"] as? String else {
+            client.write(jsonError("Missing 'team_id' or 'message'"))
+            return
+        }
+
+        let teams = loadTeams()
+        guard let team = teams.first(where: { ($0["id"] as? String) == teamId }) else {
+            client.write(jsonError("Team nicht gefunden"))
+            return
+        }
+
+        let members = team["members"] as? [[String: Any]] ?? []
+        guard !members.isEmpty else {
+            client.write(jsonError("Team hat keine Mitglieder"))
+            return
+        }
+
+        let maxRounds = json["max_rounds"] as? Int ?? 3
+        let routing = team["routing"] as? String ?? "sequential"
+        let outputType = json["output_type"] as? String ?? "summary"
+
+        // SSE Headers
+        var yes: Int32 = 1
+        setsockopt(client.fd, SOL_SOCKET, SO_NOSIGPIPE, &yes, socklen_t(MemoryLayout<Int32>.size))
+        setsockopt(client.fd, IPPROTO_TCP, TCP_NODELAY, &yes, socklen_t(MemoryLayout<Int32>.size))
+
+        let sseHeaders = "HTTP/1.1 200 OK\r\n" +
+            "Content-Type: text/event-stream\r\n" +
+            "Cache-Control: no-cache, no-store\r\n" +
+            "Connection: close\r\n" +
+            "X-Accel-Buffering: no\r\n\r\n"
+        client.write(sseHeaders)
+
+        // Helper: SSE Event senden
+        func sendEvent(_ type: String, _ payload: [String: Any]) {
+            if let data = try? JSONSerialization.data(withJSONObject: payload),
+               let str = String(data: data, encoding: .utf8) {
+                _ = client.tryWrite("event: \(type)\ndata: \(str)\n\n")
+            }
+        }
+
+        var context = ""
+        let memberList = members.map { m in
+            let n = m["name"] as? String ?? "?"
+            let r = m["role"] as? String ?? ""
+            return "\(n) (\(r))"
+        }.joined(separator: ", ")
+
+        for round in 1...maxRounds {
+            sendEvent("round", ["round": round, "total": maxRounds, "marker": "— Runde \(round) von \(maxRounds) —"])
+
+            let speakers = speakersForRound(round: round, totalRounds: maxRounds, members: members, routing: routing)
+
+            for (memberIdx, addressTarget) in speakers {
+                guard memberIdx < members.count else { continue }
+                let member = members[memberIdx]
+                let memberName = member["name"] as? String ?? "Agent"
+                let memberRole = member["role"] as? String ?? ""
+                let memberPrompt = member["systemPrompt"] as? String ?? ""
+
+                // Typing-Indikator senden
+                sendEvent("typing", ["agent": memberName, "role": memberRole])
+
+                let prompt = """
+                TEAM-DISKUSSION — Du bist \(memberName) (\(memberRole)). \(memberPrompt)
+                TEAM-MITGLIEDER: \(memberList)
+                RICHTE DICH AN: \(addressTarget)
+
+                AUFGABE: \(message)
+
+                \(context.isEmpty ? "" : "BISHERIGE DISKUSSION:\n\(context)")
+
+                Antworte als \(memberName). Sei \(memberRole.isEmpty ? "konstruktiv" : memberRole). Max 200 Wörter.
+                """
+
+                let pool = AgentWorkerPool.shared
+                let agent = await pool.acquire()
+                do {
+                    let result = try await agent.run(userMessage: prompt, agentType: .general)
+                    Task.detached { await pool.release(agent) }
+
+                    let text = result.finalOutput
+                    context += "\(memberName) (\(memberRole)): \(text)\n\n"
+                    sendEvent("message", ["agent": memberName, "role": memberRole, "text": text, "round": round])
+                } catch {
+                    Task.detached { await pool.release(agent) }
+                    sendEvent("error", ["agent": memberName, "error": "Agent-Fehler: \(error.localizedDescription)"])
+                }
+            }
+        }
+
+        // Summary
+        if outputType == "summary" && !context.isEmpty {
+            sendEvent("typing", ["agent": "Zusammenfassung", "role": "system"])
+            let summaryPrompt = "Fasse die folgende Team-Diskussion in 2-3 Sätzen zusammen. Gib das Ergebnis/die Entscheidung an:\n\n\(context)"
+            let pool = AgentWorkerPool.shared
+            let agent = await pool.acquire()
+            do {
+                let sResult = try await agent.run(userMessage: summaryPrompt, agentType: .general)
+                sendEvent("summary", ["text": sResult.finalOutput])
+            } catch { /* summary bleibt leer */ }
+            Task.detached { await pool.release(agent) }
+        }
+
+        // Done Event
+        _ = client.tryWrite("event: done\ndata: {}\n\n")
+    }
+
+    private func speakersForRound(round: Int, totalRounds: Int, members: [[String: Any]], routing: String) -> [(Int, String)] {
+        let count = members.count
+        guard count > 0 else { return [] }
+
+        switch routing {
+        case "leader":
+            var pairs: [(Int, String)] = [(0, "@Alle")]
+            if count > 1 {
+                let responderIdx = 1 + ((round - 1) % (count - 1))
+                let leaderName = members[0]["name"] as? String ?? "Leader"
+                pairs.append((responderIdx, "@\(leaderName)"))
+            }
+            return pairs
+
+        case "round-robin":
+            let a = ((round - 1) * 2) % count
+            let b = ((round - 1) * 2 + 1) % count
+            let nameA = members[a]["name"] as? String ?? "?"
+            let nameB = members[b]["name"] as? String ?? "?"
+            return [(a, "@\(nameB)"), (b, "@\(nameA)")]
+
+        default: // sequential
+            return (0..<count).map { idx in
+                let prevName: String
+                if idx == 0 {
+                    prevName = round == 1 ? "@Alle" : (members.last?["name"] as? String ?? "@Alle")
+                } else {
+                    prevName = members[idx - 1]["name"] as? String ?? "@Alle"
+                }
+                return (idx, "@\(prevName)")
+            }
         }
     }
 

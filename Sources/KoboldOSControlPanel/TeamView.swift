@@ -17,7 +17,7 @@ struct TeamView: View {
     @State private var showRunOutput = false
     @State private var dragSourceNodeId: UUID? = nil
     @State private var isDraggingPort: Bool = false
-    @State private var dragSourceIsOutput: Bool = true
+    @State private var dragSourceDir: PortDirection = .right
     @State private var portDragLocation: CGPoint = .zero
     // Agent-Builder
     @State private var agentBuilderText: String = ""
@@ -306,17 +306,20 @@ struct TeamView: View {
                     for conn in connections {
                         guard let from = nodes.first(where: { $0.id == conn.sourceNodeId }),
                               let to = nodes.first(where: { $0.id == conn.targetNodeId }) else { continue }
-                        let fromPt = CGPoint(x: from.x + 130, y: from.y + 35)
-                        let toPt = CGPoint(x: to.x, y: to.y + 35)
+                        let fromPt = conn.srcDir.point(nodeX: from.x, nodeY: from.y)
+                        let toPt = conn.tgtDir.point(nodeX: to.x, nodeY: to.y)
+                        let dist = hypot(toPt.x - fromPt.x, toPt.y - fromPt.y)
+                        let cpOffset = max(40, min(120, dist * 0.35))
+                        let c1Off = conn.srcDir.controlOffset(cpOffset)
+                        let c2Off = conn.tgtDir.controlOffset(cpOffset)
                         var path = Path()
                         path.move(to: fromPt)
                         path.addCurve(
                             to: toPt,
-                            control1: CGPoint(x: fromPt.x + 60, y: fromPt.y),
-                            control2: CGPoint(x: toPt.x - 60, y: toPt.y)
+                            control1: CGPoint(x: fromPt.x + c1Off.width, y: fromPt.y + c1Off.height),
+                            control2: CGPoint(x: toPt.x + c2Off.width, y: toPt.y + c2Off.height)
                         )
 
-                        // Error-Connections: rote gestrichelte Linie; Normal: grüne durchgezogene
                         let isError = conn.connectionType == .error
                         let lineColor: Color = isError ? .red.opacity(0.6) : .koboldEmerald.opacity(0.5)
                         if isError {
@@ -325,13 +328,17 @@ struct TeamView: View {
                             ctx.stroke(path, with: .color(lineColor), lineWidth: 2)
                         }
 
-                        // Arrow head (rot für Error, grün für Normal)
+                        // Arrow head
                         let arrowColor: Color = isError ? .red.opacity(0.7) : .koboldEmerald.opacity(0.7)
-                        let arrowPt = CGPoint(x: toPt.x - 4, y: toPt.y)
+                        let dx = toPt.x - (toPt.x + c2Off.width)
+                        let dy = toPt.y - (toPt.y + c2Off.height)
+                        let al = max(1, hypot(dx, dy))
+                        let ux = dx / al, uy = dy / al
+                        let px = -uy, py = ux
                         var arrowPath = Path()
-                        arrowPath.move(to: CGPoint(x: arrowPt.x - 8, y: arrowPt.y - 6))
-                        arrowPath.addLine(to: arrowPt)
-                        arrowPath.addLine(to: CGPoint(x: arrowPt.x - 8, y: arrowPt.y + 6))
+                        arrowPath.move(to: CGPoint(x: toPt.x - ux * 8 + px * 5, y: toPt.y - uy * 8 + py * 5))
+                        arrowPath.addLine(to: toPt)
+                        arrowPath.addLine(to: CGPoint(x: toPt.x - ux * 8 - px * 5, y: toPt.y - uy * 8 - py * 5))
                         ctx.stroke(arrowPath, with: .color(arrowColor), lineWidth: 1.5)
                     }
                 }
@@ -339,15 +346,16 @@ struct TeamView: View {
                 // Connection preview line (while dragging from port)
                 if isDraggingPort, let srcId = dragSourceNodeId,
                    let srcNode = nodes.first(where: { $0.id == srcId }) {
-                    let fromPt = dragSourceIsOutput
-                        ? CGPoint(x: srcNode.x + 130, y: srcNode.y + 35)
-                        : CGPoint(x: srcNode.x, y: srcNode.y + 35)
+                    let fromPt = dragSourceDir.point(nodeX: srcNode.x, nodeY: srcNode.y)
+                    let dist = hypot(portDragLocation.x - fromPt.x, portDragLocation.y - fromPt.y)
+                    let cpOff = max(30, min(80, dist * 0.3))
+                    let c1 = dragSourceDir.controlOffset(cpOff)
                     Path { path in
                         path.move(to: fromPt)
                         path.addCurve(
                             to: portDragLocation,
-                            control1: CGPoint(x: fromPt.x + 40, y: fromPt.y),
-                            control2: CGPoint(x: portDragLocation.x - 40, y: portDragLocation.y)
+                            control1: CGPoint(x: fromPt.x + c1.width, y: fromPt.y + c1.height),
+                            control2: portDragLocation
                         )
                     }
                     .stroke(Color.koboldEmerald.opacity(0.7), style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
@@ -359,13 +367,13 @@ struct TeamView: View {
                         node: $node,
                         isSelected: selectedNodeId == node.id,
                         isRunning: isRunning,
-                        onPortDragStart: { nodeId, isOutput in
+                        onPortDragStart: { nodeId, dir in
                             dragSourceNodeId = nodeId
-                            dragSourceIsOutput = isOutput
+                            dragSourceDir = dir
                             isDraggingPort = true
                         },
                         onPortDragEnd: { nodeId, dropPoint in
-                            handlePortDrop(sourceNodeId: nodeId, isOutput: dragSourceIsOutput, dropPoint: dropPoint)
+                            handlePortDrop(sourceNodeId: nodeId, sourceDir: dragSourceDir, dropPoint: dropPoint)
                             isDraggingPort = false
                             dragSourceNodeId = nil
                         },
@@ -502,37 +510,41 @@ struct TeamView: View {
 
     // MARK: - Port Connection Drop
 
-    func handlePortDrop(sourceNodeId: UUID, isOutput: Bool, dropPoint: CGPoint) {
-        // Find the target node closest to the drop point
+    func handlePortDrop(sourceNodeId: UUID, sourceDir: PortDirection, dropPoint: CGPoint) {
         let hitThreshold: CGFloat = 60
         var bestTarget: UUID? = nil
+        var bestTargetDir: PortDirection = .left
         var bestDist: CGFloat = .infinity
+        let allDirs: [PortDirection] = [.top, .right, .bottom, .left]
 
         for node in nodes where node.id != sourceNodeId {
-            // Target port position: left port (input) = node.x, right port (output) = node.x + 130
-            let targetPt = isOutput
-                ? CGPoint(x: node.x, y: node.y + 35)         // drop on input port
-                : CGPoint(x: node.x + 130, y: node.y + 35)   // drop on output port
-            let dist = hypot(dropPoint.x - targetPt.x, dropPoint.y - targetPt.y)
-            if dist < hitThreshold && dist < bestDist {
-                bestDist = dist
-                bestTarget = node.id
+            for dir in allDirs {
+                let pt = dir.point(nodeX: node.x, nodeY: node.y)
+                let dist = hypot(dropPoint.x - pt.x, dropPoint.y - pt.y)
+                if dist < hitThreshold && dist < bestDist {
+                    bestDist = dist
+                    bestTarget = node.id
+                    bestTargetDir = dir
+                }
             }
         }
 
         guard let targetId = bestTarget else { return }
+        guard sourceNodeId != targetId else { return }
 
-        // Determine source/target based on port type
-        let (src, tgt) = isOutput ? (sourceNodeId, targetId) : (targetId, sourceNodeId)
-
-        // Check for duplicate
-        let exists = connections.contains { $0.sourceNodeId == src && $0.targetNodeId == tgt }
+        // Duplikat-Check (gleiche Nodes + gleiche Ports)
+        let exists = connections.contains {
+            $0.sourceNodeId == sourceNodeId && $0.targetNodeId == targetId
+            && $0.srcDir == sourceDir && $0.tgtDir == bestTargetDir
+        }
         guard !exists else { return }
 
-        // Don't allow self-connections
-        guard src != tgt else { return }
-
-        connections.append(WorkflowConnection(sourceNodeId: src, targetNodeId: tgt))
+        connections.append(WorkflowConnection(
+            sourceNodeId: sourceNodeId,
+            targetNodeId: targetId,
+            sourceDirection: sourceDir,
+            targetDirection: bestTargetDir
+        ))
         saveWorkflowState()
     }
 
@@ -1385,20 +1397,51 @@ enum ConnectionType: String, Codable {
     case error  = "error"
 }
 
+enum PortDirection: String, Codable {
+    case top, right, bottom, left
+
+    /// Port-Position relativ zum Node-Ursprung (top-left). Node ist 130x70.
+    func point(nodeX: CGFloat, nodeY: CGFloat, nodeH: CGFloat = 70) -> CGPoint {
+        switch self {
+        case .top:    return CGPoint(x: nodeX + 65, y: nodeY)
+        case .right:  return CGPoint(x: nodeX + 130, y: nodeY + nodeH / 2)
+        case .bottom: return CGPoint(x: nodeX + 65, y: nodeY + nodeH)
+        case .left:   return CGPoint(x: nodeX, y: nodeY + nodeH / 2)
+        }
+    }
+
+    /// Bezier-Control-Point-Offset-Richtung
+    func controlOffset(_ offset: CGFloat) -> CGSize {
+        switch self {
+        case .top:    return CGSize(width: 0, height: -offset)
+        case .right:  return CGSize(width: offset, height: 0)
+        case .bottom: return CGSize(width: 0, height: offset)
+        case .left:   return CGSize(width: -offset, height: 0)
+        }
+    }
+}
+
 struct WorkflowConnection: Identifiable, Codable, Equatable {
     let id: UUID
     var sourceNodeId: UUID
     var targetNodeId: UUID
-    var sourcePort: Int  // 0 = right
-    var targetPort: Int  // 0 = left
-    var connectionType: ConnectionType = .normal  // v0.4: Error-Branching
+    var sourcePort: Int  // Legacy, kept for Codable compat
+    var targetPort: Int  // Legacy, kept for Codable compat
+    var sourceDirection: PortDirection?  // nil → .right (backward compat)
+    var targetDirection: PortDirection?  // nil → .left  (backward compat)
+    var connectionType: ConnectionType = .normal
 
-    init(id: UUID = UUID(), sourceNodeId: UUID, targetNodeId: UUID, sourcePort: Int = 0, targetPort: Int = 0, connectionType: ConnectionType = .normal) {
+    var srcDir: PortDirection { sourceDirection ?? .right }
+    var tgtDir: PortDirection { targetDirection ?? .left }
+
+    init(id: UUID = UUID(), sourceNodeId: UUID, targetNodeId: UUID, sourceDirection: PortDirection = .right, targetDirection: PortDirection = .left, connectionType: ConnectionType = .normal) {
         self.id = id
         self.sourceNodeId = sourceNodeId
         self.targetNodeId = targetNodeId
-        self.sourcePort = sourcePort
-        self.targetPort = targetPort
+        self.sourcePort = 0
+        self.targetPort = 0
+        self.sourceDirection = sourceDirection
+        self.targetDirection = targetDirection
         self.connectionType = connectionType
     }
 }
@@ -1612,7 +1655,7 @@ struct WorkflowNodeCard: View {
     @Binding var node: WorkflowNode
     let isSelected: Bool
     let isRunning: Bool
-    var onPortDragStart: ((UUID, Bool) -> Void)? = nil  // (nodeId, isOutputPort)
+    var onPortDragStart: ((UUID, PortDirection) -> Void)? = nil  // (nodeId, portDir)
     var onPortDragEnd: ((UUID, CGPoint) -> Void)? = nil  // (nodeId, globalPosition)
     var onPortDragUpdate: ((CGPoint) -> Void)? = nil
     var onOpenChat: (() -> Void)? = nil  // Navigate to workflow chat session
@@ -1721,33 +1764,24 @@ struct WorkflowNodeCard: View {
             )
             .cornerRadius(8)
 
-            // Left port (input) — draggable for connections
-            PortCircle(color: node.type.color)
-                .offset(x: -65, y: 0)
-                .gesture(
-                    DragGesture(coordinateSpace: .named("canvas"))
-                        .onChanged { value in
-                            onPortDragStart?(node.id, false)
-                            onPortDragUpdate?(value.location)
-                        }
-                        .onEnded { value in
-                            onPortDragEnd?(node.id, value.location)
-                        }
-                )
-
-            // Right port (output) — draggable for connections
-            PortCircle(color: node.type.color)
-                .offset(x: 65, y: 0)
-                .gesture(
-                    DragGesture(coordinateSpace: .named("canvas"))
-                        .onChanged { value in
-                            onPortDragStart?(node.id, true)
-                            onPortDragUpdate?(value.location)
-                        }
-                        .onEnded { value in
-                            onPortDragEnd?(node.id, value.location)
-                        }
-                )
+            // 4 Ports: top, right, bottom, left
+            ForEach([PortDirection.top, .right, .bottom, .left], id: \.self) { dir in
+                PortCircle(color: node.type.color)
+                    .offset(
+                        x: dir == .left ? -65 : dir == .right ? 65 : 0,
+                        y: dir == .top ? -35 : dir == .bottom ? 35 : 0
+                    )
+                    .gesture(
+                        DragGesture(coordinateSpace: .named("canvas"))
+                            .onChanged { value in
+                                onPortDragStart?(node.id, dir)
+                                onPortDragUpdate?(value.location)
+                            }
+                            .onEnded { value in
+                                onPortDragEnd?(node.id, value.location)
+                            }
+                    )
+            }
         }
         .shadow(
             color: isNodeRunning ? Color.green.opacity(0.5) :

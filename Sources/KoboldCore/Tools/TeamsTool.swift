@@ -36,7 +36,7 @@ public struct TeamsTool: Tool, Sendable {
         let daemonPort = UserDefaults.standard.integer(forKey: "kobold.daemon.port")
         let port = daemonPort > 0 ? daemonPort : 8080
         let baseURL = "http://localhost:\(port)"
-        let token = UserDefaults.standard.string(forKey: "kobold.auth.token") ?? ""
+        let token = UserDefaults.standard.string(forKey: "kobold.authToken") ?? ""
 
         switch action {
         case "list_teams":

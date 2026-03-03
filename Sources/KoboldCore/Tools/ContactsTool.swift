@@ -5,7 +5,7 @@ import Contacts
 // MARK: - ContactsTool (macOS implementation)
 public struct ContactsTool: Tool, @unchecked Sendable {
     public let name = "contacts"
-    public let description = "Apple-Kontakte durchsuchen (search, list_recent) und CRM verwalten (crm_list, crm_create, crm_update, crm_delete, crm_search)"
+    public let description = "Apple Contacts durchsuchen | CRM-Datensätze erstellen/aktualisieren/löschen"
     public let riskLevel: RiskLevel = .low
 
     public var schema: ToolSchema {
@@ -145,7 +145,7 @@ public struct ContactsTool: Tool, @unchecked Sendable {
         let baseURL = "http://localhost:\(port)"
 
         // Bearer token from settings
-        let token = UserDefaults.standard.string(forKey: "kobold.auth.token") ?? ""
+        let token = UserDefaults.standard.string(forKey: "kobold.authToken") ?? ""
 
         switch action {
         case "crm_list":

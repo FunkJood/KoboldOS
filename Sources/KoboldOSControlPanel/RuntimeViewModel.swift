@@ -1185,9 +1185,15 @@ public class RuntimeViewModel: ObservableObject {
             messages = pending.count > 10 ? Array(pending.suffix(10)) : pending
             // Volle Messages bleiben in pendingMessages für conversationHistory
         } else if let session = sessions.first(where: { $0.id == sessionId }), !session.messages.isEmpty {
-            let allMessages = session.messages.map { $0.toChatMessage() }
-            pendingMessages[sessionId] = allMessages
-            messages = allMessages.count > 10 ? Array(allMessages.suffix(10)) : allMessages
+            // Lazy-Dekodierung: Nur letzte 10 sofort dekodieren (verhindert UI-Freeze bei langen Chats)
+            let lastN = Array(session.messages.suffix(10))
+            messages = lastN.map { $0.toChatMessage() }
+            // Volle History im Hintergrund dekodieren für conversationHistory
+            let allCodable = session.messages
+            Task { [weak self] in
+                let all = allCodable.map { $0.toChatMessage() }
+                await MainActor.run { self?.pendingMessages[sessionId] = all }
+            }
         } else {
             messages = []
             pendingMessages[sessionId] = []

@@ -1,71 +1,54 @@
 import SwiftUI
 import KoboldCore
 
-// MARK: - SecretsManagementView (Keychain-backed)
+// MARK: - SecretsManagementView (UserDefaults-backed, synced with WebGUI)
 
 struct SecretsManagementView: View {
     @EnvironmentObject var l10n: LocalizationManager
     private var lang: AppLanguage { l10n.language }
-    @State private var secrets: [SecretEntry] = []
-    @State private var newKeyName: String = ""
-    @State private var newKeyValue: String = ""
-    @State private var selectedCategory: SecretCategory = .apiKey
-    @State private var showingAddSheet: Bool = false
-    @State private var showValue: Set<String> = []
-    @State private var searchText: String = ""
-    @State private var statusMessage: String = ""
-    @State private var isLoading: Bool = false
 
-    struct SecretEntry: Identifiable {
-        let id: String // key name
-        let name: String
-        let category: SecretCategory
-        let maskedValue: String
-        var fullValue: String?
+    // Matches WebGUI kobold.vault.entries JSON format exactly
+    struct VaultEntry: Identifiable, Codable {
+        var id: Int
+        var name: String
+        var value: String
+        var tags: [String]
     }
 
-    enum SecretCategory: String, CaseIterable {
-        case apiKey     = "API-Key"
-        case password   = "Passwort"
-        case token      = "Token"
-        case credential = "Zugangsdaten"
-        case other      = "Sonstiges"
+    @State private var entries: [VaultEntry] = []
+    @State private var newName = ""
+    @State private var newValue = ""
+    @State private var newTags: Set<String> = []
+    @State private var showingAddSheet = false
+    @State private var showValue: Set<Int> = []
+    @State private var searchText = ""
+    @State private var filterTag: String? = nil
+    @State private var statusMessage = ""
+    @State private var isLoading = false
 
-        var icon: String {
-            switch self {
-            case .apiKey:     return "key.fill"
-            case .password:   return "lock.fill"
-            case .token:      return "lock.shield.fill"
-            case .credential: return "person.badge.key.fill"
-            case .other:      return "ellipsis.rectangle.fill"
-            }
-        }
+    static let allTags = ["passwort", "api-key", "token", "zugangsdaten", "mail", "sonstiges"]
+    static let tagColors: [String: Color] = [
+        "passwort": .red, "api-key": .koboldGold, "token": .koboldEmerald,
+        "zugangsdaten": .koboldGold, "mail": .blue, "sonstiges": .secondary
+    ]
+    static let tagIcons: [String: String] = [
+        "passwort": "lock.fill", "api-key": "key.fill", "token": "lock.shield.fill",
+        "zugangsdaten": "person.badge.key.fill", "mail": "envelope.fill", "sonstiges": "ellipsis.rectangle.fill"
+    ]
 
-        var color: Color {
-            switch self {
-            case .apiKey:     return .koboldGold
-            case .password:   return .red
-            case .token:      return .koboldEmerald
-            case .credential: return .koboldGold
-            case .other:      return .secondary
-            }
-        }
+    private static let udKey = "kobold.vault.entries"
 
-        func localizedName(_ lang: AppLanguage) -> String {
-            switch self {
-            case .apiKey:     return lang.catApiKey
-            case .password:   return lang.catPassword
-            case .token:      return lang.catToken
-            case .credential: return lang.catCredential
-            case .other:      return lang.catOther
-            }
+    var filteredEntries: [VaultEntry] {
+        var f = entries
+        if let tag = filterTag { f = f.filter { $0.tags.contains(tag) } }
+        if !searchText.isEmpty {
+            let s = searchText.lowercased()
+            f = f.filter { $0.name.lowercased().contains(s) || $0.tags.joined(separator: " ").lowercased().contains(s) }
         }
+        return f
     }
 
-    var filteredSecrets: [SecretEntry] {
-        if searchText.isEmpty { return secrets }
-        return secrets.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
-    }
+    // MARK: - Body
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -73,11 +56,10 @@ struct SecretsManagementView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(lang.passwordManager).font(.title2.bold())
-                    Text(l10n.language.secureKeychain).font(.caption).foregroundColor(.secondary)
+                    Text("Synchronisiert mit WebGUI").font(.caption).foregroundColor(.secondary)
                 }
                 Spacer()
 
-                // Search
                 HStack(spacing: 6) {
                     Image(systemName: "magnifyingglass").foregroundColor(.secondary).font(.system(size: 14.5))
                     TextField(lang.searchDots, text: $searchText)
@@ -96,6 +78,15 @@ struct SecretsManagementView: View {
 
             GlassDivider()
 
+            // Tag filter row
+            HStack(spacing: 6) {
+                tagPill(nil, label: "Alle")
+                ForEach(Self.allTags, id: \.self) { tag in
+                    tagPill(tag, label: tag.capitalized)
+                }
+            }
+            .padding(.horizontal, 24).padding(.vertical, 8)
+
             if isLoading {
                 VStack {
                     Spacer()
@@ -104,13 +95,22 @@ struct SecretsManagementView: View {
                     Spacer()
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if secrets.isEmpty {
+            } else if entries.isEmpty {
                 emptyState
+            } else if filteredEntries.isEmpty {
+                VStack {
+                    Spacer()
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 36)).foregroundColor(.secondary.opacity(0.4))
+                    Text("Keine Treffer").font(.callout).foregroundColor(.secondary)
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
                     VStack(spacing: 8) {
-                        ForEach(filteredSecrets) { secret in
-                            secretRow(secret)
+                        ForEach(filteredEntries) { entry in
+                            entryRow(entry)
                         }
                     }
                     .padding(20)
@@ -128,13 +128,11 @@ struct SecretsManagementView: View {
                 .background(Color.koboldPanel)
             }
 
-            // Security info footer
+            // Footer
             HStack(spacing: 16) {
-                Label("macOS Keychain", systemImage: "lock.shield.fill")
+                Label("UserDefaults Synced", systemImage: "arrow.triangle.2.circlepath")
                     .font(.system(size: 12.5)).foregroundColor(.secondary)
-                Label(l10n.language.encrypted, systemImage: "checkmark.seal.fill")
-                    .font(.system(size: 12.5)).foregroundColor(.secondary)
-                Label("\(secrets.count) \(l10n.language.entries)", systemImage: "key.fill")
+                Label("\(entries.count) \(l10n.language.entries)", systemImage: "key.fill")
                     .font(.system(size: 12.5)).foregroundColor(.secondary)
                 Spacer()
             }
@@ -142,10 +140,22 @@ struct SecretsManagementView: View {
             .background(Color.koboldPanel)
         }
         .background(ZStack { Color.koboldBackground; LinearGradient(colors: [Color.koboldEmerald.opacity(0.015), .clear, Color.koboldGold.opacity(0.01)], startPoint: .topLeading, endPoint: .bottomTrailing) })
-        .onAppear { loadSecrets() }
-        .sheet(isPresented: $showingAddSheet) {
-            addSecretSheet
+        .onAppear { loadEntries() }
+        .sheet(isPresented: $showingAddSheet) { addSheet }
+    }
+
+    // MARK: - Tag Pill
+
+    func tagPill(_ tag: String?, label: String) -> some View {
+        let active = filterTag == tag
+        return Button(action: { filterTag = filterTag == tag ? nil : tag }) {
+            Text(label)
+                .font(.system(size: 12.5, weight: active ? .semibold : .medium))
+                .foregroundColor(active ? .white : .secondary)
+                .padding(.horizontal, 10).padding(.vertical, 5)
+                .background(Capsule().fill(active ? Color.koboldEmerald : Color.koboldSurface))
         }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Empty State
@@ -169,38 +179,42 @@ struct SecretsManagementView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    // MARK: - Secret Row
+    // MARK: - Entry Row
 
-    func secretRow(_ secret: SecretEntry) -> some View {
-        GlassCard(padding: 12, cornerRadius: 12) {
+    func entryRow(_ entry: VaultEntry) -> some View {
+        let primaryTag = entry.tags.first ?? "sonstiges"
+        let color = Self.tagColors[primaryTag] ?? .secondary
+        let icon = Self.tagIcons[primaryTag] ?? "ellipsis.rectangle.fill"
+
+        return GlassCard(padding: 12, cornerRadius: 12) {
             HStack(spacing: 12) {
-                // Category icon
-                Image(systemName: secret.category.icon)
+                Image(systemName: icon)
                     .font(.system(size: 18.5))
-                    .foregroundColor(secret.category.color)
+                    .foregroundColor(color)
                     .frame(width: 32, height: 32)
-                    .background(secret.category.color.opacity(0.12))
+                    .background(color.opacity(0.12))
                     .cornerRadius(8)
 
-                // Name + Value
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 6) {
-                        Text(secret.name)
+                        Text(entry.name)
                             .font(.system(size: 15.5, weight: .semibold))
-                        Text(secret.category.localizedName(lang))
-                            .font(.system(size: 11.5, weight: .medium))
-                            .foregroundColor(secret.category.color)
-                            .padding(.horizontal, 5).padding(.vertical, 2)
-                            .background(Capsule().fill(secret.category.color.opacity(0.15)))
+                        ForEach(entry.tags, id: \.self) { tag in
+                            Text(tag)
+                                .font(.system(size: 11.5, weight: .medium))
+                                .foregroundColor(Self.tagColors[tag] ?? .secondary)
+                                .padding(.horizontal, 5).padding(.vertical, 2)
+                                .background(Capsule().fill((Self.tagColors[tag] ?? .secondary).opacity(0.15)))
+                        }
                     }
-                    if showValue.contains(secret.id), let full = secret.fullValue {
-                        Text(full)
+                    if showValue.contains(entry.id) {
+                        Text(entry.value)
                             .font(.system(size: 13.5, design: .monospaced))
                             .foregroundColor(.secondary)
                             .textSelection(.enabled)
                             .lineLimit(2)
                     } else {
-                        Text(secret.maskedValue)
+                        Text(maskValue(entry.value))
                             .font(.system(size: 13.5, design: .monospaced))
                             .foregroundColor(.secondary.opacity(0.6))
                     }
@@ -208,11 +222,9 @@ struct SecretsManagementView: View {
 
                 Spacer()
 
-                // Actions
                 HStack(spacing: 4) {
-                    // Toggle visibility
-                    Button(action: { toggleVisibility(secret) }) {
-                        Image(systemName: showValue.contains(secret.id) ? "eye.slash.fill" : "eye.fill")
+                    Button(action: { toggleVisibility(entry) }) {
+                        Image(systemName: showValue.contains(entry.id) ? "eye.slash.fill" : "eye.fill")
                             .font(.system(size: 14.5))
                             .foregroundColor(.secondary)
                             .frame(width: 28, height: 28)
@@ -222,8 +234,7 @@ struct SecretsManagementView: View {
                     .buttonStyle(.plain)
                     .help(lang.showHide)
 
-                    // Copy
-                    Button(action: { copySecret(secret) }) {
+                    Button(action: { copyEntry(entry) }) {
                         Image(systemName: "doc.on.doc")
                             .font(.system(size: 14.5))
                             .foregroundColor(.secondary)
@@ -234,8 +245,7 @@ struct SecretsManagementView: View {
                     .buttonStyle(.plain)
                     .help(lang.copyToClipboard)
 
-                    // Delete
-                    Button(action: { deleteSecret(secret) }) {
+                    Button(action: { deleteEntry(entry) }) {
                         Image(systemName: "trash")
                             .font(.system(size: 14.5))
                             .foregroundColor(.red.opacity(0.7))
@@ -250,11 +260,10 @@ struct SecretsManagementView: View {
         }
     }
 
-    // MARK: - Add Secret Sheet
+    // MARK: - Add Sheet
 
-    var addSecretSheet: some View {
+    var addSheet: some View {
         VStack(spacing: 0) {
-            // Sheet header
             HStack {
                 Text(lang.newSecret).font(.headline)
                 Spacer()
@@ -268,22 +277,25 @@ struct SecretsManagementView: View {
             Divider()
 
             VStack(alignment: .leading, spacing: 16) {
-                // Category picker
+                // Tags (multi-select)
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(lang.categoryLabel).font(.caption.weight(.semibold)).foregroundColor(.secondary)
+                    Text("Tags").font(.caption.weight(.semibold)).foregroundColor(.secondary)
                     HStack(spacing: 8) {
-                        ForEach(SecretCategory.allCases, id: \.self) { cat in
-                            Button(action: { selectedCategory = cat }) {
+                        ForEach(Self.allTags, id: \.self) { tag in
+                            Button(action: {
+                                if newTags.contains(tag) { newTags.remove(tag) }
+                                else { newTags.insert(tag) }
+                            }) {
                                 HStack(spacing: 4) {
-                                    Image(systemName: cat.icon).font(.system(size: 13.5))
-                                    Text(cat.localizedName(lang)).font(.system(size: 13.5, weight: .medium))
+                                    Image(systemName: Self.tagIcons[tag] ?? "tag").font(.system(size: 13.5))
+                                    Text(tag.capitalized).font(.system(size: 13.5, weight: .medium))
                                 }
-                                .foregroundColor(selectedCategory == cat ? .white : cat.color)
+                                .foregroundColor(newTags.contains(tag) ? .white : (Self.tagColors[tag] ?? .secondary))
                                 .padding(.horizontal, 10).padding(.vertical, 6)
                                 .background(
-                                    selectedCategory == cat
-                                    ? Capsule().fill(cat.color)
-                                    : Capsule().fill(cat.color.opacity(0.12))
+                                    Capsule().fill(newTags.contains(tag)
+                                        ? (Self.tagColors[tag] ?? .secondary)
+                                        : (Self.tagColors[tag] ?? .secondary).opacity(0.12))
                                 )
                             }
                             .buttonStyle(.plain)
@@ -294,13 +306,13 @@ struct SecretsManagementView: View {
                 // Name field
                 VStack(alignment: .leading, spacing: 6) {
                     Text(lang.nameDesignation).font(.caption.weight(.semibold)).foregroundColor(.secondary)
-                    GlassTextField(text: $newKeyName, placeholder: "z.B. OpenAI API Key")
+                    GlassTextField(text: $newName, placeholder: "z.B. OpenAI API Key")
                 }
 
                 // Value field
                 VStack(alignment: .leading, spacing: 6) {
                     Text(lang.valueKey).font(.caption.weight(.semibold)).foregroundColor(.secondary)
-                    SecureField(lang.enterSecretValue, text: $newKeyValue)
+                    SecureField(lang.enterSecretValue, text: $newValue)
                         .textFieldStyle(.plain)
                         .padding(.horizontal, 12).padding(.vertical, 9)
                         .background(
@@ -309,167 +321,122 @@ struct SecretsManagementView: View {
                                 .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white.opacity(0.15), lineWidth: 1))
                         )
                 }
-
-                // Common presets
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(lang.quickTemplates).font(.caption.weight(.semibold)).foregroundColor(.secondary)
-                    HStack(spacing: 6) {
-                        presetButton("OpenAI", name: "openai_api_key", category: .apiKey)
-                        presetButton("Anthropic", name: "anthropic_api_key", category: .apiKey)
-                        presetButton("GitHub", name: "github_token", category: .token)
-                        presetButton("SSH-Key", name: "ssh_passphrase", category: .password)
-                    }
-                }
             }
             .padding(20)
 
             Divider()
 
-            // Actions
             HStack {
                 Button(lang.cancel) { showingAddSheet = false }
                     .keyboardShortcut(.escape, modifiers: [])
                 Spacer()
-                GlassButton(title: l10n.language.save, icon: "lock.fill", isPrimary: true, isDisabled: newKeyName.isEmpty || newKeyValue.isEmpty) {
-                    saveNewSecret()
+                GlassButton(title: l10n.language.save, icon: "lock.fill", isPrimary: true, isDisabled: newName.isEmpty || newValue.isEmpty) {
+                    saveNewEntry()
                 }
             }
             .padding(20)
         }
-        .frame(width: 520, height: 440)
+        .frame(width: 560, height: 400)
         .background(ZStack { Color.koboldBackground; LinearGradient(colors: [Color.koboldEmerald.opacity(0.015), .clear, Color.koboldGold.opacity(0.01)], startPoint: .topLeading, endPoint: .bottomTrailing) })
     }
 
-    func presetButton(_ label: String, name: String, category: SecretCategory) -> some View {
-        Button(action: {
-            newKeyName = name
-            selectedCategory = category
-        }) {
-            Text(label)
-                .font(.system(size: 12.5, weight: .medium))
-                .foregroundColor(.secondary)
-                .padding(.horizontal, 8).padding(.vertical, 4)
-                .background(Capsule().fill(Color.koboldSurface))
-        }
-        .buttonStyle(.plain)
-    }
+    // MARK: - Storage (UserDefaults — synced with WebGUI)
 
-    // MARK: - Actions
-
-    private func loadSecrets() {
+    private func loadEntries() {
         isLoading = true
+        if let raw = UserDefaults.standard.string(forKey: Self.udKey),
+           let data = raw.data(using: .utf8),
+           let decoded = try? JSONDecoder().decode([VaultEntry].self, from: data) {
+            entries = decoded
+        } else if let data = UserDefaults.standard.data(forKey: Self.udKey),
+                  let decoded = try? JSONDecoder().decode([VaultEntry].self, from: data) {
+            // Fallback: stored as Data (e.g. from JSONEncoder)
+            entries = decoded
+        }
+
+        // Migration: Keychain → UserDefaults (einmalig)
         Task {
-            let keys = await SecretStore.shared.allKeys()
-            var entries: [SecretEntry] = []
-            for key in keys {
-                let cat = guessCategory(key)
-                // Don't load values eagerly — avoids Keychain prompts on section open
-                entries.append(SecretEntry(
-                    id: key,
-                    name: key,
-                    category: cat,
-                    maskedValue: String(repeating: "\u{2022}", count: 12),
-                    fullValue: nil
-                ))
+            let keychainKeys = await SecretStore.shared.allKeys()
+            var migrated = 0
+            for key in keychainKeys {
+                if !entries.contains(where: { $0.name.lowercased() == key.lowercased() }) {
+                    if let val = await SecretStore.shared.get(key), !val.isEmpty {
+                        let tag = guessTag(key)
+                        entries.append(VaultEntry(
+                            id: Int(Date().timeIntervalSince1970 * 1000) + Int.random(in: 0...999),
+                            name: key,
+                            value: val,
+                            tags: [tag]
+                        ))
+                        migrated += 1
+                    }
+                }
             }
-            await MainActor.run {
-                secrets = entries
-                isLoading = false
+            if migrated > 0 {
+                persistEntries()
+                await MainActor.run {
+                    statusMessage = "\(migrated) Einträge aus Keychain migriert"
+                    clearStatusAfterDelay()
+                }
             }
+            await MainActor.run { isLoading = false }
         }
     }
 
-    private func saveNewSecret() {
-        guard !newKeyName.isEmpty, !newKeyValue.isEmpty else { return }
-        let name = newKeyName.trimmingCharacters(in: .whitespaces)
-            .replacingOccurrences(of: " ", with: "_")
-            .lowercased()
-        let value = newKeyValue
-        let cat = selectedCategory
-        Task {
-            await SecretStore.shared.set(value, forKey: name)
-            await MainActor.run {
-                secrets.append(SecretEntry(
-                    id: name,
-                    name: name,
-                    category: cat,
-                    maskedValue: maskValue(value),
-                    fullValue: value
-                ))
-                newKeyName = ""
-                newKeyValue = ""
-                showingAddSheet = false
-                statusMessage = "'\(name)' \(lang.secretSaved)"
-                clearStatusAfterDelay()
-            }
+    private func persistEntries() {
+        if let data = try? JSONEncoder().encode(entries),
+           let str = String(data: data, encoding: .utf8) {
+            UserDefaults.standard.set(str, forKey: Self.udKey)
         }
     }
 
-    private func deleteSecret(_ secret: SecretEntry) {
-        Task {
-            await SecretStore.shared.delete(secret.id)
-            await MainActor.run {
-                secrets.removeAll { $0.id == secret.id }
-                showValue.remove(secret.id)
-                statusMessage = "'\(secret.name)' \(lang.secretDeleted)"
-                clearStatusAfterDelay()
-            }
-        }
+    private func saveNewEntry() {
+        guard !newName.isEmpty, !newValue.isEmpty else { return }
+        let tags = newTags.isEmpty ? ["sonstiges"] : Array(newTags)
+        let entry = VaultEntry(
+            id: Int(Date().timeIntervalSince1970 * 1000) + Int.random(in: 0...999),
+            name: newName.trimmingCharacters(in: .whitespaces),
+            value: newValue,
+            tags: tags
+        )
+        entries.append(entry)
+        persistEntries()
+        newName = ""
+        newValue = ""
+        newTags = []
+        showingAddSheet = false
+        statusMessage = "'\(entry.name)' gespeichert"
+        clearStatusAfterDelay()
     }
 
-    private func copySecret(_ secret: SecretEntry) {
-        // Read from Keychain on demand (triggers system auth only for copy action)
-        Task {
-            let value: String
-            if let cached = secret.fullValue {
-                value = cached
-            } else {
-                value = await SecretStore.shared.get(secret.id) ?? ""
-            }
-            await MainActor.run {
+    private func deleteEntry(_ entry: VaultEntry) {
+        entries.removeAll { $0.id == entry.id }
+        showValue.remove(entry.id)
+        persistEntries()
+        statusMessage = "'\(entry.name)' gelöscht"
+        clearStatusAfterDelay()
+    }
+
+    private func copyEntry(_ entry: VaultEntry) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(entry.value, forType: .string)
+        statusMessage = "'\(entry.name)' kopiert (30s)"
+        let val = entry.value
+        DispatchQueue.main.asyncAfter(deadline: .now() + 30) {
+            if NSPasteboard.general.string(forType: .string) == val {
                 NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(value, forType: .string)
-                statusMessage = "'\(secret.name)' \(lang.secretCopied)"
-                DispatchQueue.main.asyncAfter(deadline: .now() + 30) {
-                    if NSPasteboard.general.string(forType: .string) == value {
-                        NSPasteboard.general.clearContents()
-                    }
-                }
-                clearStatusAfterDelay()
             }
         }
+        clearStatusAfterDelay()
     }
 
-    private func toggleVisibility(_ secret: SecretEntry) {
-        if showValue.contains(secret.id) {
-            showValue.remove(secret.id)
+    private func toggleVisibility(_ entry: VaultEntry) {
+        if showValue.contains(entry.id) {
+            showValue.remove(entry.id)
         } else {
-            // Lazy-load value from Keychain only when user reveals it
-            if secret.fullValue == nil {
-                Task {
-                    let value = await SecretStore.shared.get(secret.id) ?? ""
-                    await MainActor.run {
-                        if let idx = secrets.firstIndex(where: { $0.id == secret.id }) {
-                            secrets[idx].fullValue = value
-                            secrets[idx] = SecretEntry(
-                                id: secrets[idx].id,
-                                name: secrets[idx].name,
-                                category: secrets[idx].category,
-                                maskedValue: maskValue(value),
-                                fullValue: value
-                            )
-                        }
-                        showValue.insert(secret.id)
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 10) {
-                            showValue.remove(secret.id)
-                        }
-                    }
-                }
-            } else {
-                showValue.insert(secret.id)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 10) {
-                    showValue.remove(secret.id)
-                }
+            showValue.insert(entry.id)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 10) {
+                showValue.remove(entry.id)
             }
         }
     }
@@ -481,15 +448,14 @@ struct SecretsManagementView: View {
         return "\(value.prefix(4))\(String(repeating: "•", count: min(value.count - 8, 16)))\(value.suffix(4))"
     }
 
-    private func guessCategory(_ key: String) -> SecretCategory {
+    private func guessTag(_ key: String) -> String {
         let k = key.lowercased()
-        if k.contains("api") || k.contains("key")      { return .apiKey }
-        if k.contains("token") || k.contains("bearer")  { return .token }
-        if k.contains("password") || k.contains("pass")
-            || k.contains("passphrase")                  { return .password }
-        if k.contains("user") || k.contains("login")
-            || k.contains("cred")                        { return .credential }
-        return .other
+        if k.contains("api") || k.contains("key") { return "api-key" }
+        if k.contains("token") || k.contains("bearer") { return "token" }
+        if k.contains("password") || k.contains("pass") { return "passwort" }
+        if k.contains("user") || k.contains("login") || k.contains("cred") { return "zugangsdaten" }
+        if k.contains("mail") || k.contains("email") { return "mail" }
+        return "sonstiges"
     }
 
     private func clearStatusAfterDelay() {

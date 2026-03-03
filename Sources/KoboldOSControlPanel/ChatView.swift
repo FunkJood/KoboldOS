@@ -10,6 +10,7 @@ struct ChatView: View {
     @State private var pendingAttachments: [MediaAttachment] = []
     @AppStorage("kobold.koboldName") private var koboldName: String = "KoboldOS"
     @AppStorage("kobold.showAgentSteps") private var showAgentSteps: Bool = true
+    @AppStorage("kobold.showAdvancedStats") private var showAdvancedStats: Bool = false
     @AppStorage("kobold.chat.fontSize") private var chatFontSize: Double = 16.5
     // Notifications moved to GlobalHeaderBar
     @State private var scrollDebounceTask: Task<Void, Never>?
@@ -30,14 +31,14 @@ struct ChatView: View {
                     LazyVStack(alignment: .leading, spacing: 10) {
                         if viewModel.messages.isEmpty { emptyState }
 
-                        // E1: Range-basiertes ForEach — kein Array-Copy bei jedem Render
-                        let allMessages = viewModel.messages
-                        let startIndex = max(0, allMessages.count - visibleMessageCount)
+                        // E1: Direkte Referenz auf viewModel.messages — KEIN Array-Copy (Value-Type!)
+                        let msgCount = viewModel.messages.count
+                        let startIndex = max(0, msgCount - visibleMessageCount)
 
                         if startIndex > 0 {
                             Button {
                                 withAnimation(.easeOut(duration: 0.2)) {
-                                    visibleMessageCount = min(visibleMessageCount + 10, allMessages.count)
+                                    visibleMessageCount = min(visibleMessageCount + 10, msgCount)
                                 }
                             } label: {
                                 HStack(spacing: 6) {
@@ -56,8 +57,8 @@ struct ChatView: View {
                         // E2: newestThinkingId aus RuntimeViewModel (O(1) statt O(n) Suche)
                         let newestThinkingId = viewModel.newestThinkingId
 
-                        ForEach(startIndex..<allMessages.count, id: \.self) { idx in
-                            let msg = allMessages[idx]
+                        ForEach(startIndex..<msgCount, id: \.self) { idx in
+                            let msg = viewModel.messages[idx]
                             messageBubble(for: msg, newestThinkingId: newestThinkingId)
                                 .id(msg.id)
                         }
@@ -202,6 +203,12 @@ struct ChatView: View {
                 GlassChatBubble(message: text, isUser: false, timestamp: msg.timestamp)
                 if let c = msg.confidence {
                     ConfidenceBadge(value: c)
+                }
+                if showAdvancedStats && !text.isEmpty {
+                    Text("~\(text.count / 4) tokens · \(text.count) chars")
+                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                        .foregroundColor(.secondary.opacity(0.5))
+                        .padding(.leading, 8)
                 }
             }
         case .toolCall(let name, let args):
