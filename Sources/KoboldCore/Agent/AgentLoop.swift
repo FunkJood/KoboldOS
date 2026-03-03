@@ -478,12 +478,14 @@ public actor AgentLoop {
         let selfCheckEnabled = UserDefaults.standard.bool(forKey: "kobold.perm.selfCheck")
         let selfCheckPrompt: String
         if autonomyLevel >= 3 && selfCheckEnabled {
-            selfCheckPrompt = "\n\n# Autonomer Modus\nDu bist vollständig autonom. Prüfe deine Arbeit, teste Code, korrigiere Fehler selbstständig. Frage nur bei destruktiven Aktionen (rm -rf, Daten löschen) nach."
+            selfCheckPrompt = "\n\n# Modus\nVollautonomer Modus. Tools direkt nutzen. Nur bei destruktiven Aktionen nachfragen."
         } else if autonomyLevel >= 2 {
-            selfCheckPrompt = "\n\n# Werkzeug-Nutzung\nDu darfst alle aktivierten Tools selbstständig nutzen ohne nachzufragen. Handle Aufgaben direkt. Frage NUR bei potenziell destruktiven Aktionen (Dateien löschen, System ändern) nach Bestätigung."
+            selfCheckPrompt = "\n\n# Modus\nTools direkt nutzen. Nur bei destruktiven Aktionen (Dateien löschen, System ändern) nachfragen."
         } else {
-            selfCheckPrompt = "\n\n# Werkzeug-Nutzung\nDu darfst alle aktivierten Tools nutzen. Die Berechtigungen sind systemweit konfiguriert und gelten für alle Chats. Frage NICHT jedes Mal nach Erlaubnis — nutze die Tools direkt wenn die Aufgabe es erfordert. Frage nur bei destruktiven Aktionen (Dateien löschen, System ändern) nach Bestätigung."
+            selfCheckPrompt = "\n\n# Modus\nTools direkt nutzen wenn die Aufgabe es erfordert. Bei destruktiven Aktionen nachfragen."
         }
+
+        let askFirstPrompt = "\n\n# Rückfrage\nBei umfangreichen Aktionen (Code, Dateien, komplexe Aufgaben): Erst zusammenfassen + bestätigen lassen. Ausnahme: Wissensfragen, explizite Anweisungen, Follow-ups."
         let confidencePrompt = """
 
         # Confidence Self-Assessment
@@ -513,7 +515,7 @@ public actor AgentLoop {
         let ctxPercent = Int(TokenEstimator.usagePercent(estimatedTokens: ctxTokens, contextSize: contextWindowSize) * 100)
         let contextStatusPrompt = "\n\n# Kontext-Status\nNutzung: ~\(ctxTokens) / \(contextWindowSize) Tokens (\(ctxPercent)%)"
 
-        let sysPrompt = buildSystemPrompt(toolDescriptions: toolDescriptions, compiledMemory: compiledMemory) + skillsPrompt + selfCheckPrompt + confidencePrompt + archivalPrompt + memoryRetrievalPrompt + relevantSkillsPrompt + contextStatusPrompt
+        let sysPrompt = buildSystemPrompt(toolDescriptions: toolDescriptions, compiledMemory: compiledMemory) + skillsPrompt + confidencePrompt + archivalPrompt + memoryRetrievalPrompt + relevantSkillsPrompt + contextStatusPrompt + selfCheckPrompt + askFirstPrompt
 
         var messages: [[String: String]] = [
             ["role": "system", "content": sysPrompt]
@@ -527,7 +529,7 @@ public actor AgentLoop {
             // Refresh memory in system prompt every step (agent sees its own updates)
             let freshMemory = await coreMemory.compile()
             if freshMemory != compiledMemory {
-                let freshPrompt = buildSystemPrompt(toolDescriptions: toolDescriptions, compiledMemory: freshMemory) + skillsPrompt + selfCheckPrompt + confidencePrompt + archivalPrompt
+                let freshPrompt = buildSystemPrompt(toolDescriptions: toolDescriptions, compiledMemory: freshMemory) + skillsPrompt + confidencePrompt + archivalPrompt + selfCheckPrompt + askFirstPrompt
                 if !messages.isEmpty { messages[0] = ["role": "system", "content": freshPrompt] }
             }
 
@@ -1055,12 +1057,13 @@ public actor AgentLoop {
                 let selfCheckEnabled = UserDefaults.standard.bool(forKey: "kobold.perm.selfCheck")
                 let selfCheckPrompt: String
                 if autonomyLevel >= 3 && selfCheckEnabled {
-                    selfCheckPrompt = "\n\n# Autonomer Modus\nDu bist vollständig autonom. Prüfe deine Arbeit, teste Code, korrigiere Fehler selbstständig. Frage nur bei destruktiven Aktionen (rm -rf, Daten löschen) nach."
+                    selfCheckPrompt = "\n\n# Modus\nVollautonomer Modus. Tools direkt nutzen. Nur bei destruktiven Aktionen nachfragen."
                 } else if autonomyLevel >= 2 {
-                    selfCheckPrompt = "\n\n# Werkzeug-Nutzung\nDu darfst alle aktivierten Tools selbstständig nutzen ohne nachzufragen. Handle Aufgaben direkt. Frage NUR bei potenziell destruktiven Aktionen (Dateien löschen, System ändern) nach Bestätigung."
+                    selfCheckPrompt = "\n\n# Modus\nTools direkt nutzen. Nur bei destruktiven Aktionen (Dateien löschen, System ändern) nachfragen."
                 } else {
-                    selfCheckPrompt = "\n\n# Werkzeug-Nutzung\nDu darfst alle aktivierten Tools nutzen. Die Berechtigungen sind systemweit konfiguriert und gelten für alle Chats. Frage NICHT jedes Mal nach Erlaubnis — nutze die Tools direkt wenn die Aufgabe es erfordert. Frage nur bei destruktiven Aktionen (Dateien löschen, System ändern) nach Bestätigung."
+                    selfCheckPrompt = "\n\n# Modus\nTools direkt nutzen wenn die Aufgabe es erfordert. Bei destruktiven Aktionen nachfragen."
                 }
+                let askFirstPrompt = "\n\n# Rückfrage\nBei umfangreichen Aktionen (Code, Dateien, komplexe Aufgaben): Erst zusammenfassen + bestätigen lassen. Ausnahme: Wissensfragen, explizite Anweisungen, Follow-ups."
                 let confidencePrompt = "\n\n# Confidence Self-Assessment\nInclude a \"confidence\" field (0.0-1.0) in every JSON response. 1.0 = certain, 0.0 = unsure. If confidence < 0.5, use the response tool to ask the user for clarification instead of guessing."
                 let archivalPrompt = "\n\n# Archival Memory\nWenn Core Memory Blöcke voll sind (>80% Limit), nutze archival_memory_insert um ältere Informationen zu archivieren. Nutze archival_memory_search um archivierte Informationen wieder zu finden."
 
@@ -1076,7 +1079,7 @@ public actor AgentLoop {
                 let ctxPercent = Int(TokenEstimator.usagePercent(estimatedTokens: ctxTokens, contextSize: contextWindowSize) * 100)
                 let contextStatusPrompt = "\n\n# Kontext-Status\nNutzung: ~\(ctxTokens) / \(contextWindowSize) Tokens (\(ctxPercent)%)"
 
-                let sysPrompt = buildSystemPrompt(toolDescriptions: toolDescriptions, compiledMemory: initialMemory) + skillsPrompt + selfCheckPrompt + confidencePrompt + archivalPrompt + memoryRetrievalPrompt + relevantSkillsPrompt + contextStatusPrompt
+                let sysPrompt = buildSystemPrompt(toolDescriptions: toolDescriptions, compiledMemory: initialMemory) + skillsPrompt + confidencePrompt + archivalPrompt + memoryRetrievalPrompt + relevantSkillsPrompt + contextStatusPrompt + selfCheckPrompt + askFirstPrompt
 
                 var messages: [[String: String]] = [
                     ["role": "system", "content": sysPrompt]
@@ -1830,7 +1833,6 @@ public actor AgentLoop {
         - **coder** / **developer**: Software-Entwicklung, Code schreiben, Debugging, Architektur
         - **web**: Recherche, Web-Suche, API-Aufrufe, Browser-Automatisierung, Daten-Analyse
         - **reviewer**: Code-Review, Qualitätsprüfung (nutzt Coder-Tools)
-        - **utility**: System-Aufgaben, Dateiverwaltung, Shell-Befehle
         - **general**: Allgemeine Aufgaben (Standard)
 
         Wähle das richtige Profil für die jeweilige Aufgabe:
@@ -1899,10 +1901,28 @@ public actor AgentLoop {
         ```
 
         ### contacts
-        Kontakte durchsuchen (Apple Contacts).
+        Kontakte verwalten — ZWEI getrennte Systeme:
+        1. Apple-Kontakte: search/list_recent durchsucht die macOS-Kontakte-App des Users
+        2. CRM (internes KoboldOS-Kontaktmanagement): crm_list/crm_create/crm_update/crm_delete/crm_search
+        WICHTIG: Apple-Kontakte sind EXTERN (gehoeren dem User). CRM-Kontakte sind INTERN (von dir verwaltete Geschaeftskontakte).
+        Frage den User, welches System er meint, wenn unklar.
         ```json
         {"tool_name": "contacts", "tool_args": {"action": "search", "query": "Tim"}}
         {"tool_name": "contacts", "tool_args": {"action": "list_recent"}}
+        {"tool_name": "contacts", "tool_args": {"action": "crm_list", "collection": "contacts"}}
+        {"tool_name": "contacts", "tool_args": {"action": "crm_create", "collection": "contacts", "data": "{\\"firstName\\": \\"Max\\", \\"lastName\\": \\"Mustermann\\", \\"email\\": \\"max@example.com\\"}"}}
+        {"tool_name": "contacts", "tool_args": {"action": "crm_search", "collection": "contacts", "query": "Max"}}
+        ```
+
+        ### teams
+        KI-Agenten-Teams verwalten. Teams bestehen aus mehreren Agenten mit individuellen Rollen und System-Prompts.
+        Du kannst Teams erstellen, Mitglieder hinzufuegen/entfernen und Routing-Modi konfigurieren.
+        Routing-Modi: sequential (nacheinander), leader (einer delegiert), round-robin (reihum).
+        ```json
+        {"tool_name": "teams", "tool_args": {"action": "list_teams"}}
+        {"tool_name": "teams", "tool_args": {"action": "create_team", "name": "Research Team", "description": "Recherche und Analyse", "routing": "sequential"}}
+        {"tool_name": "teams", "tool_args": {"action": "add_member", "team_id": "TEAM_ID", "member_name": "Analyst", "member_role": "researcher", "member_prompt": "Du analysierst Daten kritisch."}}
+        {"tool_name": "teams", "tool_args": {"action": "remove_member", "team_id": "TEAM_ID", "member_name": "Analyst"}}
         ```
 
         ### applescript
@@ -1967,7 +1987,7 @@ public actor AgentLoop {
         Lade IMMER beide Versionen herunter, z.B. nach ~/Desktop/songname_v1.mp3 und ~/Desktop/songname_v2.mp3.
         ```json
         {"tool_name": "suno_api", "tool_args": {"action": "generate", "prompt": "Ein fröhlicher Popsong über den Sommer"}}
-        {"tool_name": "suno_api", "tool_args": {"action": "generate", "style": "psytrance", "title": "Digital Dreams", "instrumental": "true", "model": "V4"}}
+        {"tool_name": "suno_api", "tool_args": {"action": "generate", "style": "psytrance", "title": "Digital Dreams", "instrumental": "true", "model": "V5"}}
         {"tool_name": "suno_api", "tool_args": {"action": "status", "task_id": "abc123"}}
         {"tool_name": "suno_api", "tool_args": {"action": "get_track", "task_id": "abc123"}}
         ```
@@ -2155,22 +2175,40 @@ public actor AgentLoop {
         memory_save: Erinnerung mit Typ + Tags + emotionaler Gewichtung speichern
         memory_recall: Nach Text/Typ/Tags suchen (emotional gewichtet) | memory_forget: Löschen
 
-        ## Gedächtnis-Typen
-        - kurzzeit: Temporärer Kontext der aktuellen Sitzung
-        - langzeit: Permanente Erinnerungen über alle Sitzungen
-        - wissen: Gelerntes Wissen, Fakten, Referenzen
-        - lösungen: Bewährte Lösungswege, Patterns die funktioniert haben (positiv gewichten!)
-        - fehler: Fehler, Probleme, Dinge die NICHT funktioniert haben (negativ gewichten!)
+        ## Gedächtnis-Typen (RICHTIG SORTIEREN!)
+        - regeln: Feste Regeln, Anweisungen, Verbote, Präferenzen des Nutzers die IMMER gelten ("mach immer X", "nutze nie Y", "sprich mich mit Du an"). WAS getan/gelassen werden soll. Hohe Arousal (0.9)!
+        - verhalten: Prozedurales Gedächtnis — Abläufe, Reaktionen, Gewohnheiten, Workflows. WIE + WANN etwas getan wird ("Wenn User grüßt → frage nach Projektstatus", "Debugging: 1. Logs prüfen 2. Tests 3. Fix vorschlagen"). valence=0.3, arousal=0.7
+        - wissen: Externe Fakten, Referenzen, technisches Wissen, API-Infos, Dokumentation. NUR Fakten über die Welt — NICHT über den Nutzer!
+        - langzeit: Permanente Fakten ÜBER DEN NUTZER (Name, Beruf, Vorlieben, Gewohnheiten, Kontakte)
+        - lösungen: Bewährte Lösungswege, Workarounds, Patterns die funktioniert haben (positiv gewichten!)
+        - fehler: Fehler, Bugs, Probleme, Dinge die NICHT funktioniert haben (negativ gewichten!)
+        - kurzzeit: NUR temporärer Kontext der aktuellen Sitzung (wird automatisch bereinigt)
+
+        ## Unterschied regeln vs verhalten (WICHTIG!)
+        - regeln = WAS (Anweisungen, Verbote, Richtlinien): "Sprich formal", "Nutze nie sudo"
+        - verhalten = WIE + WANN (Prozesse, Abläufe, Reaktionen): "Wenn X passiert, mache Y", "Ablauf: Schritt 1→2→3"
+
+        ## Sortier-Regeln (STRIKT EINHALTEN!)
+        - "Mach immer X" / "Nutze nie Y" / "Sprich mich so an" → type='regeln' (NICHT wissen!)
+        - "Wenn X passiert, mache Y" / "Bei Anfrage X reagiere mit Z" → type='verhalten'
+        - "Immer erst A, dann B" / "Prozess: Schritt 1→2→3" → type='verhalten'
+        - "Python hat Feature X" / "API-Endpoint ist /foo" → type='wissen'
+        - "User heißt Tim" / "User nutzt macOS" → type='langzeit'
+        - "Fehler: X geht nicht" → type='fehler', valence=-0.7, arousal=0.8
+        - "Fix: So hat es geklappt" → type='lösungen', valence=0.8, linked_id=<fehler-ID>
+        - Im Zweifel: ANWEISUNG → regeln, ABLAUF → verhalten, FAKT → wissen, PERSÖNLICHES → langzeit
 
         ## Lernprotokoll (WICHTIG!)
         1. Bei JEDEM Fehler → memory_save type='fehler', valence=-0.7, arousal=0.8, Tags mit Tool-Name
         2. Wenn Fehler GELÖST → memory_save type='lösungen', valence=0.8, linked_id=<fehler-ID>
         3. VOR komplexen Aufgaben → memory_recall mit relevanten Tags prüfen
-        4. Emotionale Gewichtung: valence (-1.0 schlecht bis +1.0 gut), arousal (0.0 unwichtig bis 1.0 kritisch)
-        EINE Erinnerung pro Fakt. Gute Tags wählen (fehler, lösung, coding, tool-name, etc.)\(isMemoryMemorizeEnabled ? "" : "\nGedächtnis DEAKTIVIERT — nur speichern wenn Nutzer es verlangt.")
+        4. Wenn Nutzer eine REGEL/ANWEISUNG gibt → memory_save type='regeln', valence=0.5, arousal=0.9
+        5. Wenn Nutzer einen ABLAUF/PROZESS beschreibt → memory_save type='verhalten', valence=0.3, arousal=0.7
+        6. Emotionale Gewichtung: valence (-1.0 schlecht bis +1.0 gut), arousal (0.0 unwichtig bis 1.0 kritisch)
+        EINE Erinnerung pro Fakt. Gute Tags wählen (fehler, lösung, coding, tool-name, regel, präferenz, ablauf, prozess, etc.)\(isMemoryMemorizeEnabled ? "" : "\nGedächtnis DEAKTIVIERT — nur speichern wenn Nutzer es verlangt.")
 
         # Delegation
-        call_subordinate: Sub-Agent (coder/web/reviewer/utility) | delegate_parallel: Mehrere gleichzeitig
+        call_subordinate: Sub-Agent (coder/web/reviewer) | delegate_parallel: Mehrere gleichzeitig
 
         # Fehlerbehandlung
         Bei Fehler: Erkläre auf Deutsch über response Tool, nenne Grund, schlage Alternativen vor.

@@ -117,6 +117,8 @@ struct MainView: View {
                 case "settings": selectedTab = .settings
                 case "voice", "sprechen": selectedTab = .voice
                 case "memory": selectedTab = .memory
+                case "contacts", "kontakte": selectedTab = .contacts
+                case "teams": selectedTab = .teams
                 default: break
                 }
             }
@@ -152,9 +154,14 @@ struct MainView: View {
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("koboldNavigateToSession"))) { note in
             if let sessionId = note.userInfo?["sessionId"] as? UUID {
                 viewModel.switchToSession(sessionId)
-                // Task-Sessions → Tasks-Tab, normale Sessions → Chat-Tab
-                let isTask = viewModel.sessions.first(where: { $0.id == sessionId })?.taskId != nil
-                selectedTab = isTask ? .tasks : .chat
+                let session = viewModel.sessions.first(where: { $0.id == sessionId })
+                if session?.taskId?.hasPrefix("workflow-") == true {
+                    selectedTab = .workflows
+                } else if session?.taskId != nil {
+                    selectedTab = .tasks
+                } else {
+                    selectedTab = .chat
+                }
             }
         }
         // Eingehender Anruf: System-Notification + Sound + App in Vordergrund
@@ -365,7 +372,7 @@ struct SidebarView: View {
     private var taskSessionsList: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Task-Sessions anzeigen — auch wenn messages leer (pendingMessages kann Inhalt haben)
-            let taskSessions = viewModel.sessions.filter { $0.taskId != nil }
+            let taskSessions = viewModel.sessions.filter { $0.taskId != nil && $0.taskId?.hasPrefix("workflow-") != true }
                 .sorted { $0.createdAt > $1.createdAt }
 
             if !taskSessions.isEmpty {
@@ -373,7 +380,7 @@ struct SidebarView: View {
                     Image(systemName: "text.bubble")
                         .font(.system(size: 11.5))
                         .foregroundColor(.koboldGold)
-                    Text("Aufgaben-Chats")
+                    Text(l10n.language.taskChats)
                         .font(.caption2.weight(.semibold))
                         .foregroundColor(.secondary)
                     Spacer()
@@ -409,7 +416,7 @@ struct SidebarView: View {
                     HStack(spacing: 6) {
                         Image(systemName: "arrow.left")
                             .font(.system(size: 11, weight: .medium))
-                        Text("Aufgabenliste")
+                        Text(l10n.language.taskListLabel)
                             .font(.caption2.weight(.medium))
                     }
                     .foregroundColor(.koboldEmerald)
@@ -569,7 +576,7 @@ struct SidebarView: View {
         VStack(alignment: .leading, spacing: 0) {
             // Header
             HStack {
-                Text("Gespräche")
+                Text(l10n.language.conversationsLabel)
                     .font(.caption2.weight(.semibold))
                     .foregroundColor(.secondary)
                     .padding(.leading, 16)
@@ -676,7 +683,7 @@ struct SidebarView: View {
                                 }
                             }
                             Button(role: .destructive, action: { viewModel.deleteSession(session) }) {
-                                Label("Löschen", systemImage: "trash")
+                                Label(l10n.language.delete, systemImage: "trash")
                             }
                         }
                         .transition(.asymmetric(
@@ -692,7 +699,7 @@ struct SidebarView: View {
                     Image(systemName: "bubble.left.and.bubble.right")
                         .font(.system(size: 12.5))
                         .foregroundColor(.secondary.opacity(0.5))
-                    Text("Noch keine Gespräche")
+                    Text(l10n.language.noConversations)
                         .font(.system(size: 12.5))
                         .foregroundColor(.secondary.opacity(0.5))
                 }
@@ -872,7 +879,9 @@ struct SidebarView: View {
         case .chat:         return l10n.language.chat
         case .memory:       return "Gedächtnis"
         case .tasks:        return l10n.language.tasks
-        case .workflows:    return l10n.language.team
+        case .workflows:    return "Workflows"
+        case .teams:        return "Teams"
+        case .contacts:     return "Kontakte"
         case .voice:        return "Sprechen"
         case .settings:     return l10n.language.settings
         }
@@ -884,6 +893,8 @@ struct SidebarView: View {
         case .memory:       return "brain.filled.head.profile"
         case .tasks:        return "checklist"
         case .workflows:    return "point.3.connected.trianglepath.dotted"
+        case .teams:        return "person.3.fill"
+        case .contacts:     return "person.2.fill"
         case .voice:        return "waveform.circle.fill"
         case .settings:     return "gearshape.fill"
         }
@@ -1004,7 +1015,7 @@ struct SidebarTopicFolder: View {
                 }
                 Divider()
                 Button(role: .destructive, action: onDeleteTopic) {
-                    Label("Thema löschen", systemImage: "trash")
+                    Label(LocalizationManager.shared.language.deleteTopic, systemImage: "trash")
                 }
             }
 
@@ -1154,7 +1165,7 @@ struct TopicEditorSheet: View {
                             TextField("~/Projects/MeinProjekt", text: $editProjectPath)
                                 .textFieldStyle(.roundedBorder)
                                 .font(.system(size: 13.5, design: .monospaced))
-                            Button("Wählen...") {
+                            Button(LocalizationManager.shared.language.selectDots) {
                                 let panel = NSOpenPanel()
                                 panel.canChooseDirectories = true
                                 panel.canChooseFiles = false
@@ -1219,9 +1230,9 @@ struct TopicEditorSheet: View {
                     VStack(alignment: .leading, spacing: 6) {
                         Toggle(isOn: $editUseOwnMemory) {
                             VStack(alignment: .leading, spacing: 2) {
-                                Label("Eigenes Gedächtnis", systemImage: "brain.head.profile")
+                                Label(LocalizationManager.shared.language.customMemory, systemImage: "brain.head.profile")
                                     .font(.system(size: 13.5, weight: .semibold))
-                                Text("Wenn aktiv, hat dieses Thema ein isoliertes Gedächtnis. Der Agent speichert und liest Erinnerungen nur für dieses Thema.")
+                                Text(LocalizationManager.shared.language.customMemoryDesc)
                                     .font(.system(size: 12.5))
                                     .foregroundColor(.secondary.opacity(0.6))
                             }
@@ -1476,14 +1487,14 @@ struct ContentAreaView: View {
                                 Image(systemName: "text.bubble")
                                     .font(.caption)
                                     .foregroundColor(.koboldGold)
-                                Text("Aufgaben-Chat: \(taskTitle)")
+                                Text("\(LocalizationManager.shared.language.taskChats): \(taskTitle)")
                                     .font(.caption.weight(.medium))
                                     .foregroundColor(.koboldGold)
                                 Spacer()
                                 Button(action: { viewModel.newSession() }) {
                                     HStack(spacing: 4) {
                                         Image(systemName: "arrow.left").font(.caption2)
-                                        Text("Aufgabenliste").font(.caption2)
+                                        Text(LocalizationManager.shared.language.taskListLabel).font(.caption2)
                                     }
                                     .foregroundColor(.koboldEmerald)
                                 }.buttonStyle(.plain)
@@ -1512,7 +1523,7 @@ struct ContentAreaView: View {
                                 Button(action: { viewModel.newSession() }) {
                                     HStack(spacing: 4) {
                                         Image(systemName: "arrow.left").font(.caption2)
-                                        Text("Zurück zum Canvas").font(.caption2)
+                                        Text(LocalizationManager.shared.language.backToCanvas).font(.caption2)
                                     }
                                     .foregroundColor(.koboldEmerald)
                                 }.buttonStyle(.plain)
@@ -1527,6 +1538,8 @@ struct ContentAreaView: View {
                     } else {
                         TeamView(viewModel: viewModel)
                     }
+                case .teams:        TeamsView(viewModel: viewModel)
+                case .contacts:     ContactsView(viewModel: viewModel)
                 case .voice:        VoiceView(viewModel: viewModel)
                 case .settings:     SettingsView(viewModel: viewModel)
                 }
@@ -1732,6 +1745,8 @@ enum SidebarTab: String, CaseIterable {
     case voice
     case tasks
     case workflows
+    case teams
+    case contacts
     case memory
     case settings
 }

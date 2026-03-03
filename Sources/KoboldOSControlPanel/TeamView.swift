@@ -8,6 +8,7 @@ import KoboldCore
 struct TeamView: View {
     @ObservedObject var viewModel: RuntimeViewModel
     @EnvironmentObject var l10n: LocalizationManager
+    private var lang: AppLanguage { l10n.language }
     @State private var nodes: [WorkflowNode] = []
     @State private var connections: [WorkflowConnection] = []
     @State private var selectedNodeId: UUID? = nil
@@ -33,7 +34,7 @@ struct TeamView: View {
 
     // Active project name shown in header
     private var projectName: String {
-        viewModel.selectedProject?.name ?? "Kein Projekt ausgewählt"
+        viewModel.selectedProject?.name ?? lang.noProjectSelected
     }
 
     /// Per-project workflow URL
@@ -57,20 +58,20 @@ struct TeamView: View {
                     Image(systemName: "folder.badge.questionmark")
                         .font(.system(size: 49))
                         .foregroundColor(.secondary.opacity(0.5))
-                    Text("Kein Projekt ausgewählt")
+                    Text(lang.noProjectSelected)
                         .font(.title3)
-                    Text("Wähle ein Projekt in der Seitenleiste oder erstelle ein neues.")
+                    Text(lang.chooseProject)
                         .font(.body).foregroundColor(.secondary)
 
                     // Workflow ideas
                     GlassCard(padding: 12, cornerRadius: 12) {
                         VStack(alignment: .leading, spacing: 10) {
                             HStack {
-                                Text("Workflow-Ideen").font(.system(size: 15.5, weight: .semibold)).foregroundColor(.koboldGold)
+                                Text(lang.workflowIdeas).font(.system(size: 15.5, weight: .semibold)).foregroundColor(.koboldGold)
                                 Spacer()
                                 Button(action: { withAnimation(.easeInOut(duration: 0.2)) { workflowSuggestionOffset += 1 } }) {
                                     Image(systemName: "arrow.clockwise").font(.system(size: 13.5)).foregroundColor(.koboldGold)
-                                }.buttonStyle(.plain).help("Neue Vorschläge laden")
+                                }.buttonStyle(.plain).help(lang.loadSuggestions)
                             }
                             ForEach(currentWorkflowSuggestions, id: \.name) { suggestion in
                                 Button(action: {
@@ -156,17 +157,17 @@ struct TeamView: View {
                             .font(.headline)
                         GlassStatusBadge(label: "Beta", color: .koboldGold)
                     }
-                    Text("Verbinde Agenten zu Workflows")
+                    Text(lang.connectAgents)
                         .font(.caption).foregroundColor(.secondary)
                 }
                 Spacer()
                 if viewModel.selectedProject != nil {
                     // Import JSON button
-                    GlassButton(title: "Import", icon: "square.and.arrow.down", isPrimary: false) {
+                    GlassButton(title: lang.importLabel, icon: "square.and.arrow.down", isPrimary: false) {
                         showImportPicker = true
                     }
                     GlassButton(
-                        title: showSavedConfirmation ? "Gespeichert!" : "Speichern",
+                        title: showSavedConfirmation ? lang.savedLabelExcl : lang.save,
                         icon: showSavedConfirmation ? "checkmark.circle.fill" : "square.and.arrow.down.fill",
                         isPrimary: false
                     ) {
@@ -180,7 +181,7 @@ struct TeamView: View {
                         addNode()
                     }
                     GlassButton(
-                        title: isRunning ? "Stop" : "Ausführen",
+                        title: isRunning ? lang.stopLabel : lang.executeLabel,
                         icon: isRunning ? "stop.fill" : "play.fill",
                         isPrimary: true
                     ) {
@@ -204,7 +205,7 @@ struct TeamView: View {
                         .foregroundColor(.koboldGold)
                     GlassTextField(
                         text: $agentBuilderText,
-                        placeholder: "Workflow-Idee hier dem Agent zum Bauen geben...",
+                        placeholder: lang.workflowIdea,
                         onSubmit: { buildWorkflowWithAgent() }
                     )
                     Button(action: { buildWorkflowWithAgent() }) {
@@ -228,7 +229,7 @@ struct TeamView: View {
                             Image(systemName: "brain")
                                 .font(.system(size: 12.5))
                                 .foregroundColor(.koboldGold)
-                            Text("Erstelle Workflow...")
+                            Text(lang.creatingWorkflow)
                                 .font(.system(size: 13.5, weight: .medium))
                                 .foregroundColor(.koboldGold)
                         } else if !agentBuildStatus.isEmpty {
@@ -259,9 +260,9 @@ struct TeamView: View {
             VStack(spacing: 12) {
                 HStack {
                     Image(systemName: "checkmark.circle.fill").foregroundColor(.koboldEmerald)
-                    Text("Workflow-Ergebnis").font(.headline)
+                    Text(lang.workflowResult).font(.headline)
                     Spacer()
-                    Button("Schließen") { showRunOutput = false }.buttonStyle(.plain)
+                    Button(lang.close) { showRunOutput = false }.buttonStyle(.plain)
                 }
                 ScrollView {
                     Text(lastRunOutput)
@@ -270,7 +271,7 @@ struct TeamView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 HStack {
-                    Button("Kopieren") {
+                    Button(lang.copy) {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(lastRunOutput, forType: .string)
                     }
@@ -314,15 +315,24 @@ struct TeamView: View {
                             control1: CGPoint(x: fromPt.x + 60, y: fromPt.y),
                             control2: CGPoint(x: toPt.x - 60, y: toPt.y)
                         )
-                        ctx.stroke(path, with: .color(Color.koboldEmerald.opacity(0.5)), lineWidth: 2)
 
-                        // Arrow head
+                        // Error-Connections: rote gestrichelte Linie; Normal: grüne durchgezogene
+                        let isError = conn.connectionType == .error
+                        let lineColor: Color = isError ? .red.opacity(0.6) : .koboldEmerald.opacity(0.5)
+                        if isError {
+                            ctx.stroke(path, with: .color(lineColor), style: StrokeStyle(lineWidth: 2, dash: [8, 5]))
+                        } else {
+                            ctx.stroke(path, with: .color(lineColor), lineWidth: 2)
+                        }
+
+                        // Arrow head (rot für Error, grün für Normal)
+                        let arrowColor: Color = isError ? .red.opacity(0.7) : .koboldEmerald.opacity(0.7)
                         let arrowPt = CGPoint(x: toPt.x - 4, y: toPt.y)
                         var arrowPath = Path()
                         arrowPath.move(to: CGPoint(x: arrowPt.x - 8, y: arrowPt.y - 6))
                         arrowPath.addLine(to: arrowPt)
                         arrowPath.addLine(to: CGPoint(x: arrowPt.x - 8, y: arrowPt.y + 6))
-                        ctx.stroke(arrowPath, with: .color(Color.koboldEmerald.opacity(0.7)), lineWidth: 1.5)
+                        ctx.stroke(arrowPath, with: .color(arrowColor), lineWidth: 1.5)
                     }
                 }
 
@@ -361,6 +371,18 @@ struct TeamView: View {
                         },
                         onPortDragUpdate: { location in
                             portDragLocation = location
+                        },
+                        onOpenChat: {
+                            // Navigate to the workflow chat session via koboldNavigateToSession
+                            let projectId = viewModel.selectedProjectId?.uuidString ?? "default"
+                            let wfTaskId = "workflow-\(projectId)"
+                            if let session = viewModel.sessions.first(where: { $0.taskId == wfTaskId }) {
+                                NotificationCenter.default.post(
+                                    name: Notification.Name("koboldNavigateToSession"),
+                                    object: nil,
+                                    userInfo: ["sessionId": session.id]
+                                )
+                            }
                         }
                     )
                     .position(x: node.x + 65, y: node.y + 35)
@@ -447,13 +469,27 @@ struct TeamView: View {
                         saveWorkflowState()
                     },
                     onOpenChat: {
-                        viewModel.openWorkflowChat(nodeName: nodeTitle)
+                        let projectId = viewModel.selectedProjectId?.uuidString ?? "default"
+                        let wfTaskId = "workflow-\(projectId)"
+                        if let session = viewModel.sessions.first(where: { $0.taskId == wfTaskId }) {
+                            NotificationCenter.default.post(
+                                name: Notification.Name("koboldNavigateToSession"),
+                                object: nil,
+                                userInfo: ["sessionId": session.id]
+                            )
+                        }
                     },
                     incomingConnections: connections.filter { $0.targetNodeId == id },
                     outgoingConnections: connections.filter { $0.sourceNodeId == id },
                     onDeleteConnection: { connId in
                         connections.removeAll { $0.id == connId }
                         saveWorkflowState()
+                    },
+                    onToggleConnectionType: { connId in
+                        if let connIdx = connections.firstIndex(where: { $0.id == connId }) {
+                            connections[connIdx].connectionType = connections[connIdx].connectionType == .normal ? .error : .normal
+                            saveWorkflowState()
+                        }
                     },
                     viewModel: viewModel
                 )
@@ -649,7 +685,7 @@ struct TeamView: View {
             saveWorkflowState()
         }
 
-        // 1. Reset all nodes to idle
+        // 1. Reset all nodes to idle with animation
         for i in 0..<nodes.count {
             nodes[i].lastOutput = ""
             nodes[i].executionStatus = .idle
@@ -657,8 +693,10 @@ struct TeamView: View {
             nodes[i].executionProgress = 0.0
             nodes[i].errorMessage = ""
         }
+        // Yield to let SwiftUI render the reset state
+        try? await Task.sleep(nanoseconds: 300_000_000)
 
-        // 2. Build topological execution order
+        // 2. Build topological execution order — start from root nodes (no incoming edges)
         let targetIds = Set(connections.map { $0.targetNodeId })
         var queue = nodes.filter { !targetIds.contains($0.id) }.map { $0.id }
         var visited = Set<UUID>()
@@ -671,8 +709,10 @@ struct TeamView: View {
 
             guard nodes.contains(where: { $0.id == currentId }) else { continue }
 
-            // 2a. Set to waiting
+            // 2a. Set to WAITING — visible blue glow
             updateNode(id: currentId) { $0.executionStatus = .waiting; $0.statusMessage = "Wartet..." }
+            // Give SwiftUI time to render the waiting state
+            try? await Task.sleep(nanoseconds: 400_000_000)
 
             // Gather context from upstream nodes
             let sourceIds = connections.filter { $0.targetNodeId == currentId }.map { $0.sourceNodeId }
@@ -680,15 +720,17 @@ struct TeamView: View {
                 nodes.first(where: { $0.id == sid })?.lastOutput
             }.filter { !$0.isEmpty }.joined(separator: "\n\n")
 
-            // 2b. Set to running
+            // 2b. Set to RUNNING — visible green pulse
             updateNode(id: currentId) { $0.executionStatus = .running; $0.statusMessage = "Verarbeite..." }
+            // Give SwiftUI time to render the running state before executing
+            try? await Task.sleep(nanoseconds: 300_000_000)
 
             do {
                 // 2c. Execute based on node type — use ID-based lookup for safety
                 guard let safeIdx = nodes.firstIndex(where: { $0.id == currentId }) else { continue }
                 let result = try await executeNode(nodeIdx: safeIdx, upstreamOutput: upstreamOutput)
 
-                // 2d. Set to success
+                // 2d. Set to SUCCESS — solid green
                 updateNode(id: currentId) {
                     $0.executionStatus = .success
                     $0.statusMessage = String(result.prefix(60))
@@ -696,31 +738,74 @@ struct TeamView: View {
                     $0.executionProgress = 1.0
                 }
             } catch {
-                // 2d. Set to error
+                // 2d. Set to ERROR — red
                 updateNode(id: currentId) {
                     $0.executionStatus = .error
                     $0.statusMessage = error.localizedDescription
                     $0.errorMessage = error.localizedDescription
+                    $0.lastOutput = "ERROR: \(error.localizedDescription)"
+                }
+
+                // Error-Branching: Error-Connections (rote gestrichelte) aktivieren
+                let errorConns = connections.filter { $0.sourceNodeId == currentId && $0.connectionType == .error }
+                if !errorConns.isEmpty {
+                    for ec in errorConns { queue.append(ec.targetNodeId) }
+                    try? await Task.sleep(nanoseconds: 500_000_000)
+                    continue  // Normale Successors NICHT queuen
                 }
             }
 
-            // Small delay for visual feedback
-            try? await Task.sleep(nanoseconds: 200_000_000)
+            // Pause after completion so user sees the success/error state before moving on
+            try? await Task.sleep(nanoseconds: 500_000_000)
 
-            // 2e. Queue downstream nodes — for condition nodes, handle branching
+            // 2e. Queue downstream nodes — type-specific routing
             let nodeType = nodes.first(where: { $0.id == currentId })?.type
+            let nodeOutput = nodes.first(where: { $0.id == currentId })?.lastOutput ?? ""
+            let normalConns = connections.filter { $0.sourceNodeId == currentId && $0.connectionType == .normal }
+
             if nodeType == .condition {
-                let outConns = connections.filter { $0.sourceNodeId == currentId }
-                let conditionResult = nodes.first(where: { $0.id == currentId })?.lastOutput ?? ""
-                if conditionResult == "true", let firstConn = outConns.first {
+                let conditionResult = nodeOutput
+                if conditionResult == "true", let firstConn = normalConns.first {
                     queue.append(firstConn.targetNodeId)
-                } else if conditionResult == "false", outConns.count > 1 {
-                    queue.append(outConns[1].targetNodeId)
-                } else if let firstConn = outConns.first {
+                } else if conditionResult == "false", normalConns.count > 1 {
+                    queue.append(normalConns[1].targetNodeId)
+                } else if let firstConn = normalConns.first {
                     queue.append(firstConn.targetNodeId)
                 }
+            } else if nodeType == .switchNode {
+                // Switch-Routing: Port-Index aus Output extrahieren
+                if nodeOutput.hasPrefix("switch_port:") {
+                    let parts = nodeOutput.components(separatedBy: ":")
+                    if parts.count >= 3 {
+                        let portStr = parts[1]
+                        let actualOutput = parts.dropFirst(2).joined(separator: ":")
+                        // Echten Output setzen (ohne switch_port: Prefix)
+                        updateNode(id: currentId) { $0.lastOutput = actualOutput }
+                        if let portIdx = Int(portStr) {
+                            // Route zu Connection mit passendem sourcePort
+                            let matchedConns = normalConns.filter { $0.sourcePort == portIdx }
+                            if let conn = matchedConns.first {
+                                queue.append(conn.targetNodeId)
+                            } else if let fallback = normalConns.first {
+                                queue.append(fallback.targetNodeId) // Fallback auf erste Connection
+                            }
+                        } else {
+                            // "default" — alle Normal-Connections aktivieren
+                            queue.append(contentsOf: normalConns.map { $0.targetNodeId })
+                        }
+                    }
+                } else {
+                    queue.append(contentsOf: normalConns.map { $0.targetNodeId })
+                }
+            } else if nodeType == .loop || nodeType == .retry {
+                // Loop/Retry: Downstream wird intern gehandhabt, nur Geschwister-Connections weiterleiten
+                let siblingConns = normalConns.filter { conn in
+                    // Nur Connections die nicht zum Loop-Body gehören (= nicht die erste)
+                    conn == normalConns.last || normalConns.count <= 1
+                }
+                queue.append(contentsOf: siblingConns.map { $0.targetNodeId })
             } else {
-                let nextIds = connections.filter { $0.sourceNodeId == currentId }.map { $0.targetNodeId }
+                let nextIds = normalConns.map { $0.targetNodeId }
                 queue.append(contentsOf: nextIds)
             }
         }
@@ -858,42 +943,296 @@ struct TeamView: View {
                 results.append((agent.name, result))
             }
             return results.map { "[\($0.0)]: \($0.1)" }.joined(separator: "\n\n---\n\n")
+
+        // MARK: v0.4 — Neue Node-Typen
+
+        case .loop:
+            updateNode(id: nodeId) { $0.statusMessage = "Loop startet..." }
+            let separator = node.loopSeparator ?? "\n"
+            let maxIter = node.loopMaxIterations ?? 100
+            let items = upstreamOutput.components(separatedBy: separator).filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            let limitedItems = Array(items.prefix(maxIter))
+            var loopResults: [String] = []
+            for (i, item) in limitedItems.enumerated() {
+                updateNode(id: nodeId) {
+                    $0.statusMessage = "Item \(i+1)/\(limitedItems.count)"
+                    $0.executionProgress = Double(i) / Double(limitedItems.count)
+                }
+                // Für jedes Item: Downstream-Chain ausführen
+                let result = try await executeSubChain(fromNodeId: nodeId, input: item.trimmingCharacters(in: .whitespacesAndNewlines))
+                loopResults.append(result)
+            }
+            updateNode(id: nodeId) { $0.statusMessage = "\(loopResults.count) Items verarbeitet" }
+            return loopResults.joined(separator: "\n\n---\n\n")
+
+        case .errorHandler:
+            // Error-Handler fängt Fehler von Upstream-Nodes auf
+            // Wird über Error-Connections aktiviert (nicht normal-flow)
+            updateNode(id: nodeId) { $0.statusMessage = "Fehler aufgefangen" }
+            if !node.prompt.isEmpty {
+                // Prompt als Error-Recovery verwenden
+                viewModel.sendWorkflowMessage(
+                    "\(node.prompt)\n\nFehler-Kontext:\n\(String(upstreamOutput.prefix(2000)))",
+                    modelOverride: node.modelOverride, agentOverride: nil
+                )
+                var wait = 0
+                while wait < 60 {
+                    try? await Task.sleep(nanoseconds: 500_000_000); wait += 1
+                    if let resp = viewModel.workflowLastResponse, !resp.isEmpty {
+                        viewModel.workflowLastResponse = nil; return resp
+                    }
+                }
+                return "Error-Handler Timeout"
+            }
+            return "error_handled: \(String(upstreamOutput.prefix(500)))"
+
+        case .subWorkflow:
+            updateNode(id: nodeId) { $0.statusMessage = "Sub-Workflow laden..." }
+            guard let projectIdStr = node.subWorkflowProjectId,
+                  let projectId = UUID(uuidString: projectIdStr) else {
+                return "Kein Sub-Workflow konfiguriert"
+            }
+            return try await executeSubWorkflow(projectId: projectId, input: upstreamOutput, depth: 0)
+
+        case .task:
+            updateNode(id: nodeId) { $0.statusMessage = "Task ausführen..." }
+            let taskRef = node.taskIdRef ?? ""
+            let taskPrompt = node.prompt.isEmpty ? upstreamOutput : "\(node.prompt)\n\nKontext:\n\(String(upstreamOutput.prefix(1000)))"
+            viewModel.executeTask(taskId: "workflow-task-\(taskRef)", taskName: node.title, prompt: taskPrompt, navigate: false, source: "workflow")
+            var taskWait = 0
+            while taskWait < 120 {
+                try? await Task.sleep(nanoseconds: 500_000_000); taskWait += 1
+                if taskWait % 10 == 0 {
+                    updateNode(id: nodeId) { $0.statusMessage = "Task läuft... (\(taskWait/2)s)" }
+                }
+                if let resp = viewModel.workflowLastResponse, !resp.isEmpty {
+                    viewModel.workflowLastResponse = nil; return resp
+                }
+            }
+            return "Task-Timeout nach 60s"
+
+        case .retry:
+            updateNode(id: nodeId) { $0.statusMessage = "Retry-Loop..." }
+            let maxRetries = node.retryCount ?? 3
+            let delayBetween = node.retryDelaySeconds ?? 5
+            var lastError = "Kein Versuch ausgeführt"
+            for attempt in 1...maxRetries {
+                updateNode(id: nodeId) { $0.statusMessage = "Versuch \(attempt)/\(maxRetries)" }
+                do {
+                    let result = try await executeSubChain(fromNodeId: nodeId, input: upstreamOutput)
+                    if !result.lowercased().contains("error") && !result.lowercased().contains("timeout") {
+                        updateNode(id: nodeId) { $0.statusMessage = "Erfolgreich nach \(attempt) Versuch(en)" }
+                        return result
+                    }
+                    lastError = result
+                } catch {
+                    lastError = error.localizedDescription
+                }
+                if attempt < maxRetries {
+                    updateNode(id: nodeId) { $0.statusMessage = "Warte \(delayBetween)s vor Retry..." }
+                    try? await Task.sleep(nanoseconds: UInt64(delayBetween) * 1_000_000_000)
+                }
+            }
+            throw WorkflowError.retryExhausted(lastError)
+
+        case .switchNode:
+            updateNode(id: nodeId) { $0.statusMessage = "Switch evaluieren..." }
+            let cases = node.switchCases ?? []
+            for sc in cases {
+                let result = evaluateCondition(expression: sc.expression, output: upstreamOutput)
+                if result == "true" {
+                    updateNode(id: nodeId) { $0.statusMessage = "Match: \(sc.label)" }
+                    // portIndex wird im runWorkflow() für Routing genutzt
+                    return "switch_port:\(sc.portIndex):\(upstreamOutput)"
+                }
+            }
+            // Default: Kein Match → letzer Port oder Durchreichen
+            updateNode(id: nodeId) { $0.statusMessage = "Kein Match — Default" }
+            return "switch_port:default:\(upstreamOutput)"
+
+        case .note:
+            // Note ist ein Pass-Through — gibt Input unverändert weiter
+            updateNode(id: nodeId) { $0.statusMessage = node.noteText?.prefix(40).description ?? "Notiz" }
+            return upstreamOutput
         }
+    }
+
+    // MARK: - Workflow Errors
+
+    enum WorkflowError: LocalizedError {
+        case retryExhausted(String)
+        case subWorkflowDepthExceeded
+        case subWorkflowNotFound(String)
+
+        var errorDescription: String? {
+            switch self {
+            case .retryExhausted(let last): return "Alle Retry-Versuche fehlgeschlagen: \(last)"
+            case .subWorkflowDepthExceeded: return "Sub-Workflow Tiefe überschritten (max 5)"
+            case .subWorkflowNotFound(let id): return "Sub-Workflow-Projekt nicht gefunden: \(id)"
+            }
+        }
+    }
+
+    // MARK: - Sub-Chain Execution (für Loop/Retry)
+
+    /// Führt die direkt verbundenen Downstream-Nodes eines Source-Nodes aus
+    private func executeSubChain(fromNodeId: UUID, input: String) async throws -> String {
+        let downstream = connections.filter { $0.sourceNodeId == fromNodeId && $0.connectionType == .normal }
+        guard !downstream.isEmpty else { return input }
+        var result = input
+        for conn in downstream {
+            if let idx = nodes.firstIndex(where: { $0.id == conn.targetNodeId }) {
+                result = try await executeNode(nodeIdx: idx, upstreamOutput: result)
+            }
+        }
+        return result
+    }
+
+    // MARK: - Sub-Workflow Execution
+
+    /// Lädt und führt einen anderen Workflow inline aus
+    private func executeSubWorkflow(projectId: UUID, input: String, depth: Int) async throws -> String {
+        guard depth < 5 else { throw WorkflowError.subWorkflowDepthExceeded }
+        let fm = FileManager.default
+        let appSupport = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let workflowURL = appSupport.appendingPathComponent("KoboldOS/workflows/\(projectId.uuidString).json")
+        guard let data = try? Data(contentsOf: workflowURL),
+              let state = try? JSONDecoder().decode(WorkflowState.self, from: data) else {
+            throw WorkflowError.subWorkflowNotFound(projectId.uuidString)
+        }
+        // Find trigger node and start execution from there
+        guard let triggerIdx = state.nodes.firstIndex(where: { $0.type == .trigger }) else {
+            return "Sub-Workflow hat keinen Trigger-Node"
+        }
+        // Execute BFS through sub-workflow nodes
+        var subOutput = input
+        var visited = Set<UUID>()
+        var queue: [(idx: Int, input: String)] = [(triggerIdx, input)]
+        while !queue.isEmpty {
+            let (idx, nodeInput) = queue.removeFirst()
+            let subNode = state.nodes[idx]
+            guard !visited.contains(subNode.id) else { continue }
+            visited.insert(subNode.id)
+            // Simplified: nur Agent/Formula/Condition Nodes tatsächlich ausführen
+            if subNode.type == .agent || subNode.type == .tool {
+                let prompt = subNode.prompt.isEmpty ? nodeInput : "\(subNode.prompt)\n\nKontext:\n\(String(nodeInput.prefix(1000)))"
+                viewModel.sendWorkflowMessage(prompt, modelOverride: subNode.modelOverride, agentOverride: subNode.agentType)
+                var wait = 0
+                while wait < 120 {
+                    try? await Task.sleep(nanoseconds: 500_000_000); wait += 1
+                    if let resp = viewModel.workflowLastResponse, !resp.isEmpty {
+                        viewModel.workflowLastResponse = nil; subOutput = resp; break
+                    }
+                }
+            } else if subNode.type == .formula {
+                subOutput = evaluateFormula(expression: subNode.prompt, input: nodeInput)
+            } else if subNode.type == .output {
+                return subOutput
+            } else {
+                subOutput = nodeInput
+            }
+            // Enqueue downstream nodes
+            let successors = state.connections
+                .filter { $0.sourceNodeId == subNode.id }
+                .compactMap { conn in state.nodes.firstIndex(where: { $0.id == conn.targetNodeId }) }
+            for nextIdx in successors {
+                queue.append((nextIdx, subOutput))
+            }
+        }
+        return subOutput
     }
 
     // MARK: - Condition Evaluation
 
-    /// Simple string-based condition evaluation
+    /// String-based condition evaluation — unterstützt diverse Ausdrücke
     private func evaluateCondition(expression: String, output: String) -> String {
-        let expr = expression.trimmingCharacters(in: .whitespaces).lowercased()
+        let expr = expression.trimmingCharacters(in: .whitespaces)
+        let exprLower = expr.lowercased()
+        let outputLower = output.lowercased()
 
-        if expr.contains("contains(") {
-            // output.contains("error") → check if output contains the string
+        // contains('text')
+        if exprLower.contains("contains(") {
             if let range = expr.range(of: #"contains\(['"](.*?)['"]\)"#, options: .regularExpression) {
                 let searchStr = String(expr[range]).replacingOccurrences(of: "contains(", with: "")
                     .replacingOccurrences(of: ")", with: "")
                     .replacingOccurrences(of: "'", with: "")
                     .replacingOccurrences(of: "\"", with: "")
-                return output.lowercased().contains(searchStr) ? "true" : "false"
+                return outputLower.contains(searchStr.lowercased()) ? "true" : "false"
             }
         }
 
-        if expr == "output.isempty" || expr == "output.isEmpty" {
+        // equals('text') — exakter Vergleich
+        if exprLower.contains("equals(") {
+            if let range = expr.range(of: #"equals\(['"](.*?)['"]\)"#, options: .regularExpression) {
+                let compareStr = String(expr[range]).replacingOccurrences(of: "equals(", with: "")
+                    .replacingOccurrences(of: ")", with: "")
+                    .replacingOccurrences(of: "'", with: "").replacingOccurrences(of: "\"", with: "")
+                return output.trimmingCharacters(in: .whitespacesAndNewlines) == compareStr ? "true" : "false"
+            }
+        }
+
+        // startsWith('x')
+        if exprLower.contains("startswith(") {
+            if let range = expr.range(of: #"startswith\(['"](.*?)['"]\)"#, options: [.regularExpression, .caseInsensitive]) {
+                let prefix = String(expr[range]).replacingOccurrences(of: "startsWith(", with: "", options: .caseInsensitive)
+                    .replacingOccurrences(of: ")", with: "")
+                    .replacingOccurrences(of: "'", with: "").replacingOccurrences(of: "\"", with: "")
+                return outputLower.hasPrefix(prefix.lowercased()) ? "true" : "false"
+            }
+        }
+
+        // endsWith('x')
+        if exprLower.contains("endswith(") {
+            if let range = expr.range(of: #"endswith\(['"](.*?)['"]\)"#, options: [.regularExpression, .caseInsensitive]) {
+                let suffix = String(expr[range]).replacingOccurrences(of: "endsWith(", with: "", options: .caseInsensitive)
+                    .replacingOccurrences(of: ")", with: "")
+                    .replacingOccurrences(of: "'", with: "").replacingOccurrences(of: "\"", with: "")
+                return outputLower.hasSuffix(suffix.lowercased()) ? "true" : "false"
+            }
+        }
+
+        // matches(/regex/)
+        if exprLower.contains("matches(") {
+            if let range = expr.range(of: #"matches\(/(.+?)/\)"#, options: .regularExpression) {
+                let regexStr = String(expr[range]).replacingOccurrences(of: "matches(/", with: "")
+                    .replacingOccurrences(of: "/)", with: "")
+                if let regex = try? NSRegularExpression(pattern: regexStr, options: .caseInsensitive) {
+                    let hasMatch = regex.firstMatch(in: output, range: NSRange(output.startIndex..., in: output)) != nil
+                    return hasMatch ? "true" : "false"
+                }
+            }
+        }
+
+        // isEmpty
+        if exprLower == "isempty" || exprLower == "output.isempty" || exprLower == "output.isempty" {
             return output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "true" : "false"
         }
 
-        if expr.contains("length") && expr.contains(">") {
-            // output.length > 100
-            if let numStr = expr.components(separatedBy: ">").last?.trimmingCharacters(in: .whitespaces),
+        // length > N / length < N
+        if exprLower.contains("length") && exprLower.contains(">") {
+            if let numStr = exprLower.components(separatedBy: ">").last?.trimmingCharacters(in: .whitespaces),
                let threshold = Int(numStr) {
                 return output.count > threshold ? "true" : "false"
             }
         }
-
-        if expr.contains("length") && expr.contains("<") {
-            if let numStr = expr.components(separatedBy: "<").last?.trimmingCharacters(in: .whitespaces),
+        if exprLower.contains("length") && exprLower.contains("<") {
+            if let numStr = exprLower.components(separatedBy: "<").last?.trimmingCharacters(in: .whitespaces),
                let threshold = Int(numStr) {
                 return output.count < threshold ? "true" : "false"
+            }
+        }
+
+        // json.field == 'value' — einfacher JSON-Feld-Zugriff
+        if exprLower.contains("json.") && exprLower.contains("==") {
+            let parts = expr.components(separatedBy: "==").map { $0.trimmingCharacters(in: .whitespaces) }
+            if parts.count == 2 {
+                let fieldPath = parts[0].replacingOccurrences(of: "json.", with: "")
+                let expected = parts[1].replacingOccurrences(of: "'", with: "").replacingOccurrences(of: "\"", with: "")
+                if let data = output.data(using: .utf8),
+                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let value = json[fieldPath] {
+                    return "\(value)" == expected ? "true" : "false"
+                }
             }
         }
 
@@ -903,16 +1242,37 @@ struct TeamView: View {
 
     // MARK: - Formula Evaluation
 
-    /// Simple formula/template evaluation
+    /// Formula/Template-Evaluation — unterstützt Variablen, Operationen und JSON-Zugriff
     private func evaluateFormula(expression: String, input: String) -> String {
         var result = expression
-        // Replace template variables
+
+        // Template-Variablen ersetzen
         result = result.replacingOccurrences(of: "{{input}}", with: input)
         result = result.replacingOccurrences(of: "{{date}}", with: ISO8601DateFormatter().string(from: Date()))
         result = result.replacingOccurrences(of: "{{length}}", with: "\(input.count)")
         result = result.replacingOccurrences(of: "{{lines}}", with: "\(input.components(separatedBy: "\n").count)")
+        result = result.replacingOccurrences(of: "{{timestamp}}", with: "\(Int(Date().timeIntervalSince1970))")
+        result = result.replacingOccurrences(of: "{{uuid}}", with: UUID().uuidString)
+        result = result.replacingOccurrences(of: "{{random}}", with: "\(Int.random(in: 0...999999))")
 
-        // Replace {{env.KEY}} with environment variables
+        // {{input.fieldName}} — JSON-Feld-Extraktion
+        let jsonFieldPattern = #"\{\{input\.(\w+)\}\}"#
+        if let regex = try? NSRegularExpression(pattern: jsonFieldPattern) {
+            let matches = regex.matches(in: result, range: NSRange(result.startIndex..., in: result))
+            if !matches.isEmpty, let data = input.data(using: .utf8),
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                for match in matches.reversed() {
+                    if let keyRange = Range(match.range(at: 1), in: result),
+                       let fullRange = Range(match.range, in: result) {
+                        let key = String(result[keyRange])
+                        let value = json[key].map { "\($0)" } ?? ""
+                        result.replaceSubrange(fullRange, with: value)
+                    }
+                }
+            }
+        }
+
+        // {{env.KEY}} — Umgebungsvariablen
         let envPattern = #"\{\{env\.(\w+)\}\}"#
         if let regex = try? NSRegularExpression(pattern: envPattern) {
             let matches = regex.matches(in: result, range: NSRange(result.startIndex..., in: result))
@@ -927,12 +1287,43 @@ struct TeamView: View {
             }
         }
 
-        // Simple string operations
+        // String-Operationen (Prefix-basiert)
         if result.hasPrefix("upper:") { return input.uppercased() }
         if result.hasPrefix("lower:") { return input.lowercased() }
         if result.hasPrefix("trim:") { return input.trimmingCharacters(in: .whitespacesAndNewlines) }
         if result.hasPrefix("reverse:") { return String(input.reversed()) }
         if result.hasPrefix("wordcount:") { return "\(input.split(separator: " ").count)" }
+        if result.hasPrefix("count:") { return "\(input.count)" }
+
+        // split:SEPARATOR — trennt Input und gibt JSON-Array zurück
+        if result.hasPrefix("split:") {
+            let sep = String(result.dropFirst(6))
+            let parts = input.components(separatedBy: sep.isEmpty ? "\n" : sep)
+            if let data = try? JSONSerialization.data(withJSONObject: parts),
+               let json = String(data: data, encoding: .utf8) { return json }
+        }
+        // join:SEPARATOR — verbindet JSON-Array zu String
+        if result.hasPrefix("join:") {
+            let sep = String(result.dropFirst(5))
+            if let data = input.data(using: .utf8),
+               let arr = try? JSONSerialization.jsonObject(with: data) as? [String] {
+                return arr.joined(separator: sep.isEmpty ? ", " : sep)
+            }
+        }
+        // first:N — erste N Zeichen/Zeilen
+        if result.hasPrefix("first:") {
+            if let n = Int(result.dropFirst(6)) {
+                let lines = input.components(separatedBy: "\n")
+                return lines.prefix(n).joined(separator: "\n")
+            }
+        }
+        // last:N — letzte N Zeilen
+        if result.hasPrefix("last:") {
+            if let n = Int(result.dropFirst(5)) {
+                let lines = input.components(separatedBy: "\n")
+                return lines.suffix(n).joined(separator: "\n")
+            }
+        }
 
         return result
     }
@@ -976,19 +1367,39 @@ struct TeamView: View {
 
 // MARK: - WorkflowConnection
 
-struct WorkflowConnection: Identifiable, Codable {
+/// Bedingung für Switch-Node: wird sequenziell gegen Upstream-Output evaluiert
+struct SwitchCase: Codable, Identifiable {
+    let id: UUID
+    var label: String          // z.B. "Enthält Fehler"
+    var expression: String     // z.B. "contains('error')"
+    var portIndex: Int         // Welcher Output-Port (0, 1, 2, ...)
+
+    init(id: UUID = UUID(), label: String = "", expression: String = "", portIndex: Int = 0) {
+        self.id = id; self.label = label; self.expression = expression; self.portIndex = portIndex
+    }
+}
+
+/// Verbindungstyp: Normal oder Error-Pfad
+enum ConnectionType: String, Codable {
+    case normal = "normal"
+    case error  = "error"
+}
+
+struct WorkflowConnection: Identifiable, Codable, Equatable {
     let id: UUID
     var sourceNodeId: UUID
     var targetNodeId: UUID
     var sourcePort: Int  // 0 = right
     var targetPort: Int  // 0 = left
+    var connectionType: ConnectionType = .normal  // v0.4: Error-Branching
 
-    init(id: UUID = UUID(), sourceNodeId: UUID, targetNodeId: UUID, sourcePort: Int = 0, targetPort: Int = 0) {
+    init(id: UUID = UUID(), sourceNodeId: UUID, targetNodeId: UUID, sourcePort: Int = 0, targetPort: Int = 0, connectionType: ConnectionType = .normal) {
         self.id = id
         self.sourceNodeId = sourceNodeId
         self.targetNodeId = targetNodeId
         self.sourcePort = sourcePort
         self.targetPort = targetPort
+        self.connectionType = connectionType
     }
 }
 
@@ -1040,6 +1451,16 @@ struct WorkflowNode: Identifiable, Codable {
     var teamId: String?                   // For team nodes: which team to consult
     var skillName: String?                 // For agent nodes: which skill to inject
 
+    // v0.4 — Erweiterte Workflow-Properties
+    var loopSeparator: String?            // Loop: Trennzeichen (default "\n")
+    var loopMaxIterations: Int?           // Loop: Sicherheitslimit (default 100)
+    var subWorkflowProjectId: String?     // SubWorkflow: Ziel-Projekt UUID
+    var taskIdRef: String?                // Task: Referenz auf ScheduledTask
+    var retryCount: Int?                  // Retry: Anzahl Versuche (default 3)
+    var retryDelaySeconds: Int?           // Retry: Pause zwischen Versuchen (default 5s)
+    var switchCases: [SwitchCase]?        // Switch: Bedingungen + Port-Index
+    var noteText: String?                 // Note: Freitext
+
     // Execution state (not persisted)
     var executionStatus: NodeExecutionStatus = .idle
     var statusMessage: String = ""
@@ -1049,6 +1470,8 @@ struct WorkflowNode: Identifiable, Codable {
     enum CodingKeys: String, CodingKey {
         case id, type, title, prompt, x, y, triggerConfig, conditionExpression, delaySeconds
         case modelOverride, agentType, teamId, skillName
+        case loopSeparator, loopMaxIterations, subWorkflowProjectId, taskIdRef
+        case retryCount, retryDelaySeconds, switchCases, noteText
     }
 
     init(id: UUID = UUID(), type: NodeType, title: String, prompt: String = "", x: CGFloat, y: CGFloat) {
@@ -1109,46 +1532,68 @@ struct WorkflowNode: Identifiable, Codable {
     }
 
     enum NodeType: String, CaseIterable, Codable {
-        case trigger   = "Trigger"
-        case input     = "Input"
-        case agent     = "Agent"
-        case tool      = "Tool"
-        case output    = "Output"
-        case condition = "Condition"
-        case merger    = "Merger"
-        case delay     = "Delay"
-        case webhook   = "Webhook"
-        case formula   = "Formula"
-        case team      = "Team"
+        case trigger     = "Trigger"
+        case input       = "Input"
+        case agent       = "Agent"
+        case tool        = "Tool"
+        case output      = "Output"
+        case condition   = "Condition"
+        case merger      = "Merger"
+        case delay       = "Delay"
+        case webhook     = "Webhook"
+        case formula     = "Formula"
+        case team        = "Team"
+        // v0.4 — Erweiterte Workflow-Nodes
+        case loop        = "Loop"
+        case errorHandler = "Error-Handler"
+        case subWorkflow = "Sub-Workflow"
+        case task        = "Task"
+        case retry       = "Retry"
+        case switchNode  = "Switch"
+        case note        = "Note"
 
         var color: Color {
             switch self {
-            case .trigger:   return .red
-            case .input:     return .koboldEmerald
-            case .agent:     return .koboldGold
-            case .tool:      return .koboldEmerald
-            case .output:    return .koboldGold
-            case .condition: return .orange
-            case .merger:    return .koboldEmerald
-            case .delay:     return .gray
-            case .webhook:   return .koboldGold
-            case .formula:   return .koboldEmerald
-            case .team:      return .purple
+            case .trigger:      return .red
+            case .input:        return .koboldEmerald
+            case .agent:        return .koboldGold
+            case .tool:         return .koboldEmerald
+            case .output:       return .koboldGold
+            case .condition:    return .orange
+            case .merger:       return .koboldEmerald
+            case .delay:        return .gray
+            case .webhook:      return .koboldGold
+            case .formula:      return .koboldEmerald
+            case .team:         return .purple
+            case .loop:         return .cyan
+            case .errorHandler: return .red.opacity(0.8)
+            case .subWorkflow:  return .purple.opacity(0.7)
+            case .task:         return .teal
+            case .retry:        return .orange
+            case .switchNode:   return .yellow
+            case .note:         return .gray.opacity(0.6)
             }
         }
         var icon: String {
             switch self {
-            case .trigger:   return "bolt.circle.fill"
-            case .input:     return "arrow.right.circle"
-            case .agent:     return "brain"
-            case .tool:      return "wrench.fill"
-            case .output:    return "checkmark.circle.fill"
-            case .condition: return "arrow.triangle.branch"
-            case .merger:    return "arrow.triangle.merge"
-            case .delay:     return "clock.fill"
-            case .webhook:   return "antenna.radiowaves.left.and.right"
-            case .formula:   return "function"
-            case .team:      return "person.3.fill"
+            case .trigger:      return "bolt.circle.fill"
+            case .input:        return "arrow.right.circle"
+            case .agent:        return "brain"
+            case .tool:         return "wrench.fill"
+            case .output:       return "checkmark.circle.fill"
+            case .condition:    return "arrow.triangle.branch"
+            case .merger:       return "arrow.triangle.merge"
+            case .delay:        return "clock.fill"
+            case .webhook:      return "antenna.radiowaves.left.and.right"
+            case .formula:      return "function"
+            case .team:         return "person.3.fill"
+            case .loop:         return "repeat"
+            case .errorHandler: return "exclamationmark.shield.fill"
+            case .subWorkflow:  return "arrow.triangle.swap"
+            case .task:         return "checkmark.rectangle.stack.fill"
+            case .retry:        return "arrow.clockwise.circle.fill"
+            case .switchNode:   return "arrow.triangle.branch"
+            case .note:         return "text.bubble.fill"
             }
         }
     }
@@ -1170,6 +1615,9 @@ struct WorkflowNodeCard: View {
     var onPortDragStart: ((UUID, Bool) -> Void)? = nil  // (nodeId, isOutputPort)
     var onPortDragEnd: ((UUID, CGPoint) -> Void)? = nil  // (nodeId, globalPosition)
     var onPortDragUpdate: ((CGPoint) -> Void)? = nil
+    var onOpenChat: (() -> Void)? = nil  // Navigate to workflow chat session
+    @EnvironmentObject var l10n: LocalizationManager
+    private var lang: AppLanguage { l10n.language }
     @GestureState private var dragStart: CGPoint? = nil
 
     /// Only THIS node is actively running
@@ -1240,6 +1688,27 @@ struct WorkflowNodeCard: View {
                         .frame(height: 2)
                         .padding(.horizontal, 4)
                         .padding(.bottom, 2)
+                    }
+
+                    // Chat link — visible from execution start for agent/tool nodes
+                    if (node.executionStatus == .running || node.executionStatus == .success || node.executionStatus == .error),
+                       (node.type == .agent || node.type == .tool || node.type == .team),
+                       let openChat = onOpenChat {
+                        Button(action: openChat) {
+                            HStack(spacing: 3) {
+                                Image(systemName: "bubble.left.and.text.bubble.right.fill")
+                                    .font(.system(size: 8))
+                                Text(lang.openChat)
+                                    .font(.system(size: 9, weight: .medium))
+                            }
+                            .foregroundColor(.koboldGold)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 2)
+                            .background(Color.koboldGold.opacity(0.1))
+                            .cornerRadius(4)
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.bottom, 4)
                     }
                 }
             }
@@ -1335,7 +1804,10 @@ struct NodeInspector: View {
     var incomingConnections: [WorkflowConnection] = []
     var outgoingConnections: [WorkflowConnection] = []
     var onDeleteConnection: ((UUID) -> Void)? = nil
+    var onToggleConnectionType: ((UUID) -> Void)? = nil
     @ObservedObject var viewModel: RuntimeViewModel
+    @EnvironmentObject var l10n: LocalizationManager
+    private var lang: AppLanguage { l10n.language }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -1359,25 +1831,30 @@ struct NodeInspector: View {
                 .pickerStyle(.menu)
             }
 
+            // Kontextsensitiver Datenfluss-Banner
+            dataFlowBanner
+
             VStack(alignment: .leading, spacing: 6) {
-                Text("Name").font(.caption).foregroundColor(.secondary)
+                LabelWithTooltip(label: "Name", tooltip: "Anzeigename des Nodes im Canvas. Hat keinen Einfluss auf die Ausführung.")
                 GlassTextField(text: $node.title, placeholder: "Node-Name")
             }
 
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Prompt").font(.caption).foregroundColor(.secondary)
-                TextEditor(text: $node.prompt)
-                    .font(.system(size: 13.5))
-                    .frame(minHeight: 80)
-                    .padding(6)
-                    .background(Color.black.opacity(0.2))
-                    .cornerRadius(6)
+            if node.type != .note {
+                VStack(alignment: .leading, spacing: 6) {
+                    LabelWithTooltip(label: "Prompt", tooltip: promptTooltipText)
+                    TextEditor(text: $node.prompt)
+                        .font(.system(size: 13.5))
+                        .frame(minHeight: 80)
+                        .padding(6)
+                        .background(Color.black.opacity(0.2))
+                        .cornerRadius(6)
+                }
             }
 
             // Connections section
             if !incomingConnections.isEmpty || !outgoingConnections.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Verbindungen").font(.caption).foregroundColor(.secondary)
+                    Text(lang.connectionsLabel).font(.caption).foregroundColor(.secondary)
                     ForEach(incomingConnections) { conn in
                         HStack(spacing: 4) {
                             Image(systemName: "arrow.right").font(.caption2).foregroundColor(.koboldEmerald)
@@ -1392,9 +1869,20 @@ struct NodeInspector: View {
                     }
                     ForEach(outgoingConnections) { conn in
                         HStack(spacing: 4) {
-                            Image(systemName: "arrow.right").font(.caption2).foregroundColor(.koboldGold)
-                            Text("→ Ausgang").font(.system(size: 13.5)).foregroundColor(.secondary)
+                            Image(systemName: conn.connectionType == .error ? "exclamationmark.triangle.fill" : "arrow.right")
+                                .font(.caption2)
+                                .foregroundColor(conn.connectionType == .error ? .red : .koboldGold)
+                            Text(conn.connectionType == .error ? "→ Fehler-Pfad" : "→ Ausgang")
+                                .font(.system(size: 13.5))
+                                .foregroundColor(conn.connectionType == .error ? .red : .secondary)
                             Spacer()
+                            // Toggle zwischen Normal und Error-Pfad
+                            Button(action: { onToggleConnectionType?(conn.id) }) {
+                                Image(systemName: conn.connectionType == .error ? "checkmark.circle" : "exclamationmark.shield")
+                                    .font(.caption2).foregroundColor(.orange.opacity(0.8))
+                                    .help(conn.connectionType == .error ? "Zu Normal-Verbindung ändern" : "Zu Fehler-Pfad ändern")
+                            }
+                            .buttonStyle(.plain)
                             Button(action: { onDeleteConnection?(conn.id) }) {
                                 Image(systemName: "xmark.circle.fill")
                                     .font(.caption2).foregroundColor(.red.opacity(0.7))
@@ -1421,9 +1909,9 @@ struct NodeInspector: View {
             // Condition expression
             if node.type == .condition {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Bedingung").font(.caption).foregroundColor(.secondary)
-                    GlassTextField(text: $node.conditionExpression, placeholder: "z.B. output.contains('error')")
-                    Text("Wenn wahr: oberer Ausgang. Wenn falsch: unterer Ausgang.")
+                    LabelWithTooltip(label: "Bedingung", tooltip: "Ausdruck der den Upstream-Output prüft. Verfügbar: contains('text'), isEmpty, length > N, startsWith('x'), endsWith('x'), matches(/regex/), equals('x'), json.field == 'value'")
+                    GlassTextField(text: $node.conditionExpression, placeholder: "z.B. contains('error')")
+                    Text("Wahr → oberer Ausgang. Falsch → unterer Ausgang.")
                         .font(.system(size: 11.5)).foregroundColor(.secondary)
                 }
             }
@@ -1431,7 +1919,7 @@ struct NodeInspector: View {
             // Delay
             if node.type == .delay {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Verzögerung (Sekunden)").font(.caption).foregroundColor(.secondary)
+                    LabelWithTooltip(label: "Verzögerung (Sek.)", tooltip: "Wartezeit in Sekunden bevor der Output an den nächsten Node weitergegeben wird. Der Upstream-Output wird unverändert durchgereicht.")
                     TextField("", value: $node.delaySeconds, format: .number)
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 80)
@@ -1441,17 +1929,20 @@ struct NodeInspector: View {
             // Formula
             if node.type == .formula {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Formel").font(.caption).foregroundColor(.secondary)
+                    LabelWithTooltip(label: "Formel", tooltip: "Template mit Variablen: {{input}}, {{date}}, {{length}}, {{lines}}, {{env.KEY}}, {{uuid}}, {{timestamp}}, {{random}}, {{input.fieldName}} für JSON-Felder. Operationen: upper:, lower:, trim:, split:, join:, first:N, last:N, count:")
                     TextEditor(text: $node.prompt)
                         .font(.system(size: 13.5, design: .monospaced))
                         .frame(minHeight: 60)
                         .padding(6)
                         .background(Color.black.opacity(0.2))
                         .cornerRadius(6)
-                    Text("Variablen: {{input}}, {{date}}, {{env.KEY}}")
+                    Text("{{input}} = Upstream-Output. Operationen: upper:, lower:, split:, first:N")
                         .font(.system(size: 11.5)).foregroundColor(.secondary)
                 }
             }
+
+            // v0.4 — Neue Node-Typ-Konfigurationen
+            newNodeTypeConfig
 
             // Agent-specific: type, model, chat
             if node.type == .agent {
@@ -1487,7 +1978,7 @@ struct NodeInspector: View {
                     set: { node.skillName = $0.isEmpty ? nil : $0 }
                 ))
 
-                GlassButton(title: "Chat öffnen", icon: "message.fill", isPrimary: true) {
+                GlassButton(title: lang.openChat, icon: "message.fill", isPrimary: true) {
                     onOpenChat()
                 }
             }
@@ -1495,17 +1986,27 @@ struct NodeInspector: View {
             // Team-specific: team selection
             if node.type == .team {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Team auswählen").font(.caption).foregroundColor(.secondary)
+                    Text(lang.selectTeam).font(.caption).foregroundColor(.secondary)
                     Picker("", selection: Binding(
                         get: { node.teamId ?? "" },
                         set: { node.teamId = $0.isEmpty ? nil : $0 }
                     )) {
                         Text("Kein Team").tag("")
-                        ForEach(viewModel.teams) { team in
-                            Text("\(team.name) (\(team.agents.count) Agenten)").tag(team.id.uuidString)
+                        if !viewModel.managedTeams.isEmpty {
+                            Section("Eigene Teams") {
+                                ForEach(viewModel.managedTeams) { team in
+                                    Text("\(team.name) (\(team.members.count) Mitglieder)").tag(team.id)
+                                }
+                            }
+                        }
+                        Section("Standard-Teams") {
+                            ForEach(viewModel.teams) { team in
+                                Text("\(team.name) (\(team.agents.count) Agenten)").tag(team.id.uuidString)
+                            }
                         }
                     }
                     .pickerStyle(.menu)
+                    .onAppear { Task { await viewModel.loadManagedTeams() } }
                 }
 
                 if let teamIdStr = node.teamId,
@@ -1525,11 +2026,207 @@ struct NodeInspector: View {
 
             Spacer()
 
-            GlassButton(title: "Node löschen", icon: "trash", isDestructive: true) {
+            GlassButton(title: "\(lang.delete) Node", icon: "trash", isDestructive: true) {
                 onDelete()
             }
         }
         .padding(16)
+    }
+
+    // MARK: - Tooltips & Datenfluss-Banner
+
+    /// Kontextabhängiger Tooltip für das Prompt-Feld
+    private var promptTooltipText: String {
+        switch node.type {
+        case .agent:
+            return "Anweisung für diesen Agent-Node. Wird MIT dem Upstream-Output kombiniert (nicht ersetzt). Der Upstream-Output erscheint als 'Kontext:' unter dem Prompt."
+        case .tool:
+            return "Beschreibung was das Tool tun soll. Der Agent entscheidet basierend auf diesem Prompt + Input welche Aktion ausgeführt wird."
+        case .formula:
+            return "Template mit Variablen. {{input}} wird durch den Upstream-Output ersetzt. Siehe Formel-Hilfe unten."
+        case .errorHandler:
+            return "Recovery-Prompt: Wird ausgeführt wenn ein vorgelagerter Node einen Fehler wirft. Der Fehler-Kontext wird als Input übergeben."
+        case .task:
+            return "Aufgabe für den Task. Wird mit dem Upstream-Output als Kontext kombiniert."
+        case .subWorkflow:
+            return "Optionaler Prompt der dem Sub-Workflow als Startinput übergeben wird. Leer = Upstream-Output wird direkt weitergegeben."
+        default:
+            return "Anweisung oder Konfiguration für diesen Node."
+        }
+    }
+
+    /// Kontextsensitiver Datenfluss-Banner
+    @ViewBuilder
+    private var dataFlowBanner: some View {
+        let info: (icon: String, text: String, color: Color) = {
+            switch node.type {
+            case .agent:    return ("brain", "Prompt + Upstream-Output werden als Kontext kombiniert", .koboldGold)
+            case .tool:     return ("wrench.fill", "Agent entscheidet welches Tool basierend auf Prompt + Input", .koboldEmerald)
+            case .condition: return ("arrow.triangle.branch", "Upstream-Output wird gegen den Ausdruck geprüft", .orange)
+            case .formula:  return ("function", "{{input}} wird durch den Upstream-Output ersetzt", .koboldEmerald)
+            case .loop:     return ("repeat", "Input wird am Trennzeichen gesplittet, jedes Item einzeln verarbeitet", .cyan)
+            case .errorHandler: return ("exclamationmark.shield.fill", "Wird NUR bei Fehler aktiviert (rote Verbindung)", .red)
+            case .subWorkflow: return ("arrow.triangle.swap", "Upstream-Output → Sub-Workflow Input → Sub-Workflow Output zurück", .purple)
+            case .switchNode: return ("arrow.triangle.branch", "Cases werden sequenziell geprüft, erster Match bestimmt Output-Port", .yellow)
+            case .retry:    return ("arrow.clockwise.circle.fill", "Downstream-Nodes werden N-mal wiederholt bei Fehler", .orange)
+            case .merger:   return ("arrow.triangle.merge", "Alle Upstream-Outputs werden zusammengeführt (mit \\n\\n getrennt)", .koboldEmerald)
+            case .note:     return ("text.bubble.fill", "Pass-Through: Input wird unverändert an den nächsten Node weitergegeben", .gray)
+            default:        return ("info.circle", "Daten fließen von links nach rechts durch verbundene Nodes", .secondary)
+            }
+        }()
+        HStack(spacing: 6) {
+            Image(systemName: info.icon).font(.system(size: 11)).foregroundColor(info.color)
+            Text(info.text).font(.system(size: 11)).foregroundColor(.secondary)
+        }
+        .padding(8)
+        .background(info.color.opacity(0.06))
+        .cornerRadius(6)
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(info.color.opacity(0.15), lineWidth: 0.5))
+    }
+
+    // MARK: - Neue Node-Typ Konfiguration (v0.4)
+
+    @ViewBuilder
+    private var newNodeTypeConfig: some View {
+        if node.type == .loop {
+            VStack(alignment: .leading, spacing: 6) {
+                LabelWithTooltip(label: "Trennzeichen", tooltip: "Der Upstream-Output wird an diesem Zeichen gesplittet. Jedes resultierende Item wird einzeln durch die Downstream-Nodes geschickt. Standard: Zeilenumbruch (\\n)")
+                GlassTextField(text: Binding(
+                    get: { node.loopSeparator ?? "\\n" },
+                    set: { node.loopSeparator = $0 == "\\n" ? nil : $0 }
+                ), placeholder: "\\n")
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                LabelWithTooltip(label: "Max. Iterationen", tooltip: "Sicherheitslimit: Loop bricht nach dieser Anzahl Items ab. Verhindert Endlosschleifen bei großen Datenmengen.")
+                Stepper(value: Binding(
+                    get: { node.loopMaxIterations ?? 100 },
+                    set: { node.loopMaxIterations = $0 }
+                ), in: 1...10000) {
+                    Text("\(node.loopMaxIterations ?? 100)").font(.system(size: 13, design: .monospaced))
+                }
+            }
+        }
+
+        if node.type == .errorHandler {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Fängt Fehler von allen über rote Verbindungen angeschlossenen Nodes auf.")
+                    .font(.system(size: 11.5)).foregroundColor(.secondary)
+                Text("Ohne Prompt: Gibt Fehlertext weiter. Mit Prompt: Agent verarbeitet den Fehler.")
+                    .font(.system(size: 11.5)).foregroundColor(.secondary.opacity(0.7))
+            }
+            .padding(8)
+            .background(Color.red.opacity(0.06))
+            .cornerRadius(6)
+        }
+
+        if node.type == .subWorkflow {
+            VStack(alignment: .leading, spacing: 6) {
+                LabelWithTooltip(label: "Ziel-Projekt", tooltip: "Wähle welches Projekt als Sub-Workflow ausgeführt wird. Der Upstream-Output wird als Start-Input übergeben. Max. Verschachtelungstiefe: 5.")
+                Picker("", selection: Binding(
+                    get: { node.subWorkflowProjectId ?? "" },
+                    set: { node.subWorkflowProjectId = $0.isEmpty ? nil : $0 }
+                )) {
+                    Text("Projekt wählen...").tag("")
+                    ForEach(viewModel.projects.filter { $0.id != viewModel.selectedProjectId }) { project in
+                        Text(project.name).tag(project.id.uuidString)
+                    }
+                }
+                .pickerStyle(.menu)
+            }
+        }
+
+        if node.type == .task {
+            VStack(alignment: .leading, spacing: 6) {
+                LabelWithTooltip(label: "Task-Referenz", tooltip: "Name oder ID der auszuführenden Aufgabe. Der Task wird als Background-Session gestartet und der Workflow wartet auf das Ergebnis (max 60s).")
+                GlassTextField(text: Binding(
+                    get: { node.taskIdRef ?? "" },
+                    set: { node.taskIdRef = $0.isEmpty ? nil : $0 }
+                ), placeholder: "Task-Name")
+            }
+        }
+
+        if node.type == .retry {
+            VStack(alignment: .leading, spacing: 6) {
+                LabelWithTooltip(label: "Anzahl Versuche", tooltip: "Wie oft die nachfolgenden Nodes bei Fehler erneut ausgeführt werden. Bei Erfolg wird sofort fortgefahren.")
+                Stepper(value: Binding(
+                    get: { node.retryCount ?? 3 },
+                    set: { node.retryCount = $0 }
+                ), in: 1...10) {
+                    Text("\(node.retryCount ?? 3)x").font(.system(size: 13, design: .monospaced))
+                }
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                LabelWithTooltip(label: "Pause (Sek.)", tooltip: "Wartezeit in Sekunden zwischen den Retry-Versuchen. Gibt dem System Zeit sich zu erholen.")
+                Stepper(value: Binding(
+                    get: { node.retryDelaySeconds ?? 5 },
+                    set: { node.retryDelaySeconds = $0 }
+                ), in: 1...60) {
+                    Text("\(node.retryDelaySeconds ?? 5)s").font(.system(size: 13, design: .monospaced))
+                }
+            }
+        }
+
+        if node.type == .switchNode {
+            VStack(alignment: .leading, spacing: 6) {
+                LabelWithTooltip(label: "Switch-Cases", tooltip: "Bedingungen werden der Reihe nach geprüft. Der erste Match bestimmt welcher Output-Port aktiviert wird. Jeder Port muss mit einer Verbindung zu einem anderen Node verbunden sein.")
+                ForEach(Array((node.switchCases ?? []).enumerated()), id: \.element.id) { idx, sc in
+                    HStack(spacing: 4) {
+                        Text("Port \(sc.portIndex)").font(.system(size: 11, design: .monospaced)).foregroundColor(.yellow)
+                        GlassTextField(text: Binding(
+                            get: { node.switchCases?[safe: idx]?.expression ?? "" },
+                            set: { if node.switchCases != nil { node.switchCases?[idx].expression = $0 } }
+                        ), placeholder: "Ausdruck")
+                        Button(action: { node.switchCases?.remove(at: idx) }) {
+                            Image(systemName: "xmark.circle.fill").font(.caption2).foregroundColor(.red.opacity(0.7))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                Button(action: {
+                    let nextPort = (node.switchCases?.count ?? 0)
+                    if node.switchCases == nil { node.switchCases = [] }
+                    node.switchCases?.append(SwitchCase(label: "Case \(nextPort+1)", expression: "", portIndex: nextPort))
+                }) {
+                    Label("Case hinzufügen", systemImage: "plus.circle.fill")
+                        .font(.system(size: 12))
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(.yellow)
+            }
+        }
+
+        if node.type == .note {
+            VStack(alignment: .leading, spacing: 6) {
+                LabelWithTooltip(label: "Notiz", tooltip: "Freitext-Notiz zur Dokumentation. Wird im Canvas als Tooltip angezeigt. Hat keinen Einfluss auf den Datenfluss — Input wird unverändert durchgereicht.")
+                TextEditor(text: Binding(
+                    get: { node.noteText ?? "" },
+                    set: { node.noteText = $0 }
+                ))
+                    .font(.system(size: 13))
+                    .frame(minHeight: 80)
+                    .padding(6)
+                    .background(Color.black.opacity(0.2))
+                    .cornerRadius(6)
+            }
+        }
+
+        // Letzter Output (Data Preview)
+        if !node.lastOutput.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                LabelWithTooltip(label: "Letzter Output", tooltip: "Ergebnis der letzten Ausführung dieses Nodes. Kann kopiert werden.")
+                ScrollView {
+                    Text(node.lastOutput)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(.secondary)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: 120)
+                .padding(6)
+                .background(Color.black.opacity(0.15))
+                .cornerRadius(6)
+            }
+        }
     }
 
     // MARK: - Trigger Config
@@ -1630,7 +2327,7 @@ struct NodeInspector: View {
                         Text("App-Start").tag("app_start")
                         Text("Neue Nachricht").tag("new_message")
                         Text("Task fertig").tag("task_complete")
-                        Text("Fehler").tag("error")
+                        Text(lang.errorLabel).tag("error")
                         Text("Memory-Update").tag("memory_update")
                     }
                     .pickerStyle(.menu)
@@ -1725,6 +2422,8 @@ private let allToolCategories: [ToolCategory] = [
 
 struct ToolSelectionGrid: View {
     @Binding var selectedTool: String
+    @EnvironmentObject var l10n: LocalizationManager
+    private var lang: AppLanguage { l10n.language }
     @State private var searchText = ""
 
     private var filteredCategories: [ToolCategory] {
@@ -1745,7 +2444,7 @@ struct ToolSelectionGrid: View {
             // Search field
             HStack(spacing: 4) {
                 Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundColor(.secondary)
-                TextField("Suchen...", text: $searchText)
+                TextField(lang.searchDots, text: $searchText)
                     .textFieldStyle(.plain)
                     .font(.system(size: 12.5))
                 if !searchText.isEmpty {
@@ -1804,11 +2503,13 @@ struct ToolSelectionGrid: View {
 
 struct SkillPickerSection: View {
     @Binding var selectedSkill: String
+    @EnvironmentObject var l10n: LocalizationManager
+    private var lang: AppLanguage { l10n.language }
     @State private var skills: [Skill] = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Fähigkeit").font(.caption).foregroundColor(.secondary)
+            Text(lang.skill).font(.caption).foregroundColor(.secondary)
             Picker("", selection: $selectedSkill) {
                 Text("Keine").tag("")
                 ForEach(skills) { skill in

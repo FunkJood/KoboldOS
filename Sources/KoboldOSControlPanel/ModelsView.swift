@@ -104,8 +104,7 @@ struct ModelsView: View {
                         .foregroundColor(.secondary)
 
                     let roles = [
-                        ("Instructor", "High-quality reasoning", "🧠"),
-                        ("Utility", "Fast lightweight tasks", "⚡"),
+                        ("General", "High-quality reasoning", "🧠"),
                         ("Coder", "Coding and development", "💻"),
                         ("Reviewer", "Analysis and review", "🔍"),
                         ("Web", "Web search and browsing", "🌐"),

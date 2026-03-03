@@ -22,13 +22,13 @@ extension SettingsView {
                         Image(systemName: "person.fill").foregroundColor(.secondary)
                         Text(GitHubOAuth.shared.userName).font(.system(size: 13))
                     }
-                    Button("Abmelden") { Task { await GitHubOAuth.shared.signOut() } }
+                    Button(l10n.language.signOut) { Task { await GitHubOAuth.shared.signOut() } }
                         .font(.system(size: 12)).foregroundColor(.red)
                 })
             },
             signInButton: {
                 AnyView(VStack(alignment: .leading, spacing: 10) {
-                    DisclosureGroup("Client-Konfiguration") {
+                    DisclosureGroup(l10n.language.clientConfiguration) {
                         VStack(alignment: .leading, spacing: 6) {
                             Text("Client ID").font(.system(size: 11)).foregroundColor(.secondary)
                             TextField("GitHub OAuth Client ID", text: Binding(
@@ -45,7 +45,7 @@ extension SettingsView {
                     }.font(.system(size: 12.5))
 
                     Button(action: { GitHubOAuth.shared.signIn() }) {
-                        Label("Mit GitHub anmelden", systemImage: "arrow.right.circle.fill")
+                        Label(l10n.language.signInWith("GitHub"), systemImage: "arrow.right.circle.fill")
                     }
                     .buttonStyle(.borderedProminent).tint(.purple)
                 })
@@ -68,13 +68,13 @@ extension SettingsView {
                         Image(systemName: "person.fill").foregroundColor(.secondary)
                         Text(MicrosoftOAuth.shared.userName).font(.system(size: 13))
                     }
-                    Button("Abmelden") { Task { await MicrosoftOAuth.shared.signOut() } }
+                    Button(l10n.language.signOut) { Task { await MicrosoftOAuth.shared.signOut() } }
                         .font(.system(size: 12)).foregroundColor(.red)
                 })
             },
             signInButton: {
                 AnyView(VStack(alignment: .leading, spacing: 10) {
-                    DisclosureGroup("Client-Konfiguration") {
+                    DisclosureGroup(l10n.language.clientConfiguration) {
                         VStack(alignment: .leading, spacing: 6) {
                             Text("Application (Client) ID").font(.system(size: 11)).foregroundColor(.secondary)
                             TextField("Microsoft App Client ID", text: Binding(
@@ -91,7 +91,7 @@ extension SettingsView {
                     }.font(.system(size: 12.5))
 
                     Button(action: { MicrosoftOAuth.shared.signIn() }) {
-                        Label("Mit Microsoft anmelden", systemImage: "arrow.right.circle.fill")
+                        Label(l10n.language.signInWith("Microsoft"), systemImage: "arrow.right.circle.fill")
                     }
                     .buttonStyle(.borderedProminent).tint(.blue)
                 })
@@ -106,7 +106,7 @@ extension SettingsView {
         connectionCard(
             logo: AnyView(brandLogoSlack),
             name: "Slack",
-            subtitle: "Kanäle, Nachrichten, Benutzer",
+            subtitle: "\(l10n.language.channels), \(l10n.language.messages), \(l10n.language.users)",
             isConnected: SlackOAuth.shared.isConnected,
             connectedDetail: {
                 AnyView(VStack(alignment: .leading, spacing: 8) {
@@ -114,13 +114,13 @@ extension SettingsView {
                         Image(systemName: "person.fill").foregroundColor(.secondary)
                         Text(SlackOAuth.shared.userName).font(.system(size: 13))
                     }
-                    Button("Abmelden") { Task { await SlackOAuth.shared.signOut() } }
+                    Button(l10n.language.signOut) { Task { await SlackOAuth.shared.signOut() } }
                         .font(.system(size: 12)).foregroundColor(.red)
                 })
             },
             signInButton: {
                 AnyView(VStack(alignment: .leading, spacing: 10) {
-                    DisclosureGroup("Client-Konfiguration") {
+                    DisclosureGroup(l10n.language.clientConfiguration) {
                         VStack(alignment: .leading, spacing: 6) {
                             Text("Client ID").font(.system(size: 11)).foregroundColor(.secondary)
                             TextField("Slack App Client ID", text: Binding(
@@ -137,7 +137,7 @@ extension SettingsView {
                     }.font(.system(size: 12.5))
 
                     Button(action: { SlackOAuth.shared.signIn() }) {
-                        Label("Mit Slack anmelden", systemImage: "arrow.right.circle.fill")
+                        Label(l10n.language.signInWith("Slack"), systemImage: "arrow.right.circle.fill")
                     }
                     .buttonStyle(.borderedProminent).tint(.green)
                 })
@@ -152,7 +152,7 @@ extension SettingsView {
         connectionCard(
             logo: AnyView(brandLogoNotion),
             name: "Notion",
-            subtitle: "Seiten, Datenbanken, Suche",
+            subtitle: l10n.language.pagesDbSearch,
             isConnected: NotionOAuth.shared.isConnected,
             connectedDetail: {
                 AnyView(VStack(alignment: .leading, spacing: 8) {
@@ -160,13 +160,13 @@ extension SettingsView {
                         Image(systemName: "person.fill").foregroundColor(.secondary)
                         Text(NotionOAuth.shared.userName).font(.system(size: 13))
                     }
-                    Button("Abmelden") { Task { await NotionOAuth.shared.signOut() } }
+                    Button(l10n.language.signOut) { Task { await NotionOAuth.shared.signOut() } }
                         .font(.system(size: 12)).foregroundColor(.red)
                 })
             },
             signInButton: {
                 AnyView(VStack(alignment: .leading, spacing: 10) {
-                    DisclosureGroup("Client-Konfiguration") {
+                    DisclosureGroup(l10n.language.clientConfiguration) {
                         VStack(alignment: .leading, spacing: 6) {
                             Text("OAuth Client ID").font(.system(size: 11)).foregroundColor(.secondary)
                             TextField("Notion Integration Client ID", text: Binding(
@@ -183,7 +183,7 @@ extension SettingsView {
                     }.font(.system(size: 12.5))
 
                     Button(action: { NotionOAuth.shared.signIn() }) {
-                        Label("Mit Notion verbinden", systemImage: "arrow.right.circle.fill")
+                        Label(l10n.language.connectWith("Notion"), systemImage: "arrow.right.circle.fill")
                     }
                     .buttonStyle(.borderedProminent).tint(.primary)
                 })
@@ -199,16 +199,16 @@ extension SettingsView {
         connectionCard(
             logo: AnyView(Image(systemName: "phone.bubble.fill").font(.title2).foregroundColor(.green)),
             name: "WhatsApp",
-            subtitle: "Web-Verknüpfung",
+            subtitle: l10n.language.webLink,
             isConnected: webLinked || WhatsAppOAuth.shared.isConnected,
             connectedDetail: {
                 AnyView(VStack(alignment: .leading, spacing: 8) {
                     if webLinked {
                         HStack(spacing: 6) {
                             Image(systemName: "checkmark.circle.fill").foregroundColor(.koboldEmerald)
-                            Text("WhatsApp Web verknüpft").font(.system(size: 13))
+                            Text(l10n.language.waWebLinked).font(.system(size: 13))
                         }
-                        Button("WhatsApp Web öffnen") {
+                        Button(l10n.language.openWAWeb) {
                             whatsappShowWebView = true
                         }
                         .font(.system(size: 12)).foregroundColor(.koboldEmerald)
@@ -221,7 +221,7 @@ extension SettingsView {
                     }
                     HStack(spacing: 12) {
                         if webLinked {
-                            Button("Web trennen") {
+                            Button(l10n.language.disconnectWeb) {
                                 UserDefaults.standard.set(false, forKey: "kobold.whatsapp.webLinked")
                                 // Clear WhatsApp Web cookies
                                 let dataStore = WKWebsiteDataStore.default()
@@ -233,7 +233,7 @@ extension SettingsView {
                             .font(.system(size: 12)).foregroundColor(.red)
                         }
                         if WhatsAppOAuth.shared.isConnected {
-                            Button("API abmelden") { Task { await WhatsAppOAuth.shared.signOut() } }
+                            Button(l10n.language.apiSignOut) { Task { await WhatsAppOAuth.shared.signOut() } }
                                 .font(.system(size: 12)).foregroundColor(.red)
                         }
                     }
@@ -243,20 +243,20 @@ extension SettingsView {
                 AnyView(VStack(alignment: .leading, spacing: 12) {
                     // WhatsApp Web linking (primary)
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Scanne den QR-Code mit deinem Handy um WhatsApp Web zu verknüpfen — genau wie auf web.whatsapp.com.")
+                        Text(l10n.language.scanQRDesc)
                             .font(.system(size: 11)).foregroundColor(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
 
                         Button(action: { whatsappShowWebView = true }) {
-                            Label("WhatsApp Web verknüpfen", systemImage: "qrcode")
+                            Label(l10n.language.linkWAWeb, systemImage: "qrcode")
                         }
                         .buttonStyle(.borderedProminent).tint(.green)
                     }
 
                     // Optional: Business API (advanced)
-                    DisclosureGroup("Business API (optional)") {
+                    DisclosureGroup(l10n.language.businessApiOptional) {
                         VStack(alignment: .leading, spacing: 6) {
-                            Text("Für programmatischen Zugriff via Meta Business API.")
+                            Text(l10n.language.businessApiDesc)
                                 .font(.system(size: 11)).foregroundColor(.secondary)
 
                             Text("App ID").font(.system(size: 11)).foregroundColor(.secondary).padding(.top, 4)
@@ -278,7 +278,7 @@ extension SettingsView {
                             )).textFieldStyle(.roundedBorder).font(.system(size: 12))
 
                             Button(action: { WhatsAppOAuth.shared.signIn() }) {
-                                Label("Business API verbinden", systemImage: "arrow.right.circle.fill")
+                                Label(l10n.language.connectBusinessApi, systemImage: "arrow.right.circle.fill")
                             }
                             .buttonStyle(.bordered).tint(.green)
                             .disabled((UserDefaults.standard.string(forKey: "kobold.whatsapp.clientId") ?? "").isEmpty)
@@ -314,15 +314,15 @@ extension SettingsView {
         connectionCard(
             logo: AnyView(brandLogoHuggingFace),
             name: "Hugging Face",
-            subtitle: "AI-Inference, Modelle",
+            subtitle: l10n.language.aiInferenceModels,
             isConnected: isConnected,
             connectedDetail: {
                 AnyView(VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 6) {
                         Image(systemName: "checkmark.circle.fill").foregroundColor(.koboldEmerald)
-                        Text("API-Token konfiguriert").font(.system(size: 13))
+                        Text(l10n.language.tokenConfigured).font(.system(size: 13))
                     }
-                    Button("Token entfernen") {
+                    Button(l10n.language.removeToken) {
                         UserDefaults.standard.removeObject(forKey: "kobold.huggingface.apiToken")
                     }
                     .font(.system(size: 12)).foregroundColor(.red)
@@ -330,7 +330,7 @@ extension SettingsView {
             },
             signInButton: {
                 AnyView(VStack(alignment: .leading, spacing: 8) {
-                    Text("API-Token von huggingface.co/settings/tokens").font(.system(size: 11)).foregroundColor(.secondary)
+                    Text(l10n.language.apiTokenFrom("huggingface.co/settings/tokens")).font(.system(size: 11)).foregroundColor(.secondary)
                     SecureField("HuggingFace API Token", text: Binding(
                         get: { UserDefaults.standard.string(forKey: "kobold.huggingface.apiToken") ?? "" },
                         set: { UserDefaults.standard.set($0, forKey: "kobold.huggingface.apiToken") }
@@ -348,17 +348,17 @@ extension SettingsView {
             && !(UserDefaults.standard.string(forKey: "kobold.twilio.authToken") ?? "").isEmpty
         connectionCard(
             logo: AnyView(Image(systemName: "phone.fill").font(.title2).foregroundColor(.red)),
-            name: "Twilio (SMS & Telefonie)",
-            subtitle: "SMS + Anrufe via Twilio",
+            name: l10n.language.twilioSmsTelephony,
+            subtitle: l10n.language.smsAndCalls,
             isConnected: isConnected,
             connectedDetail: {
                 AnyView(VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 6) {
                         Image(systemName: "checkmark.circle.fill").foregroundColor(.koboldEmerald)
-                        Text("Twilio konfiguriert").font(.system(size: 13))
+                        Text("Twilio \(l10n.language.configured)").font(.system(size: 13))
                     }
                     HStack {
-                        Text("Von:").font(.system(size: 11)).foregroundColor(.secondary)
+                        Text(l10n.language.fromLabel).font(.system(size: 11)).foregroundColor(.secondary)
                         TextField("+1...", text: Binding(
                             get: { UserDefaults.standard.string(forKey: "kobold.twilio.fromNumber") ?? "" },
                             set: { UserDefaults.standard.set($0, forKey: "kobold.twilio.fromNumber") }
@@ -368,11 +368,11 @@ extension SettingsView {
                     Divider()
 
                     // Telefonie & eingehende SMS
-                    Text("Telefonie & Eingehende SMS").font(.system(size: 11, weight: .bold)).foregroundColor(.secondary)
+                    Text(l10n.language.telephonyIncomingSms).font(.system(size: 11, weight: .bold)).foregroundColor(.secondary)
 
-                    Text("Öffentliche URL (automatisch via Cloudflare Tunnel)").font(.system(size: 10)).foregroundColor(.secondary)
+                    Text(l10n.language.publicUrlViaTunnel).font(.system(size: 10)).foregroundColor(.secondary)
                     HStack(spacing: 4) {
-                        TextField("Automatisch via Cloudflare Tunnel", text: Binding(
+                        TextField(l10n.language.autoViaCloudflare, text: Binding(
                             get: { UserDefaults.standard.string(forKey: "kobold.twilio.publicUrl") ?? "" },
                             set: { UserDefaults.standard.set($0, forKey: "kobold.twilio.publicUrl") }
                         )).textFieldStyle(.roundedBorder).font(.system(size: 11))
@@ -381,13 +381,13 @@ extension SettingsView {
                             Image(systemName: "checkmark.circle.fill").foregroundColor(.koboldEmerald).font(.system(size: 12))
                         }
                     }
-                    Text("Wird automatisch gesetzt wenn Cloudflare Tunnel aktiv ist (Einstellungen → WebApp-Server)").font(.system(size: 9)).foregroundColor(.secondary.opacity(0.6))
+                    Text(l10n.language.autoSetViaTunnel).font(.system(size: 9)).foregroundColor(.secondary.opacity(0.6))
 
                     // Twilio-Webhook-Konfigurationshinweis
                     let pubUrl = UserDefaults.standard.string(forKey: "kobold.twilio.publicUrl") ?? ""
                     if !pubUrl.isEmpty {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Twilio-Konsole Einrichtung (für eingehende Anrufe/SMS):").font(.system(size: 10, weight: .bold)).foregroundColor(.orange)
+                            Text(l10n.language.twilioConsoleSetup).font(.system(size: 10, weight: .bold)).foregroundColor(.orange)
                             HStack(spacing: 4) {
                                 Text("Voice-URL:").font(.system(size: 9)).foregroundColor(.secondary)
                                 Text("\(pubUrl)/twilio/voice/webhook").font(.system(size: 9, design: .monospaced)).foregroundColor(.primary).textSelection(.enabled)
@@ -396,14 +396,14 @@ extension SettingsView {
                                 Text("SMS-URL:").font(.system(size: 9)).foregroundColor(.secondary)
                                 Text("\(pubUrl)/twilio/sms/webhook").font(.system(size: 9, design: .monospaced)).foregroundColor(.primary).textSelection(.enabled)
                             }
-                            Text("→ Twilio Console → Phone Numbers → Nummer wählen → Voice/Messaging → Webhook-URL eintragen (HTTP POST)").font(.system(size: 9)).foregroundColor(.secondary.opacity(0.7))
+                            Text(l10n.language.twilioWebhookHint).font(.system(size: 9)).foregroundColor(.secondary.opacity(0.7))
                         }
                         .padding(8)
                         .background(Color.orange.opacity(0.06))
                         .cornerRadius(6)
                     }
 
-                    Text("Nummern-Whitelist (E.164, eine pro Zeile)").font(.system(size: 10)).foregroundColor(.secondary)
+                    Text(l10n.language.numberWhitelist).font(.system(size: 10)).foregroundColor(.secondary)
                     TextEditor(text: Binding(
                         get: { UserDefaults.standard.string(forKey: "kobold.twilio.whitelist") ?? "" },
                         set: { UserDefaults.standard.set($0, forKey: "kobold.twilio.whitelist") }
@@ -412,7 +412,7 @@ extension SettingsView {
                     .frame(height: 50)
                     .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.secondary.opacity(0.2), lineWidth: 1))
 
-                    Button("Zugangsdaten entfernen") {
+                    Button(l10n.language.removeCredentials) {
                         for k in ["kobold.twilio.accountSid", "kobold.twilio.authToken", "kobold.twilio.fromNumber",
                                    "kobold.twilio.publicUrl", "kobold.twilio.whitelist"] {
                             UserDefaults.standard.removeObject(forKey: k)
@@ -435,7 +435,7 @@ extension SettingsView {
                         set: { UserDefaults.standard.set($0, forKey: "kobold.twilio.authToken") }
                     )).textFieldStyle(.roundedBorder).font(.system(size: 12))
 
-                    Text("Absender-Nummer").font(.system(size: 11)).foregroundColor(.secondary)
+                    Text(l10n.language.senderNumber).font(.system(size: 11)).foregroundColor(.secondary)
                     TextField("+1234567890", text: Binding(
                         get: { UserDefaults.standard.string(forKey: "kobold.twilio.fromNumber") ?? "" },
                         set: { UserDefaults.standard.set($0, forKey: "kobold.twilio.fromNumber") }
@@ -462,7 +462,7 @@ extension SettingsView {
                         Image(systemName: "checkmark.circle.fill").foregroundColor(.koboldEmerald)
                         Text(UserDefaults.standard.string(forKey: "kobold.email.address") ?? "").font(.system(size: 13))
                     }
-                    Button("Zugangsdaten entfernen") {
+                    Button(l10n.language.removeCredentials) {
                         for k in ["kobold.email.address", "kobold.email.password", "kobold.email.smtpHost", "kobold.email.smtpPort", "kobold.email.imapHost", "kobold.email.imapPort"] {
                             UserDefaults.standard.removeObject(forKey: k)
                         }
@@ -472,19 +472,19 @@ extension SettingsView {
             },
             signInButton: {
                 AnyView(VStack(alignment: .leading, spacing: 8) {
-                    Text("E-Mail-Adresse").font(.system(size: 11)).foregroundColor(.secondary)
+                    Text(l10n.language.emailAddress).font(.system(size: 11)).foregroundColor(.secondary)
                     TextField("user@example.com", text: Binding(
                         get: { UserDefaults.standard.string(forKey: "kobold.email.address") ?? "" },
                         set: { UserDefaults.standard.set($0, forKey: "kobold.email.address") }
                     )).textFieldStyle(.roundedBorder).font(.system(size: 12))
 
-                    Text("Passwort / App-Passwort").font(.system(size: 11)).foregroundColor(.secondary)
-                    SecureField("Passwort", text: Binding(
+                    Text(l10n.language.passwordAppPassword).font(.system(size: 11)).foregroundColor(.secondary)
+                    SecureField(l10n.language.passwordLabel, text: Binding(
                         get: { UserDefaults.standard.string(forKey: "kobold.email.password") ?? "" },
                         set: { UserDefaults.standard.set($0, forKey: "kobold.email.password") }
                     )).textFieldStyle(.roundedBorder).font(.system(size: 12))
 
-                    DisclosureGroup("Server-Einstellungen") {
+                    DisclosureGroup(l10n.language.serverSettings) {
                         VStack(alignment: .leading, spacing: 6) {
                             HStack {
                                 VStack(alignment: .leading) {
@@ -495,7 +495,7 @@ extension SettingsView {
                                     )).textFieldStyle(.roundedBorder).font(.system(size: 11))
                                 }
                                 VStack(alignment: .leading) {
-                                    Text("Port").font(.system(size: 10)).foregroundColor(.secondary)
+                                    Text(l10n.language.portLabel).font(.system(size: 10)).foregroundColor(.secondary)
                                     TextField("587", text: Binding(
                                         get: { UserDefaults.standard.string(forKey: "kobold.email.smtpPort") ?? "587" },
                                         set: { UserDefaults.standard.set($0, forKey: "kobold.email.smtpPort") }
@@ -511,7 +511,7 @@ extension SettingsView {
                                     )).textFieldStyle(.roundedBorder).font(.system(size: 11))
                                 }
                                 VStack(alignment: .leading) {
-                                    Text("Port").font(.system(size: 10)).foregroundColor(.secondary)
+                                    Text(l10n.language.portLabel).font(.system(size: 10)).foregroundColor(.secondary)
                                     TextField("993", text: Binding(
                                         get: { UserDefaults.standard.string(forKey: "kobold.email.imapPort") ?? "993" },
                                         set: { UserDefaults.standard.set($0, forKey: "kobold.email.imapPort") }
@@ -539,19 +539,19 @@ extension SettingsView {
                 AnyView(VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 6) {
                         Image(systemName: "antenna.radiowaves.left.and.right.circle.fill").foregroundColor(.koboldEmerald)
-                        Text("Server läuft auf Port \(WebhookServer.shared.port)").font(.system(size: 13))
+                        Text(l10n.language.serverRunningOnPort("\(WebhookServer.shared.port)")).font(.system(size: 13))
                     }
-                    Text("Pfade: \(WebhookServer.shared.registeredPaths.joined(separator: ", "))").font(.system(size: 11)).foregroundColor(.secondary)
-                    Button("Server stoppen") { WebhookServer.shared.stop() }
+                    Text("\(l10n.language.paths): \(WebhookServer.shared.registeredPaths.joined(separator: ", "))").font(.system(size: 11)).foregroundColor(.secondary)
+                    Button(l10n.language.stopServer) { WebhookServer.shared.stop() }
                         .font(.system(size: 12)).foregroundColor(.red)
                 })
             },
             signInButton: {
                 AnyView(VStack(alignment: .leading, spacing: 8) {
-                    Text("Starte einen lokalen Webhook-Server für eingehende HTTP-Requests.").font(.system(size: 11)).foregroundColor(.secondary)
+                    Text(l10n.language.webhookStartDesc).font(.system(size: 11)).foregroundColor(.secondary)
 
                     HStack {
-                        Text("Port:").font(.system(size: 11)).foregroundColor(.secondary)
+                        Text("\(l10n.language.portLabel):").font(.system(size: 11)).foregroundColor(.secondary)
                         TextField("8089", text: Binding(
                             get: { String(UserDefaults.standard.integer(forKey: "kobold.webhook.port") > 0 ? UserDefaults.standard.integer(forKey: "kobold.webhook.port") : 8089) },
                             set: { UserDefaults.standard.set(Int($0) ?? 8089, forKey: "kobold.webhook.port") }
@@ -559,7 +559,7 @@ extension SettingsView {
                     }
 
                     Button(action: { _ = WebhookServer.shared.start() }) {
-                        Label("Webhook-Server starten", systemImage: "play.fill")
+                        Label(l10n.language.startWebhookServer, systemImage: "play.fill")
                     }
                     .buttonStyle(.borderedProminent).tint(.orange)
                 })
@@ -576,7 +576,7 @@ extension SettingsView {
         connectionCard(
             logo: AnyView(Image(systemName: "calendar").font(.title2).foregroundColor(.red)),
             name: "CalDAV",
-            subtitle: "Kalender synchronisieren",
+            subtitle: l10n.language.syncCalendar,
             isConnected: isConnected,
             connectedDetail: {
                 AnyView(VStack(alignment: .leading, spacing: 8) {
@@ -584,7 +584,7 @@ extension SettingsView {
                         Image(systemName: "checkmark.circle.fill").foregroundColor(.koboldEmerald)
                         Text(UserDefaults.standard.string(forKey: "kobold.caldav.serverURL") ?? "").font(.system(size: 12)).lineLimit(1)
                     }
-                    Button("Zugangsdaten entfernen") {
+                    Button(l10n.language.removeCredentials) {
                         for k in ["kobold.caldav.serverURL", "kobold.caldav.username", "kobold.caldav.password"] {
                             UserDefaults.standard.removeObject(forKey: k)
                         }
@@ -600,14 +600,14 @@ extension SettingsView {
                         set: { UserDefaults.standard.set($0, forKey: "kobold.caldav.serverURL") }
                     )).textFieldStyle(.roundedBorder).font(.system(size: 12))
 
-                    Text("Benutzername").font(.system(size: 11)).foregroundColor(.secondary)
+                    Text(l10n.language.usernameLabel).font(.system(size: 11)).foregroundColor(.secondary)
                     TextField("user", text: Binding(
                         get: { UserDefaults.standard.string(forKey: "kobold.caldav.username") ?? "" },
                         set: { UserDefaults.standard.set($0, forKey: "kobold.caldav.username") }
                     )).textFieldStyle(.roundedBorder).font(.system(size: 12))
 
-                    Text("Passwort").font(.system(size: 11)).foregroundColor(.secondary)
-                    SecureField("Passwort", text: Binding(
+                    Text(l10n.language.passwordLabel).font(.system(size: 11)).foregroundColor(.secondary)
+                    SecureField(l10n.language.passwordLabel, text: Binding(
                         get: { UserDefaults.standard.string(forKey: "kobold.caldav.password") ?? "" },
                         set: { UserDefaults.standard.set($0, forKey: "kobold.caldav.password") }
                     )).textFieldStyle(.roundedBorder).font(.system(size: 12))
@@ -632,7 +632,7 @@ extension SettingsView {
                         Image(systemName: "checkmark.circle.fill").foregroundColor(.koboldEmerald)
                         Text("\(UserDefaults.standard.string(forKey: "kobold.mqtt.host") ?? ""):\(UserDefaults.standard.string(forKey: "kobold.mqtt.port") ?? "1883")").font(.system(size: 13))
                     }
-                    Button("Konfiguration entfernen") {
+                    Button(l10n.language.removeConfig) {
                         for k in ["kobold.mqtt.host", "kobold.mqtt.port", "kobold.mqtt.username", "kobold.mqtt.password"] {
                             UserDefaults.standard.removeObject(forKey: k)
                         }
@@ -654,13 +654,13 @@ extension SettingsView {
                         )).textFieldStyle(.roundedBorder).font(.system(size: 12)).frame(width: 70)
                     }
 
-                    DisclosureGroup("Authentifizierung (optional)") {
+                    DisclosureGroup(l10n.language.authOptional) {
                         VStack(alignment: .leading, spacing: 6) {
-                            TextField("Benutzername", text: Binding(
+                            TextField(l10n.language.usernameLabel, text: Binding(
                                 get: { UserDefaults.standard.string(forKey: "kobold.mqtt.username") ?? "" },
                                 set: { UserDefaults.standard.set($0, forKey: "kobold.mqtt.username") }
                             )).textFieldStyle(.roundedBorder).font(.system(size: 12))
-                            SecureField("Passwort", text: Binding(
+                            SecureField(l10n.language.passwordLabel, text: Binding(
                                 get: { UserDefaults.standard.string(forKey: "kobold.mqtt.password") ?? "" },
                                 set: { UserDefaults.standard.set($0, forKey: "kobold.mqtt.password") }
                             )).textFieldStyle(.roundedBorder).font(.system(size: 12))
@@ -680,18 +680,18 @@ extension SettingsView {
         connectionCard(
             logo: AnyView(Image(systemName: "dot.radiowaves.left.and.right").font(.title2).foregroundColor(.orange)),
             name: "RSS",
-            subtitle: "Feeds abonnieren",
+            subtitle: l10n.language.subscribeFeeds,
             isConnected: isConnected,
             connectedDetail: {
                 AnyView(VStack(alignment: .leading, spacing: 8) {
-                    Text("\(feeds.count) Feed(s) abonniert").font(.system(size: 13))
+                    Text(l10n.language.feedsSubscribed(feeds.count)).font(.system(size: 13))
                     ForEach(feeds.prefix(5), id: \.self) { feed in
                         Text(feed).font(.system(size: 11)).foregroundColor(.secondary).lineLimit(1)
                     }
                     if feeds.count > 5 {
-                        Text("... und \(feeds.count - 5) weitere").font(.system(size: 11)).foregroundColor(.secondary)
+                        Text(l10n.language.andMore(feeds.count - 5)).font(.system(size: 11)).foregroundColor(.secondary)
                     }
-                    Button("Alle Feeds entfernen") {
+                    Button(l10n.language.removeAllFeeds) {
                         UserDefaults.standard.removeObject(forKey: "kobold.rss.feeds")
                     }
                     .font(.system(size: 12)).foregroundColor(.red)
@@ -699,8 +699,8 @@ extension SettingsView {
             },
             signInButton: {
                 AnyView(VStack(alignment: .leading, spacing: 8) {
-                    Text("Füge RSS/Atom Feed-URLs hinzu. Der Agent kann dann Feeds abrufen und lesen.").font(.system(size: 11)).foregroundColor(.secondary)
-                    Text("Feeds können auch per Chat hinzugefügt werden: \"Füge den RSS-Feed von xyz.com hinzu\"").font(.system(size: 11)).foregroundColor(.secondary).italic()
+                    Text(l10n.language.addRssFeedsDesc).font(.system(size: 11)).foregroundColor(.secondary)
+                    Text(l10n.language.addRssFeedsChatHint).font(.system(size: 11)).foregroundColor(.secondary).italic()
                 })
             }
         )
@@ -727,7 +727,7 @@ extension SettingsView {
         connectionCard(
             logo: AnyView(brandLogoLieferando),
             name: "Lieferando",
-            subtitle: "Restaurants, Bestellungen",
+            subtitle: l10n.language.restaurantsOrders,
             isConnected: hasApiKey || hasPostalCode,
             connectedDetail: {
                 AnyView(VStack(alignment: .leading, spacing: 6) {
@@ -735,10 +735,10 @@ extension SettingsView {
                     if !plz.isEmpty {
                         HStack {
                             Image(systemName: "location.fill").foregroundColor(.secondary)
-                            Text("PLZ: \(plz)").font(.system(size: 12))
+                            Text(l10n.language.postalCodeShort(plz)).font(.system(size: 12))
                         }
                     }
-                    Button("Zurücksetzen") {
+                    Button(l10n.language.resetItem) {
                         UserDefaults.standard.removeObject(forKey: "kobold.lieferando.apiKey")
                         UserDefaults.standard.removeObject(forKey: "kobold.lieferando.postalCode")
                         UserDefaults.standard.removeObject(forKey: "kobold.lieferando.address")
@@ -748,25 +748,25 @@ extension SettingsView {
             },
             signInButton: {
                 AnyView(VStack(alignment: .leading, spacing: 8) {
-                    Text("Postleitzahl").font(.system(size: 11)).foregroundColor(.secondary)
-                    TextField("z.B. 10115", text: Binding(
+                    Text(l10n.language.postalCode).font(.system(size: 11)).foregroundColor(.secondary)
+                    TextField("10115", text: Binding(
                         get: { UserDefaults.standard.string(forKey: "kobold.lieferando.postalCode") ?? "" },
                         set: { UserDefaults.standard.set($0, forKey: "kobold.lieferando.postalCode") }
                     )).textFieldStyle(.roundedBorder).font(.system(size: 12))
 
-                    Text("Lieferadresse (optional)").font(.system(size: 11)).foregroundColor(.secondary)
-                    TextField("Straße, Hausnummer", text: Binding(
+                    Text(l10n.language.deliveryAddressOptional).font(.system(size: 11)).foregroundColor(.secondary)
+                    TextField(l10n.language.streetHouseNr, text: Binding(
                         get: { UserDefaults.standard.string(forKey: "kobold.lieferando.address") ?? "" },
                         set: { UserDefaults.standard.set($0, forKey: "kobold.lieferando.address") }
                     )).textFieldStyle(.roundedBorder).font(.system(size: 12))
 
-                    Text("API-Key (optional, für erweiterte Features)").font(.system(size: 11)).foregroundColor(.secondary)
+                    Text(l10n.language.apiKeyOptional).font(.system(size: 11)).foregroundColor(.secondary)
                     SecureField("Takeaway API Key", text: Binding(
                         get: { UserDefaults.standard.string(forKey: "kobold.lieferando.apiKey") ?? "" },
                         set: { UserDefaults.standard.set($0, forKey: "kobold.lieferando.apiKey") }
                     )).textFieldStyle(.roundedBorder).font(.system(size: 12))
 
-                    Text("Ohne API-Key kann der Agent trotzdem Restaurants durchsuchen. Für Bestellstatus wird ein API-Key benötigt.")
+                    Text(l10n.language.lieferandoNoApiKeyHint)
                         .font(.system(size: 10)).foregroundColor(.secondary).italic()
                 })
             }
@@ -793,15 +793,15 @@ extension SettingsView {
         connectionCard(
             logo: AnyView(brandLogoUber),
             name: "Uber",
-            subtitle: "Fahrten, Preisschätzung",
+            subtitle: l10n.language.ridesEstimate,
             isConnected: isConnected,
             connectedDetail: {
                 AnyView(VStack(alignment: .leading, spacing: 6) {
                     HStack {
                         Image(systemName: "car.fill").foregroundColor(.secondary)
-                        Text("Verbunden").font(.system(size: 12))
+                        Text(l10n.language.connected).font(.system(size: 12))
                     }
-                    Button("Abmelden") {
+                    Button(l10n.language.signOut) {
                         UserDefaults.standard.removeObject(forKey: "kobold.uber.accessToken")
                         UserDefaults.standard.removeObject(forKey: "kobold.uber.clientId")
                         UserDefaults.standard.removeObject(forKey: "kobold.uber.clientSecret")
@@ -811,7 +811,7 @@ extension SettingsView {
             },
             signInButton: {
                 AnyView(VStack(alignment: .leading, spacing: 8) {
-                    Text("Uber OAuth-Konfiguration").font(.system(size: 12, weight: .semibold))
+                    Text("Uber \(l10n.language.oauthConfiguration)").font(.system(size: 12, weight: .semibold))
 
                     Text("Client ID").font(.system(size: 11)).foregroundColor(.secondary)
                     TextField("Uber Client ID", text: Binding(
@@ -825,13 +825,13 @@ extension SettingsView {
                         set: { UserDefaults.standard.set($0, forKey: "kobold.uber.clientSecret") }
                     )).textFieldStyle(.roundedBorder).font(.system(size: 12))
 
-                    Text("Access Token (aus OAuth-Flow oder manuell)").font(.system(size: 11)).foregroundColor(.secondary)
+                    Text(l10n.language.accessTokenManual).font(.system(size: 11)).foregroundColor(.secondary)
                     SecureField("Bearer Token", text: Binding(
                         get: { UserDefaults.standard.string(forKey: "kobold.uber.accessToken") ?? "" },
                         set: { UserDefaults.standard.set($0, forKey: "kobold.uber.accessToken") }
                     )).textFieldStyle(.roundedBorder).font(.system(size: 12))
 
-                    Text("Erstelle eine App unter developer.uber.com und trage die Credentials ein. Der Agent kann dann Fahrpreise schätzen und Fahrten buchen.")
+                    Text(l10n.language.uberCreateAppHint)
                         .font(.system(size: 10)).foregroundColor(.secondary).italic()
                 })
             }
@@ -857,17 +857,17 @@ extension SettingsView {
         connectionCard(
             logo: AnyView(brandLogoSuno),
             name: "Suno AI",
-            subtitle: "Musik generieren",
+            subtitle: l10n.language.generateMusic,
             isConnected: hasApiKey,
             connectedDetail: {
                 AnyView(VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 6) {
                         Image(systemName: "checkmark.circle.fill").foregroundColor(.koboldEmerald)
-                        Text("API-Key konfiguriert").font(.system(size: 13))
+                        Text(l10n.language.apiKeyConfigured).font(.system(size: 13))
                     }
-                    Text("Der Agent kann Songs aus Textbeschreibungen generieren.")
+                    Text(l10n.language.agentCanGenerateSongs)
                         .font(.system(size: 11)).foregroundColor(.secondary)
-                    Button("API-Key entfernen") {
+                    Button(l10n.language.removeApiKey) {
                         UserDefaults.standard.removeObject(forKey: "kobold.suno.apiKey")
                     }
                     .font(.system(size: 12)).foregroundColor(.red)
@@ -875,13 +875,13 @@ extension SettingsView {
             },
             signInButton: {
                 AnyView(VStack(alignment: .leading, spacing: 8) {
-                    Text("API-Key von sunoapi.org").font(.system(size: 11)).foregroundColor(.secondary)
+                    Text(l10n.language.apiKeyFrom("sunoapi.org")).font(.system(size: 11)).foregroundColor(.secondary)
                     SecureField("Suno API Key", text: Binding(
                         get: { UserDefaults.standard.string(forKey: "kobold.suno.apiKey") ?? "" },
                         set: { UserDefaults.standard.set($0, forKey: "kobold.suno.apiKey") }
                     )).textFieldStyle(.roundedBorder).font(.system(size: 12))
 
-                    Text("Erstelle einen Account auf sunoapi.org und kopiere deinen API-Key hierher. Der Agent kann dann Musik generieren.")
+                    Text(l10n.language.sunoCreateAccountHint)
                         .font(.system(size: 10)).foregroundColor(.secondary).italic()
                 })
             }
@@ -909,13 +909,13 @@ extension SettingsView {
         connectionCard(
             logo: AnyView(brandLogoElevenLabs),
             name: "ElevenLabs",
-            subtitle: "Stimme & Live-Gespräche",
+            subtitle: l10n.language.voiceLiveConversations,
             isConnected: hasConnection,
             connectedDetail: {
                 AnyView(VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 6) {
                         Image(systemName: "checkmark.circle.fill").foregroundColor(.koboldEmerald)
-                        Text("API-Key konfiguriert").font(.system(size: 13))
+                        Text(l10n.language.apiKeyConfigured).font(.system(size: 13))
                     }
                     if !agentId.isEmpty {
                         HStack(spacing: 6) {
@@ -926,12 +926,12 @@ extension SettingsView {
                     if UserDefaults.standard.bool(forKey: "kobold.elevenlabs.convai.customLLM") {
                         HStack(spacing: 4) {
                             Image(systemName: "brain.head.profile").foregroundColor(.purple).font(.system(size: 11))
-                            Text("Custom LLM aktiv").font(.system(size: 11, weight: .medium)).foregroundColor(.purple)
+                            Text(l10n.language.customLLMActive).font(.system(size: 11, weight: .medium)).foregroundColor(.purple)
                         }
                     }
-                    Text("TTS, Live-Voice und Telefonie über ElevenLabs.")
+                    Text(l10n.language.ttsLiveVoiceTelephony)
                         .font(.system(size: 11)).foregroundColor(.secondary)
-                    Button("API-Key entfernen") {
+                    Button(l10n.language.removeApiKey) {
                         UserDefaults.standard.removeObject(forKey: "kobold.elevenlabs.apiKey")
                     }
                     .font(.system(size: 12)).foregroundColor(.red)
@@ -939,18 +939,18 @@ extension SettingsView {
             },
             signInButton: {
                 AnyView(VStack(alignment: .leading, spacing: 8) {
-                    Text("API-Key von elevenlabs.io").font(.system(size: 11)).foregroundColor(.secondary)
+                    Text(l10n.language.apiKeyFrom("elevenlabs.io")).font(.system(size: 11)).foregroundColor(.secondary)
                     SecureField("ElevenLabs API Key", text: Binding(
                         get: { UserDefaults.standard.string(forKey: "kobold.elevenlabs.apiKey") ?? "" },
                         set: { UserDefaults.standard.set($0, forKey: "kobold.elevenlabs.apiKey") }
                     )).textFieldStyle(.roundedBorder).font(.system(size: 12))
 
-                    TextField("Agent-ID (für ConvAI)", text: Binding(
+                    TextField(l10n.language.agentIdConvAI, text: Binding(
                         get: { UserDefaults.standard.string(forKey: "kobold.elevenlabs.convai.agentId") ?? "" },
                         set: { UserDefaults.standard.set($0, forKey: "kobold.elevenlabs.convai.agentId") }
                     )).textFieldStyle(.roundedBorder).font(.system(size: 12))
 
-                    Text("Erstelle einen Account auf elevenlabs.io und kopiere deinen API-Key. Für Live-Voice erstelle zusätzlich einen ConvAI Agent.")
+                    Text(l10n.language.elevenLabsCreateAccountHint)
                         .font(.system(size: 10)).foregroundColor(.secondary).italic()
                 })
             }
@@ -975,7 +975,7 @@ extension SettingsView {
         connectionCard(
             logo: AnyView(brandLogoReddit),
             name: "Reddit",
-            subtitle: "Posts, Subreddits, Kommentare",
+            subtitle: l10n.language.postsSubredditsComments,
             isConnected: RedditOAuth.shared.isConnected,
             connectedDetail: {
                 AnyView(VStack(alignment: .leading, spacing: 8) {
@@ -983,15 +983,15 @@ extension SettingsView {
                         Image(systemName: "person.fill").foregroundColor(.secondary)
                         Text(RedditOAuth.shared.userName).font(.system(size: 13))
                     }
-                    Button("Abmelden") { Task { await RedditOAuth.shared.signOut() } }
+                    Button(l10n.language.signOut) { Task { await RedditOAuth.shared.signOut() } }
                         .font(.system(size: 12)).foregroundColor(.red)
                 })
             },
             signInButton: {
                 AnyView(VStack(alignment: .leading, spacing: 10) {
-                    DisclosureGroup("Reddit App-Konfiguration") {
+                    DisclosureGroup(l10n.language.redditAppConfig) {
                         VStack(alignment: .leading, spacing: 6) {
-                            Text("Client ID (unter reddit.com/prefs/apps)").font(.system(size: 11)).foregroundColor(.secondary)
+                            Text(l10n.language.clientIdAt("reddit.com/prefs/apps")).font(.system(size: 11)).foregroundColor(.secondary)
                             TextField("Reddit App Client ID", text: Binding(
                                 get: { UserDefaults.standard.string(forKey: "kobold.reddit.clientId") ?? "" },
                                 set: { UserDefaults.standard.set($0, forKey: "kobold.reddit.clientId") }
@@ -1006,11 +1006,11 @@ extension SettingsView {
                     }.font(.system(size: 12.5))
 
                     Button(action: { RedditOAuth.shared.signIn() }) {
-                        Label("Mit Reddit anmelden", systemImage: "arrow.right.circle.fill")
+                        Label(l10n.language.signInWith("Reddit"), systemImage: "arrow.right.circle.fill")
                     }
                     .buttonStyle(.borderedProminent).tint(.orange)
 
-                    Text("Erstelle eine App unter reddit.com/prefs/apps (Typ: web app, Redirect: http://127.0.0.1:7778/callback).")
+                    Text(l10n.language.redditCreateAppHint)
                         .font(.system(size: 10)).foregroundColor(.secondary).italic()
                 })
             }
@@ -1022,6 +1022,7 @@ extension SettingsView {
 
 struct WhatsAppWebSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject var l10n: LocalizationManager
     @State private var isConnected = false
     @State private var isLoading = true
     @State private var pageTitle = "WhatsApp Web"
@@ -1036,17 +1037,17 @@ struct WhatsAppWebSheet: View {
                     if isConnected {
                         HStack(spacing: 4) {
                             Image(systemName: "checkmark.circle.fill").font(.system(size: 10)).foregroundColor(.koboldEmerald)
-                            Text("Verknüpft").font(.system(size: 11)).foregroundColor(.koboldEmerald)
+                            Text(l10n.language.linkedLabel).font(.system(size: 11)).foregroundColor(.koboldEmerald)
                         }
                     } else {
-                        Text("Scanne den QR-Code mit deinem Handy").font(.system(size: 11)).foregroundColor(.secondary)
+                        Text(l10n.language.scanQRPhone).font(.system(size: 11)).foregroundColor(.secondary)
                     }
                 }
                 Spacer()
                 if isLoading {
                     ProgressView().controlSize(.small)
                 }
-                Button("Schließen") { dismiss() }
+                Button(l10n.language.close) { dismiss() }
                     .buttonStyle(.bordered)
             }
             .padding(.horizontal, 16)

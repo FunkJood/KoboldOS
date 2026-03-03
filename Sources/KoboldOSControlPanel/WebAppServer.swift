@@ -53,7 +53,7 @@ final class WebAppServer: @unchecked Sendable {
     }
 
     /// Current WebGUI version — bump when HTML changes to auto-update on-disk copy
-    private static let webGUIVersion = "v0.3.71"
+    private static let webGUIVersion = "v0.3.76"
 
     /// Write default index.html to disk if not present or outdated (agent can then edit it)
     func ensureWebGUIFiles() {
@@ -410,8 +410,17 @@ final class WebAppServer: @unchecked Sendable {
         let currentPass = UserDefaults.standard.string(forKey: "kobold.webapp.password") ?? config.password
         let expectedAuth = "Basic " + Data("\(currentUser):\(currentPass)".utf8).base64EncodedString()
         if auth != expectedAuth && auth != config.basicAuthExpected {
-            let resp = "HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nContent-Length: 26\r\nConnection: close\r\n\r\n{\"error\":\"Unauthorized\"}\n"
+            let unauthBody = "{\"error\":\"Unauthorized\"}"
+            let resp = "HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Headers: Content-Type, Authorization\r\nContent-Length: \(unauthBody.utf8.count)\r\nConnection: close\r\n\r\n\(unauthBody)"
             conn.send(content: resp.data(using: .utf8), completion: .contentProcessed { _ in conn.cancel() })
+            return
+        }
+
+        // Auth-Check-Endpoint — wer hier ankommt, hat Basic-Auth bestanden
+        if path == "/api/auth/check" {
+            let okBody = "{\"authenticated\":true}"
+            let okResp = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: \(okBody.utf8.count)\r\nConnection: close\r\n\r\n\(okBody)"
+            conn.send(content: okResp.data(using: .utf8), completion: .contentProcessed { _ in conn.cancel() })
             return
         }
 
@@ -718,7 +727,7 @@ final class WebAppServer: @unchecked Sendable {
 
     private static func buildHTML() -> String {
         return """
-        <!-- KoboldOS WebGUI v0.3.71 -->
+        <!-- KoboldOS WebGUI v0.3.76 -->
         <!DOCTYPE html>
         <html lang="de">
         <head>
@@ -2360,10 +2369,10 @@ final class WebAppServer: @unchecked Sendable {
           var u=document.getElementById('loginUser').value.trim();
           var p=document.getElementById('loginPass').value;
           var err=document.getElementById('loginError');
-          if(!u||!p){if(err){err.textContent='Bitte beide Felder ausfuellen';err.style.display='block';}return;}
+          if(!u){if(err){err.textContent='Benutzername eingeben';err.style.display='block';}return;}
           var token=btoa(u+':'+p);
           var h={'Authorization':'Basic '+token};
-          fetch(API+'/health',{method:'GET',headers:h}).then(function(r){
+          fetch('/api/auth/check',{method:'GET',headers:{'Authorization':'Basic '+token}}).then(function(r){
             if(r.ok){
               localStorage.setItem('koboldos_auth',token);
               document.getElementById('loginOverlay').style.display='none';
@@ -2378,7 +2387,7 @@ final class WebAppServer: @unchecked Sendable {
         function checkAuth(){
           var token=getAuthHeader();
           if(token){
-            fetch(API+'/health',{method:'GET',headers:{'Authorization':token}}).then(function(r){
+            fetch('/api/auth/check',{method:'GET',headers:{'Authorization':token}}).then(function(r){
               if(r.ok){document.getElementById('loginOverlay').style.display='none';initApp();}
               else{localStorage.removeItem('koboldos_auth');document.getElementById('loginOverlay').style.display='flex';}
             }).catch(function(){document.getElementById('loginOverlay').style.display='flex';});

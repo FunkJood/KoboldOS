@@ -56,6 +56,26 @@ enum TaskSchedulePreset: String, CaseIterable, Identifiable {
     static func from(cron: String) -> TaskSchedulePreset {
         allCases.first { $0.cronExpression == cron && $0 != .manual } ?? .custom
     }
+
+    func localizedName(_ lang: AppLanguage) -> String {
+        switch self {
+        case .manual:         return lang.schedManual
+        case .every5min:      return lang.schedEvery5
+        case .every15min:     return lang.schedEvery15
+        case .every30min:     return lang.schedEvery30
+        case .hourly:         return lang.schedHourly
+        case .every2h:        return lang.schedEvery2h
+        case .every4h:        return lang.schedEvery4h
+        case .every6h:        return lang.schedEvery6h
+        case .daily8:         return lang.schedDaily8
+        case .daily12:        return lang.schedDaily12
+        case .daily18:        return lang.schedDaily18
+        case .daily22:        return lang.schedDaily22
+        case .weekdayMorning: return lang.schedWeekday
+        case .weekly:         return lang.schedWeekly
+        case .custom:         return lang.schedCustom
+        }
+    }
 }
 
 // MARK: - ScheduledTask
@@ -70,10 +90,10 @@ struct ScheduledTask: Identifiable {
 
     var schedulePreset: TaskSchedulePreset { TaskSchedulePreset.from(cron: schedule) }
 
-    var scheduleDescription: String {
+    func scheduleDescription(_ lang: AppLanguage) -> String {
         let preset = schedulePreset
-        if preset == .custom || preset == .manual { return schedule.isEmpty ? "Manuell" : schedule }
-        return preset.rawValue
+        if preset == .custom || preset == .manual { return schedule.isEmpty ? lang.schedManual : schedule }
+        return preset.localizedName(lang)
     }
 }
 
@@ -210,7 +230,7 @@ struct TasksView: View {
         FuturisticBox(icon: "moon.zzz.fill", title: "Idle Aufgaben", accent: .indigo) {
             // Header + Add
             HStack {
-                Text("Aufgaben für Ruhezeiten").font(.system(size: 13.5, weight: .semibold))
+                Text(l10n.language.idleTasks).font(.system(size: 13.5, weight: .semibold))
                 Spacer()
                 HStack(spacing: 12) {
                     HStack(spacing: 4) {
@@ -222,7 +242,7 @@ struct TasksView: View {
                             .foregroundColor(.secondary)
                     }
                     Button(action: { withAnimation { showIdleAddForm.toggle() } }) {
-                        Label(showIdleAddForm ? "Abbrechen" : "Hinzufügen", systemImage: showIdleAddForm ? "xmark" : "plus")
+                        Label(showIdleAddForm ? l10n.language.cancel : l10n.language.addItem, systemImage: showIdleAddForm ? "xmark" : "plus")
                             .font(.caption)
                     }.buttonStyle(.bordered).controlSize(.small)
                 }
@@ -233,7 +253,7 @@ struct TasksView: View {
                 VStack(spacing: 8) {
                     TextField("Name (z.B. 'Downloads aufräumen')", text: $newIdleName)
                         .textFieldStyle(.roundedBorder)
-                    TextField("Prompt (Anweisung an den Agent)", text: $newIdlePrompt)
+                    TextField(l10n.language.promptLabel, text: $newIdlePrompt)
                         .textFieldStyle(.roundedBorder)
                     HStack {
                         Picker("Priorität", selection: $newIdlePriority) {
@@ -248,7 +268,7 @@ struct TasksView: View {
                     }
                     HStack {
                         Spacer()
-                        Button("Hinzufügen") {
+                        Button(l10n.language.addItem) {
                             let task = IdleTask(name: newIdleName.trimmingCharacters(in: .whitespaces),
                                                 prompt: newIdlePrompt.trimmingCharacters(in: .whitespaces),
                                                 priority: newIdlePriority,
@@ -266,26 +286,10 @@ struct TasksView: View {
                 .cornerRadius(8)
             }
 
-            // Task list or examples
+            // Task list or empty state
             if proactiveEngine.idleTasks.isEmpty {
-                VStack(spacing: 6) {
-                    Text("Definiere was der Agent tun soll wenn er nichts zu tun hat.")
-                        .font(.caption).foregroundColor(.secondary).italic()
-                    Text("Schnell hinzufügen:").font(.caption2.bold()).foregroundColor(.secondary)
-                    ForEach(IdleTask.examples, id: \.id) { example in
-                        Button(action: { proactiveEngine.addIdleTask(example) }) {
-                            HStack(spacing: 6) {
-                                Image(systemName: "plus.circle.fill").font(.system(size: 12)).foregroundColor(.indigo)
-                                Text(example.name).font(.system(size: 13)).foregroundColor(.primary)
-                                Spacer()
-                                Text("Cooldown: \(example.cooldownMinutes / 60)h")
-                                    .font(.caption2).foregroundColor(.secondary)
-                            }
-                            .padding(.horizontal, 10).padding(.vertical, 4)
-                            .background(Color.indigo.opacity(0.06)).cornerRadius(6)
-                        }.buttonStyle(.plain)
-                    }
-                }
+                Text(l10n.language.defineIdleTask)
+                    .font(.caption).foregroundColor(.secondary).italic()
             } else {
                 ForEach(Array(proactiveEngine.idleTasks.enumerated()), id: \.element.id) { idx, task in
                     HStack(spacing: 8) {
@@ -330,14 +334,14 @@ struct TasksView: View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
                 Text(l10n.language.tasks).font(.title2.bold())
-                Text("Automatische und geplante Agent-Aufgaben — führe Aktionen nach Zeitplan aus")
+                Text(l10n.language.automationDesc)
                     .font(.caption).foregroundColor(.secondary)
             }
             Spacer()
             if !statusMsg.isEmpty {
                 Text(statusMsg).font(.caption).foregroundColor(.koboldEmerald)
             }
-            GlassButton(title: "Neue Aufgabe", icon: "plus", isPrimary: true) { activeSheet = .addTask }
+            GlassButton(title: l10n.language.newTask, icon: "plus", isPrimary: true) { activeSheet = .addTask }
                 .help("Erstelle eine neue automatisierte Aufgabe")
             GlassButton(title: "Aktualisieren", icon: "arrow.clockwise", isPrimary: false) {
                 Task { await loadTasks() }
@@ -426,7 +430,7 @@ struct TasksView: View {
                 VStack(spacing: 16) {
                     Image(systemName: "checklist").font(.system(size: 40)).foregroundColor(.secondary)
                     Text("Keine Aufgaben").font(.headline)
-                    Text("Erstelle automatische Aufgaben, die dein Agent nach Zeitplan ausführt — täglich, stündlich oder auf Knopfdruck.")
+                    Text(l10n.language.createTaskDesc)
                         .font(.caption).foregroundColor(.secondary).multilineTextAlignment(.center)
                         .frame(maxWidth: 320)
                     GlassButton(title: "Erste Aufgabe erstellen", icon: "plus", isPrimary: true) { activeSheet = .addTask }
@@ -490,7 +494,7 @@ struct TasksView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 HStack {
-                    Text("Neue Aufgabe").font(.title3.bold())
+                    Text(l10n.language.newTask).font(.title3.bold())
                     Spacer()
                     Button(action: { activeSheet = nil; resetForm() }) {
                         Image(systemName: "xmark.circle.fill").foregroundColor(.secondary).font(.title3)
@@ -503,13 +507,13 @@ struct TasksView: View {
                     title: "Aufgaben-Name",
                     hint: "Ein klarer Name für diese Aufgabe, z.B. 'Täglicher Bericht'"
                 ) {
-                    GlassTextField(text: $newName, placeholder: "z.B. Morgen-Briefing, System-Check...")
+                    GlassTextField(text: $newName, placeholder: l10n.language.taskNamePlaceholder)
                 }
 
                 // Prompt
                 formField(
                     title: "Prompt",
-                    hint: "Was soll der Agent tun? Beschreibe die Aufgabe so genau wie möglich."
+                    hint: "\(l10n.language.whatAgentDo) \(l10n.language.describeTask)"
                 ) {
                     TextEditor(text: $newPrompt)
                         .font(.system(size: 15.5))
@@ -519,7 +523,7 @@ struct TasksView: View {
                         .scrollContentBackground(.hidden)
                 }
 
-                // Schedule Picker — Einmalig / Wiederkehrend
+                // Schedule Picker
                 formField(
                     title: "Ausführungszeitpunkt",
                     hint: "Einmalig für eine bestimmte Zeit, oder wiederkehrend nach Intervall."
@@ -549,7 +553,7 @@ struct TasksView: View {
         return Button(action: { newSchedulePreset = preset }) {
             HStack(spacing: 6) {
                 Image(systemName: preset.icon).font(.system(size: 13.5))
-                Text(preset.rawValue).font(.system(size: 13.5, weight: isSelected ? .semibold : .regular))
+                Text(preset.localizedName(l10n.language)).font(.system(size: 13.5, weight: isSelected ? .semibold : .regular))
                     .lineLimit(1).minimumScaleFactor(0.7)
             }
             .foregroundColor(isSelected ? .koboldEmerald : .secondary)
@@ -758,7 +762,7 @@ struct TasksView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 HStack {
-                    Text("Aufgabe bearbeiten").font(.title3.bold())
+                    Text(l10n.language.editTask).font(.title3.bold())
                     Spacer()
                     Button(action: { activeSheet = nil; editingTask = nil; resetForm() }) {
                         Image(systemName: "xmark.circle.fill").foregroundColor(.secondary).font(.title3)
@@ -770,7 +774,7 @@ struct TasksView: View {
                     GlassTextField(text: $newName, placeholder: "z.B. Morgen-Briefing...")
                 }
 
-                formField(title: "Prompt", hint: "Was soll der Agent tun?") {
+                formField(title: "Prompt", hint: l10n.language.whatAgentDo) {
                     TextEditor(text: $newPrompt)
                         .font(.system(size: 15.5))
                         .frame(minHeight: 80, maxHeight: 160)
@@ -788,7 +792,7 @@ struct TasksView: View {
                     GlassButton(title: "Abbrechen", isPrimary: false) {
                         activeSheet = nil; editingTask = nil; resetForm()
                     }
-                    GlassButton(title: "Speichern", icon: "checkmark", isPrimary: true,
+                    GlassButton(title: l10n.language.save, icon: "checkmark", isPrimary: true,
                                 isDisabled: newName.trimmingCharacters(in: .whitespaces).isEmpty) {
                         Task { await updateTask() }
                     }
@@ -814,7 +818,7 @@ struct TasksView: View {
         }
 
         guard let url = URL(string: viewModel.baseURL + "/tasks") else {
-            errorMsg = "Ungültige URL"
+            errorMsg = l10n.language.invalidUrl
             return
         }
 
@@ -830,7 +834,7 @@ struct TasksView: View {
                     tasks = []
                     return
                 }
-                errorMsg = "HTTP-Fehler \(http.statusCode)"
+                errorMsg = "\(l10n.language.httpError) \(http.statusCode)"
                 return
             }
             guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -872,7 +876,7 @@ struct TasksView: View {
         do {
             let (_, resp) = try await URLSession.shared.data(for: req)
             if let http = resp as? HTTPURLResponse, http.statusCode != 200 {
-                statusMsg = "Fehler beim Erstellen (HTTP \(http.statusCode))"
+                statusMsg = "\(l10n.language.errorCreating) (HTTP \(http.statusCode))"
             }
         } catch {
             statusMsg = "Erstellen fehlgeschlagen"
@@ -900,7 +904,7 @@ struct TasksView: View {
         do {
             let (_, resp) = try await URLSession.shared.data(for: req)
             if let http = resp as? HTTPURLResponse, http.statusCode != 200 {
-                statusMsg = "Fehler beim Aktualisieren (HTTP \(http.statusCode))"
+                statusMsg = "\(l10n.language.errorUpdating) (HTTP \(http.statusCode))"
             }
         } catch {
             statusMsg = "Aktualisieren fehlgeschlagen"
@@ -960,6 +964,7 @@ struct TaskCard: View {
     let onDelete: () -> Void
     let onToggle: (Bool) -> Void
     let onOpenChat: () -> Void
+    @EnvironmentObject var l10n: LocalizationManager
     @State private var showDeleteConfirm = false
 
     var body: some View {
@@ -997,7 +1002,7 @@ struct TaskCard: View {
                     HStack(spacing: 12) {
                         HStack(spacing: 4) {
                             Image(systemName: "clock").font(.caption2)
-                            Text(task.scheduleDescription).font(.system(size: 12.5))
+                            Text(task.scheduleDescription(l10n.language)).font(.system(size: 12.5))
                         }
                         .foregroundColor(.secondary)
                         .padding(.horizontal, 6).padding(.vertical, 3)
@@ -1021,18 +1026,18 @@ struct TaskCard: View {
                         Button(action: onEdit) {
                             Image(systemName: "pencil").foregroundColor(.koboldGold.opacity(0.8))
                         }
-                        .buttonStyle(.plain).help("Aufgabe bearbeiten")
+                        .buttonStyle(.plain).help(l10n.language.editTask)
                         Button(action: { showDeleteConfirm = true }) {
                             Image(systemName: "trash").foregroundColor(.red.opacity(0.7))
                         }
-                        .buttonStyle(.plain).help("Aufgabe löschen")
+                        .buttonStyle(.plain).help(l10n.language.delete)
                         .confirmationDialog(
-                            "Aufgabe '\(task.name)' löschen?",
+                            "\(l10n.language.delete) '\(task.name)'?",
                             isPresented: $showDeleteConfirm,
                             titleVisibility: .visible
                         ) {
-                            Button("Löschen", role: .destructive) { onDelete() }
-                            Button("Abbrechen", role: .cancel) {}
+                            Button(l10n.language.delete, role: .destructive) { onDelete() }
+                            Button(l10n.language.cancel, role: .cancel) {}
                         }
                     }
                 }

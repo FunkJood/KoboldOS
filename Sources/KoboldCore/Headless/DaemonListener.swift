@@ -2,6 +2,9 @@ import Foundation
 #if canImport(CommonCrypto)
 import CommonCrypto
 #endif
+#if canImport(Contacts)
+import Contacts
+#endif
 
 // MARK: - DaemonListener
 // Minimal HTTP server for KoboldOS daemon API
@@ -304,12 +307,21 @@ public actor DaemonListener {
 
         switch path {
         case "/health":
+            let pool = AgentWorkerPool.shared
+            let poolActive = await pool.activeWorkerCount
+            let poolWaiting = await pool.waitingRequestCount
+            let poolStreams = await pool.activeStreamCount
+            let poolStatus = await pool.statusDescription
             return jsonOK([
                 "status": "ok",
                 "version": KoboldVersion.current,
                 "pid": Int(ProcessInfo.processInfo.processIdentifier),
                 "uptime": Int(Date().timeIntervalSince(startTime)),
-                "active_streams": activeAgentStreams
+                "active_streams": activeAgentStreams,
+                "pool_active": poolActive,
+                "pool_waiting": poolWaiting,
+                "pool_streams": poolStreams,
+                "pool_status": poolStatus
             ])
 
         case "/agent":
@@ -549,9 +561,364 @@ public actor DaemonListener {
             }
             return loadTopicsJSON()
 
+        // MARK: - Session Sync (Desktop ↔ WebUI)
+        case "/sessions":
+            if method == "POST", let body {
+                return handleSessionsSave(body: body)
+            }
+            return handleSessionsList()
+
+        case "/sessions/events":
+            // SSE endpoint handled in handleParsedRequest before routeRequest
+            return jsonError("Use SSE endpoint")
+
+        case "/sessions/debug":
+            return handleSessionsDebug()
+
+        // MARK: - CRM Routes
+        case "/contacts":
+            if method == "POST", let body { return handleCRMPost(collection: "contacts", body: body) }
+            return handleCRMList(collection: "contacts")
+
+        case "/companies":
+            if method == "POST", let body { return handleCRMPost(collection: "companies", body: body) }
+            return handleCRMList(collection: "companies")
+
+        case "/deals":
+            if method == "POST", let body { return handleCRMPost(collection: "deals", body: body) }
+            return handleCRMList(collection: "deals")
+
+        case "/activities":
+            if method == "POST", let body { return handleCRMPost(collection: "activities", body: body) }
+            return handleCRMActivitiesList()
+
+        case "/groups":
+            if method == "POST", let body { return handleCRMPost(collection: "groups", body: body) }
+            return handleCRMList(collection: "groups")
+
+        case "/contacts/import-apple":
+            return await handleAppleContactsImport()
+
+        case "/contacts/import-google":
+            return await handleGoogleContactsImport()
+
+        case "/pipeline-stages":
+            if method == "POST", let body { return handlePipelineStagesPost(body: body) }
+            return handlePipelineStagesList()
+
+        // MARK: - Teams Routes
+        case "/teams":
+            if method == "POST", let body { return handleTeamsPost(body: body) }
+            return handleTeamsList()
+
         default:
+            // Dynamic routes: /sessions/{id}
+            if path.hasPrefix("/sessions/") {
+                let sessionId = String(path.dropFirst("/sessions/".count))
+                if !sessionId.isEmpty && sessionId != "events" && sessionId != "debug" {
+                    return handleSessionGet(sessionId: sessionId)
+                }
+            }
+            // Dynamic routes: /contacts/{id}
+            if path.hasPrefix("/contacts/") {
+                let contactId = String(path.dropFirst("/contacts/".count))
+                if !contactId.isEmpty && contactId != "import-apple" && contactId != "import-google" {
+                    return handleCRMDetail(collection: "contacts", id: contactId)
+                }
+            }
+            // Dynamic routes: /companies/{id}
+            if path.hasPrefix("/companies/") {
+                let companyId = String(path.dropFirst("/companies/".count))
+                if !companyId.isEmpty {
+                    return handleCRMDetail(collection: "companies", id: companyId)
+                }
+            }
+            // Dynamic routes: /workflow-state/{projectId}
+            if path.hasPrefix("/workflow-state/") {
+                let projectId = String(path.dropFirst("/workflow-state/".count))
+                if !projectId.isEmpty {
+                    if method == "POST", let body {
+                        return handleWorkflowStateSave(projectId: projectId, body: body)
+                    }
+                    return handleWorkflowStateLoad(projectId: projectId)
+                }
+            }
             return httpResponse(status: "404 Not Found", body: "{\"error\":\"Not found\"}")
         }
+    }
+
+    // MARK: - Session Sync Handlers (Desktop ↔ WebUI)
+
+    /// GET /sessions/debug → Diagnose-Endpoint für Session-Sync-Debugging
+    private func handleSessionsDebug() -> String {
+        let url = sessionsFileURL
+        let exists = FileManager.default.fileExists(atPath: url.path)
+        var info: [String: Any] = ["path": url.path, "exists": exists]
+        if exists {
+            do {
+                let data = try Data(contentsOf: url)
+                info["sizeBytes"] = data.count
+                do {
+                    let sessions = try JSONDecoder().decode([SessionSyncDTO].self, from: data)
+                    info["decodedCount"] = sessions.count
+                    info["error"] = NSNull()
+                    info["sessionIds"] = sessions.prefix(5).map { $0.id.uuidString }
+                    info["sessionTitles"] = sessions.prefix(5).map { $0.title }
+                } catch {
+                    info["decodedCount"] = 0
+                    info["error"] = "\(error)"
+                    // Fallback: JSONSerialization
+                    if let raw = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
+                        info["jsonSerializationCount"] = raw.count
+                        info["firstKeys"] = raw.first.map { Array($0.keys) } ?? []
+                    }
+                }
+            } catch {
+                info["error"] = "read: \(error.localizedDescription)"
+            }
+        }
+        info["authToken"] = String(authToken.prefix(4)) + "..."
+        return jsonOK(info)
+    }
+
+    private var sessionsFileURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/KoboldOS/sessions.json")
+    }
+
+    /// GET /sessions → Session-Liste (ohne vollständige Messages, nur Metadaten)
+    private func handleSessionsList() -> String {
+        // Desktop-App bitten, Sessions sofort auf Disk zu schreiben (statt 3s Debounce abzuwarten)
+        #if canImport(AppKit)
+        DispatchQueue.main.sync {
+            NotificationCenter.default.post(name: Notification.Name("koboldForceSessionSave"), object: nil)
+        }
+        // Kurz warten damit der synchrone Save durchgeht
+        Thread.sleep(forTimeInterval: 0.05)
+        #endif
+
+        let url = sessionsFileURL
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            print("[SessionSync] ⚠️ sessions.json nicht gefunden: \(url.path)")
+            return jsonOK(["sessions": [], "count": 0])
+        }
+        let data: Data
+        do {
+            data = try Data(contentsOf: url)
+        } catch {
+            print("[SessionSync] ❌ sessions.json nicht lesbar: \(error.localizedDescription)")
+            return jsonOK(["sessions": [], "count": 0])
+        }
+
+        // Primär: Codable-Decode (schnell + typsicher)
+        let sessions: [SessionSyncDTO]
+        do {
+            sessions = try JSONDecoder().decode([SessionSyncDTO].self, from: data)
+        } catch {
+            print("[SessionSync] ❌ Codable-Decode fehlgeschlagen: \(error)")
+            // Fallback: JSONSerialization — toleranter bei Schema-Unterschieden
+            return handleSessionsListFallback(data: data)
+        }
+
+        let summaries: [[String: Any]] = sessions.map { s in
+            var dict: [String: Any] = [
+                "id": s.id.uuidString,
+                "title": s.title,
+                "messageCount": s.messages.count,
+                "createdAt": Int(s.createdAt.timeIntervalSince1970 * 1000),
+                "hasUnread": s.hasUnread
+            ]
+            if let taskId = s.taskId { dict["taskId"] = taskId }
+            if let topicId = s.topicId { dict["topicId"] = topicId.uuidString }
+            if let last = s.messages.last {
+                dict["lastMessage"] = String(last.text.prefix(120))
+                dict["lastMessageKind"] = last.kind
+                dict["lastMessageTime"] = Int(last.timestamp.timeIntervalSince1970 * 1000)
+            }
+            return dict
+        }
+        print("[SessionSync] ✅ \(sessions.count) Sessions geladen")
+        return jsonOK(["sessions": summaries, "count": sessions.count])
+    }
+
+    /// Fallback: Liest sessions.json via JSONSerialization statt Codable
+    /// Toleriert Schema-Unterschiede (z.B. fehlende Felder, geänderte Typen)
+    private func handleSessionsListFallback(data: Data) -> String {
+        guard let raw = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            print("[SessionSync] ❌ Fallback: Auch JSONSerialization fehlgeschlagen")
+            return jsonOK(["sessions": [], "count": 0])
+        }
+        let summaries: [[String: Any]] = raw.compactMap { dict in
+            guard let id = dict["id"] as? String else { return nil }
+            var result: [String: Any] = [
+                "id": id,
+                "title": dict["title"] as? String ?? "Chat",
+                "messageCount": (dict["messages"] as? [Any])?.count ?? 0,
+                "hasUnread": dict["hasUnread"] as? Bool ?? false
+            ]
+            if let taskId = dict["taskId"] as? String { result["taskId"] = taskId }
+            if let topicId = dict["topicId"] as? String { result["topicId"] = topicId }
+            // createdAt: Codable-Default ist timeIntervalSinceReferenceDate (Double)
+            if let createdAt = dict["createdAt"] as? Double {
+                result["createdAt"] = Int(Date(timeIntervalSinceReferenceDate: createdAt).timeIntervalSince1970 * 1000)
+            }
+            if let messages = dict["messages"] as? [[String: Any]], let last = messages.last {
+                if let text = last["text"] as? String { result["lastMessage"] = String(text.prefix(120)) }
+                if let kind = last["kind"] as? String { result["lastMessageKind"] = kind }
+            }
+            return result
+        }
+        print("[SessionSync] ✅ Fallback: \(summaries.count) Sessions via JSONSerialization")
+        return jsonOK(["sessions": summaries, "count": summaries.count])
+    }
+
+    /// GET /sessions/{id} → Einzelne Session mit allen Messages
+    private func handleSessionGet(sessionId: String) -> String {
+        guard let data = try? Data(contentsOf: sessionsFileURL) else {
+            return jsonError("sessions.json nicht lesbar")
+        }
+        let sessions: [SessionSyncDTO]
+        do {
+            sessions = try JSONDecoder().decode([SessionSyncDTO].self, from: data)
+        } catch {
+            print("[SessionSync] ❌ Decode für /sessions/\(sessionId): \(error)")
+            return jsonError("Session-Decode fehlgeschlagen: \(error.localizedDescription)")
+        }
+        guard let session = sessions.first(where: { $0.id.uuidString.lowercased() == sessionId.lowercased() }) else {
+            return httpResponse(status: "404 Not Found", body: "{\"error\":\"Session nicht gefunden\"}")
+        }
+        let msgs: [[String: Any]] = session.messages.map { m in
+            var dict: [String: Any] = [
+                "kind": m.kind,
+                "text": m.text,
+                "timestamp": Int(m.timestamp.timeIntervalSince1970 * 1000)
+            ]
+            if let entries = m.thinkingEntries {
+                dict["thinkingEntries"] = entries.map { e in
+                    ["type": e.type, "content": e.content, "toolName": e.toolName, "success": e.success] as [String: Any]
+                }
+            }
+            return dict
+        }
+        var sessionDict: [String: Any] = [
+            "id": session.id.uuidString,
+            "title": session.title,
+            "messages": msgs,
+            "createdAt": Int(session.createdAt.timeIntervalSince1970 * 1000),
+            "hasUnread": session.hasUnread
+        ]
+        if let taskId = session.taskId { sessionDict["taskId"] = taskId }
+        if let topicId = session.topicId { sessionDict["topicId"] = topicId.uuidString }
+        return jsonOK(sessionDict)
+    }
+
+    /// POST /sessions → WebUI speichert/aktualisiert eine Session
+    private func handleSessionsSave(body: Data) -> String {
+        guard let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+              let sessionIdStr = json["id"] as? String,
+              let sessionId = UUID(uuidString: sessionIdStr) else {
+            return jsonError("Ungültige Session-Daten")
+        }
+
+        let title = json["title"] as? String ?? "WebUI Chat"
+        let taskId = json["taskId"] as? String
+        let messagesRaw = json["messages"] as? [[String: Any]] ?? []
+
+        // Existierende Sessions laden (mit Schutz gegen versehentliches Überschreiben)
+        var sessions: [SessionSyncDTO] = []
+        if let data = try? Data(contentsOf: sessionsFileURL) {
+            if let decoded = try? JSONDecoder().decode([SessionSyncDTO].self, from: data) {
+                sessions = decoded
+            } else {
+                print("[SessionSync] ⚠️ Decode bei Save fehlgeschlagen — patche Roh-JSON statt Überschreiben")
+                // Roh-JSON patchen statt komplett überschreiben (verhindert Datenverlust)
+                if var raw = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
+                    let msgs = messagesRaw.map { m -> [String: Any] in
+                        var d: [String: Any] = ["kind": m["kind"] ?? "user", "text": m["text"] ?? ""]
+                        if let ts = m["timestamp"] as? Int { d["timestamp"] = Date(timeIntervalSince1970: Double(ts) / 1000.0).timeIntervalSinceReferenceDate }
+                        else { d["timestamp"] = Date().timeIntervalSinceReferenceDate }
+                        return d
+                    }
+                    let newDict: [String: Any] = ["id": sessionId.uuidString, "title": title,
+                        "messages": msgs, "taskId": taskId as Any,
+                        "createdAt": Date().timeIntervalSinceReferenceDate, "hasUnread": false]
+                    if let idx = raw.firstIndex(where: { ($0["id"] as? String) == sessionId.uuidString }) {
+                        raw[idx] = newDict
+                    } else {
+                        raw.insert(newDict, at: 0)
+                    }
+                    if let patched = try? JSONSerialization.data(withJSONObject: raw) {
+                        try? patched.write(to: sessionsFileURL, options: .atomic)
+                    }
+                }
+                return jsonOK(["ok": true, "id": sessionId.uuidString, "fallback": true])
+            }
+        }
+
+        // Messages konvertieren
+        let newMessages: [SessionMessageDTO] = messagesRaw.compactMap { m in
+            guard let kind = m["kind"] as? String, let text = m["text"] as? String else { return nil }
+            let ts: Date
+            if let msTime = m["timestamp"] as? Int {
+                ts = Date(timeIntervalSince1970: Double(msTime) / 1000.0)
+            } else {
+                ts = Date()
+            }
+            return SessionMessageDTO(timestamp: ts, kind: kind, text: text, thinkingEntries: nil)
+        }
+
+        if let idx = sessions.firstIndex(where: { $0.id == sessionId }) {
+            sessions[idx].title = title
+            sessions[idx].messages = newMessages
+        } else {
+            let newSession = SessionSyncDTO(
+                id: sessionId, title: title, messages: newMessages,
+                topicId: nil, taskId: taskId, createdAt: Date(), hasUnread: false
+            )
+            sessions.insert(newSession, at: 0)
+        }
+
+        // Atomar zurückschreiben
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        if let encoded = try? encoder.encode(sessions) {
+            try? encoded.write(to: sessionsFileURL, options: .atomic)
+        }
+
+        // Desktop-App benachrichtigen → RuntimeViewModel soll sessions.json neu laden
+        #if canImport(AppKit)
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: Notification.Name("koboldSessionsUpdatedByDaemon"), object: nil)
+        }
+        #endif
+
+        return jsonOK(["ok": true, "id": sessionId.uuidString])
+    }
+
+    // MARK: - Session Sync DTOs (mirror of ChatSession/ChatMessageCodable for decoding)
+
+    private struct SessionSyncDTO: Codable {
+        let id: UUID
+        var title: String
+        var messages: [SessionMessageDTO]
+        var topicId: UUID?
+        var taskId: String?
+        var createdAt: Date
+        var hasUnread: Bool
+    }
+
+    private struct SessionMessageDTO: Codable {
+        let timestamp: Date
+        let kind: String
+        let text: String
+        let thinkingEntries: [SessionThinkingDTO]?
+    }
+
+    private struct SessionThinkingDTO: Codable {
+        let type: String
+        let content: String
+        let toolName: String
+        let success: Bool
     }
 
     // MARK: - Chat History Logs Handler
@@ -826,18 +1193,38 @@ public actor DaemonListener {
         chatRequests += 1
         activeAgentStreams += 1
 
-        // Acquire a worker from the pool — suspends if all workers are busy.
-        // Each worker has its own LLMRunner to enable true Ollama parallelism
-        // (requires OLLAMA_NUM_PARALLEL ≥ pool size on the Ollama side).
+        // Determine priority based on source — user chat gets highest, idle lowest
+        let priority: WorkerPriority
+        switch source {
+        case "scheduled":  priority = .scheduled
+        case "idle":       priority = .idle
+        case "workflow":   priority = .workflow
+        case "voice":      priority = .user  // Voice = user-facing, high priority
+        default:           priority = .user
+        }
+
+        // Acquire a worker from the pool with priority-based queueing.
+        // Higher-priority requests are served first when workers become available.
         let pool = AgentWorkerPool.shared
+        let streamId = UUID().uuidString.prefix(8).lowercased()
         let poolStatus = await pool.statusDescription
-        addTrace(event: "SSE", detail: "Acquiring worker (pool: \(poolStatus))")
-        let agent = await pool.acquire()
-        // Release worker back to pool when SSE is done (whether success, error, or disconnect)
-        // Using a detached task avoids holding the DaemonListener actor during the async release
+        addTrace(event: "SSE", detail: "Acquiring worker [\(priority)] (pool: \(poolStatus))")
+
+        guard let agent = await pool.acquire(priority: priority, timeout: 60) else {
+            activeAgentStreams -= 1
+            client.write(httpResponse(status: "503 Service Unavailable", body: "{\"error\":\"Alle Worker belegt — bitte versuche es in wenigen Sekunden erneut.\"}"))
+            addTrace(event: "SSE Timeout", detail: "Pool erschöpft, \(priority) Request abgelehnt")
+            return
+        }
+        await pool.trackStream(id: String(streamId), priority: priority)
+        // Release worker + untrack stream when done
         defer {
             activeAgentStreams -= 1
-            Task.detached { await pool.release(agent) }
+            let sid = String(streamId)
+            Task.detached {
+                await pool.untrackStream(id: sid)
+                await pool.release(agent)
+            }
         }
 
         // Send a "waiting" event if the pool was saturated (user sees feedback in UI)
@@ -883,6 +1270,17 @@ public actor DaemonListener {
         // Voice: niedrigeres num_predict (256 statt 4096) → Ollama reserviert weniger KV-cache → schnellere Antwort
         let voiceNumPredict: Int? = source == "voice" ? 256 : nil
         let providerConfig = LLMProviderConfig(provider: provider, model: model, apiKey: apiKey, temperature: temperature, numPredict: voiceNumPredict)
+
+        // Heartbeat-Timer: Alle 25s ein Keepalive senden damit Proxy-Timeouts nicht zuschlagen
+        let heartbeatClient = client
+        let heartbeatTask = Task.detached {
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 25_000_000_000)
+                guard !Task.isCancelled else { break }
+                _ = heartbeatClient.tryWrite(": heartbeat\n\n")
+            }
+        }
+
         let stream = await agent.runStreaming(userMessage: agentMessage, agentType: type, providerConfig: providerConfig)
         var stepCount = 0
         for await step in stream {
@@ -910,6 +1308,9 @@ public actor DaemonListener {
             // and starve /metrics, /health, and other concurrent requests.
             await Task.yield()
         }
+
+        // Heartbeat stoppen
+        heartbeatTask.cancel()
 
         // SSE fertig — wird bereits via addTrace geloggt
         addTrace(event: "SSE Fertig", detail: "\(stepCount) Schritte gestreamt [\(agentTypeStr)/\(modelDisplay)]")
@@ -2066,6 +2467,7 @@ public actor DaemonListener {
                 return jsonError("Missing 'text'")
             }
             let type = json["type"] as? String ?? "kurzzeit"
+            let typesArr = json["types"] as? [String]
             let tagsRaw = json["tags"] as? [String] ?? []
             let valence = (json["valence"] as? NSNumber)?.floatValue ?? 0.0
             let arousal = (json["arousal"] as? NSNumber)?.floatValue ?? 0.5
@@ -2073,7 +2475,8 @@ public actor DaemonListener {
             let source = json["source"] as? String
             do {
                 let entry = try await taggedMemoryStore.add(
-                    text: text, memoryType: type, tags: tagsRaw,
+                    text: text, memoryType: type, memoryTypes: typesArr,
+                    tags: tagsRaw,
                     valence: valence, arousal: arousal,
                     linkedEntryId: linkedEntryId, source: source
                 )
@@ -2091,8 +2494,9 @@ public actor DaemonListener {
             }
             let text     = json["text"] as? String
             let type     = json["type"] as? String
+            let typesArr = json["types"] as? [String]
             let tagsRaw  = json["tags"] as? [String]
-            if let updated = try? await taggedMemoryStore.update(id: id, text: text, memoryType: type, tags: tagsRaw) {
+            if let updated = try? await taggedMemoryStore.update(id: id, text: text, memoryType: type, memoryTypes: typesArr, tags: tagsRaw) {
                 return jsonOK(["ok": true, "id": updated.id])
             }
             return jsonError("Entry not found: \(id)")
@@ -2115,6 +2519,7 @@ public actor DaemonListener {
                 "id": e.id,
                 "text": e.text,
                 "type": e.memoryType,
+                "types": e.memoryTypes,
                 "tags": e.tags,
                 "timestamp": fmt.string(from: e.timestamp),
                 "valence": e.valence,
@@ -3072,6 +3477,548 @@ public actor DaemonListener {
                "X-Content-Type-Options: nosniff\r\n" +
                "Connection: close\r\n\r\n" +
                body
+    }
+
+    // MARK: - CRM Persistence
+
+    private var crmFileURL: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("KoboldOS/contacts.json")
+    }
+
+    private func loadCRM() -> [String: Any] {
+        guard let data = try? Data(contentsOf: crmFileURL),
+              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return defaultCRM()
+        }
+        return dict
+    }
+
+    private func saveCRM(_ crm: [String: Any]) {
+        let dir = crmFileURL.deletingLastPathComponent()
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        if let data = try? JSONSerialization.data(withJSONObject: crm, options: [.sortedKeys]) {
+            try? data.write(to: crmFileURL, options: .atomic)
+        }
+    }
+
+    private func defaultCRM() -> [String: Any] {
+        [
+            "contacts": [] as [[String: Any]],
+            "companies": [] as [[String: Any]],
+            "deals": [] as [[String: Any]],
+            "activities": [] as [[String: Any]],
+            "groups": [] as [[String: Any]],
+            "pipeline_stages": defaultPipelineStages()
+        ]
+    }
+
+    private func defaultPipelineStages() -> [[String: Any]] {
+        [
+            ["id": "lead", "name": "Lead", "order": 0, "color": "#94a3b8"],
+            ["id": "contacted", "name": "Kontaktiert", "order": 1, "color": "#60a5fa"],
+            ["id": "qualified", "name": "Qualifiziert", "order": 2, "color": "#a78bfa"],
+            ["id": "proposal", "name": "Angebot", "order": 3, "color": "#fbbf24"],
+            ["id": "negotiation", "name": "Verhandlung", "order": 4, "color": "#fb923c"],
+            ["id": "won", "name": "Gewonnen", "order": 5, "color": "#4ade80"],
+            ["id": "lost", "name": "Verloren", "order": 6, "color": "#f87171"]
+        ]
+    }
+
+    // MARK: - CRM Handlers
+
+    private func handleCRMList(collection: String) -> String {
+        let crm = loadCRM()
+        let items = crm[collection] as? [[String: Any]] ?? []
+        let json: [String: Any] = [collection: items, "count": items.count]
+        guard let data = try? JSONSerialization.data(withJSONObject: json, options: [.sortedKeys]),
+              let str = String(data: data, encoding: .utf8) else {
+            return jsonError("Serialization failed")
+        }
+        return httpResponse(status: "200 OK", body: str)
+    }
+
+    private func handleCRMActivitiesList() -> String {
+        let crm = loadCRM()
+        var activities = crm["activities"] as? [[String: Any]] ?? []
+        // Sort by timestamp descending, limit to 50
+        activities.sort { a, b in
+            let tA = a["timestamp"] as? String ?? ""
+            let tB = b["timestamp"] as? String ?? ""
+            return tA > tB
+        }
+        let limited = Array(activities.prefix(50))
+        let json: [String: Any] = ["activities": limited, "count": limited.count]
+        guard let data = try? JSONSerialization.data(withJSONObject: json, options: [.sortedKeys]),
+              let str = String(data: data, encoding: .utf8) else {
+            return jsonError("Serialization failed")
+        }
+        return httpResponse(status: "200 OK", body: str)
+    }
+
+    private func handleCRMDetail(collection: String, id: String) -> String {
+        let crm = loadCRM()
+        let items = crm[collection] as? [[String: Any]] ?? []
+        guard let item = items.first(where: { ($0["id"] as? String) == id }) else {
+            return httpResponse(status: "404 Not Found", body: "{\"error\":\"Not found\"}")
+        }
+        // For contacts: include related activities
+        var result = item
+        if collection == "contacts" {
+            let activities = (crm["activities"] as? [[String: Any]] ?? []).filter {
+                ($0["contactId"] as? String) == id
+            }
+            result["activities"] = activities
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]),
+              let str = String(data: data, encoding: .utf8) else {
+            return jsonError("Serialization failed")
+        }
+        return httpResponse(status: "200 OK", body: str)
+    }
+
+    private func handleCRMPost(collection: String, body: Data) -> String {
+        guard let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+              let action = json["action"] as? String else {
+            return jsonError("Missing 'action'")
+        }
+        var crm = loadCRM()
+        var items = crm[collection] as? [[String: Any]] ?? []
+        let now = DaemonListener.isoFormatter.string(from: Date())
+
+        switch action {
+        case "create":
+            var item = json["data"] as? [String: Any] ?? json
+            item.removeValue(forKey: "action")
+            if item["id"] == nil { item["id"] = UUID().uuidString }
+            if item["createdAt"] == nil { item["createdAt"] = now }
+            item["updatedAt"] = now
+            items.append(item)
+            crm[collection] = items
+            saveCRM(crm)
+            return jsonOK(["success": true, "id": item["id"] as Any, "count": items.count])
+
+        case "update":
+            guard let id = json["id"] as? String ?? (json["data"] as? [String: Any])?["id"] as? String else {
+                return jsonError("Missing 'id'")
+            }
+            guard let idx = items.firstIndex(where: { ($0["id"] as? String) == id }) else {
+                return jsonError("Not found")
+            }
+            var updated = items[idx]
+            let newData = json["data"] as? [String: Any] ?? json
+            for (key, value) in newData where key != "action" {
+                updated[key] = value
+            }
+            updated["updatedAt"] = now
+            items[idx] = updated
+            crm[collection] = items
+            saveCRM(crm)
+            return jsonOK(["success": true, "id": id])
+
+        case "delete":
+            guard let id = json["id"] as? String else { return jsonError("Missing 'id'") }
+            items.removeAll { ($0["id"] as? String) == id }
+            crm[collection] = items
+            // Also clean up related data
+            if collection == "contacts" {
+                var activities = crm["activities"] as? [[String: Any]] ?? []
+                activities.removeAll { ($0["contactId"] as? String) == id }
+                crm["activities"] = activities
+                var deals = crm["deals"] as? [[String: Any]] ?? []
+                deals.removeAll { ($0["contactId"] as? String) == id }
+                crm["deals"] = deals
+            }
+            if collection == "companies" {
+                // Unlink contacts from deleted company
+                var contacts = crm["contacts"] as? [[String: Any]] ?? []
+                for i in contacts.indices {
+                    if (contacts[i]["companyId"] as? String) == id {
+                        contacts[i]["companyId"] = nil
+                    }
+                }
+                crm["contacts"] = contacts
+            }
+            saveCRM(crm)
+            return jsonOK(["success": true, "deleted": id])
+
+        default:
+            return jsonError("Unknown action: \(action)")
+        }
+    }
+
+    // MARK: - Pipeline Stages
+
+    private func handlePipelineStagesList() -> String {
+        let crm = loadCRM()
+        let stages = crm["pipeline_stages"] as? [[String: Any]] ?? defaultPipelineStages()
+        guard let data = try? JSONSerialization.data(withJSONObject: ["stages": stages], options: [.sortedKeys]),
+              let str = String(data: data, encoding: .utf8) else {
+            return jsonError("Serialization failed")
+        }
+        return httpResponse(status: "200 OK", body: str)
+    }
+
+    private func handlePipelineStagesPost(body: Data) -> String {
+        guard let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+              let stages = json["stages"] as? [[String: Any]] else {
+            return jsonError("Missing 'stages' array")
+        }
+        var crm = loadCRM()
+        crm["pipeline_stages"] = stages
+        saveCRM(crm)
+        return jsonOK(["success": true, "count": stages.count])
+    }
+
+    // MARK: - Apple Contacts Import
+
+    private func handleAppleContactsImport() async -> String {
+        #if canImport(Contacts)
+        return await withCheckedContinuation { continuation in
+            Task.detached {
+                let result = await self.importAppleContacts()
+                continuation.resume(returning: result)
+            }
+        }
+        #else
+        return jsonError("Contacts framework not available")
+        #endif
+    }
+
+    #if canImport(Contacts)
+    private func importAppleContacts() -> String {
+        let store = CNContactStore()
+
+        // Permission check — request access if not yet determined
+        let authStatus = CNContactStore.authorizationStatus(for: .contacts)
+        if authStatus == .notDetermined {
+            // Synchron auf Berechtigung warten (Daemon-Thread, kein UI)
+            let sem = DispatchSemaphore(value: 0)
+            store.requestAccess(for: .contacts) { _, _ in sem.signal() }
+            sem.wait()
+            // Nach requestAccess erneut prüfen
+            let newStatus = CNContactStore.authorizationStatus(for: .contacts)
+            guard newStatus == .authorized else {
+                return jsonError("Kontakte-Zugriff wurde abgelehnt.")
+            }
+        } else if authStatus != .authorized {
+            return jsonError("Kontakte-Zugriff nicht erlaubt. Bitte in Systemeinstellungen > Datenschutz > Kontakte aktivieren. (Status: \(authStatus.rawValue))")
+        }
+
+        // CNContactNoteKey entfernt — crasht auf macOS 14+ ohne com.apple.developer.contacts.notes Entitlement
+        let keysToFetch: [CNKeyDescriptor] = [
+            CNContactGivenNameKey as CNKeyDescriptor,
+            CNContactFamilyNameKey as CNKeyDescriptor,
+            CNContactEmailAddressesKey as CNKeyDescriptor,
+            CNContactPhoneNumbersKey as CNKeyDescriptor,
+            CNContactOrganizationNameKey as CNKeyDescriptor,
+            CNContactJobTitleKey as CNKeyDescriptor,
+            CNContactBirthdayKey as CNKeyDescriptor,
+            CNContactPostalAddressesKey as CNKeyDescriptor,
+            CNContactSocialProfilesKey as CNKeyDescriptor,
+            CNContactUrlAddressesKey as CNKeyDescriptor
+        ]
+
+        // Verwende unifiedContacts statt enumerateContacts — vermeidet ObjC NSException Crash
+        // bei [CNContact note] der in Swift do/catch nicht gefangen werden kann
+        var allContacts: [CNContact] = []
+        do {
+            let containers = try store.containers(matching: nil)
+            for container in containers {
+                let predicate = CNContact.predicateForContactsInContainer(withIdentifier: container.identifier)
+                let contacts = try store.unifiedContacts(matching: predicate, keysToFetch: keysToFetch)
+                allContacts.append(contentsOf: contacts)
+            }
+        } catch {
+            return jsonError("Kontakte konnten nicht geladen werden: \(error.localizedDescription)")
+        }
+
+        var imported: [[String: Any]] = []
+        var skipped = 0
+        var crm = loadCRM()
+        let existingContacts = crm["contacts"] as? [[String: Any]] ?? []
+        let existingEmails = Set(existingContacts.flatMap { ($0["email"] as? [String]) ?? [] })
+        let now = DaemonListener.isoFormatter.string(from: Date())
+
+        for contact in allContacts {
+            let emails = contact.emailAddresses.map { $0.value as String }
+            // Skip if any email already exists in CRM
+            if !emails.isEmpty && emails.contains(where: { existingEmails.contains($0) }) {
+                skipped += 1
+                continue
+            }
+            // Skip contacts without name
+            if contact.givenName.isEmpty && contact.familyName.isEmpty { continue }
+
+            var item: [String: Any] = [
+                "id": UUID().uuidString,
+                "firstName": contact.givenName,
+                "lastName": contact.familyName,
+                "email": emails,
+                "phone": contact.phoneNumbers.map { $0.value.stringValue },
+                "source": "apple-contacts",
+                "status": "active",
+                "isCompanyContact": false,
+                "tags": ["Apple Import"],
+                "createdAt": now,
+                "updatedAt": now
+            ]
+            if !contact.organizationName.isEmpty { item["company"] = contact.organizationName }
+            if !contact.jobTitle.isEmpty { item["jobTitle"] = contact.jobTitle }
+            if let bday = contact.birthday, let date = Calendar.current.date(from: bday) {
+                item["birthday"] = DaemonListener.isoFormatter.string(from: date)
+            }
+            // Social
+            var social: [String: String] = [:]
+            for profile in contact.socialProfiles {
+                let service = profile.label ?? profile.value.service
+                social[service.lowercased()] = profile.value.urlString
+            }
+            for url in contact.urlAddresses {
+                social["website"] = url.value as String
+            }
+            if !social.isEmpty { item["social"] = social }
+            // Address
+            if let postal = contact.postalAddresses.first?.value {
+                item["address"] = [
+                    "street": postal.street,
+                    "city": postal.city,
+                    "zip": postal.postalCode,
+                    "country": postal.country
+                ]
+            }
+            imported.append(item)
+        }
+
+        if !imported.isEmpty {
+            var contacts = crm["contacts"] as? [[String: Any]] ?? []
+            contacts.append(contentsOf: imported)
+            crm["contacts"] = contacts
+            saveCRM(crm)
+        }
+        return jsonOK(["success": true, "imported": imported.count, "skipped": skipped, "total": ((crm["contacts"] as? [[String: Any]])?.count ?? 0)])
+    }
+    #endif
+
+    // MARK: - Google Contacts Import
+
+    private func handleGoogleContactsImport() async -> String {
+        let accessToken = UserDefaults.standard.string(forKey: "kobold.google.accessToken") ?? ""
+        guard !accessToken.isEmpty else {
+            return jsonError("Google nicht verbunden. Bitte zuerst in Einstellungen > Verbindungen > Google anmelden.")
+        }
+
+        var imported: [[String: Any]] = []
+        var skipped = 0
+        var crm = loadCRM()
+        let existingContacts = crm["contacts"] as? [[String: Any]] ?? []
+        let existingEmails = Set(existingContacts.flatMap { ($0["email"] as? [String]) ?? [] })
+        let now = DaemonListener.isoFormatter.string(from: Date())
+
+        var nextPageToken: String? = nil
+        let fields = "names,emailAddresses,phoneNumbers,organizations,birthdays,urls,photos"
+
+        repeat {
+            var urlStr = "https://people.googleapis.com/v1/people/me/connections?pageSize=100&personFields=\(fields)"
+            if let token = nextPageToken { urlStr += "&pageToken=\(token)" }
+
+            guard let url = URL(string: urlStr) else { break }
+            var req = URLRequest(url: url)
+            req.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+            req.timeoutInterval = 30
+
+            guard let (data, resp) = try? await URLSession.shared.data(for: req),
+                  let httpResp = resp as? HTTPURLResponse else { break }
+
+            if httpResp.statusCode == 401 {
+                return jsonError("Google Token abgelaufen. Bitte in Einstellungen > Verbindungen > Google neu anmelden.")
+            }
+            guard httpResp.statusCode == 200 else {
+                return jsonError("Google API Fehler: HTTP \(httpResp.statusCode)")
+            }
+
+            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let connections = json["connections"] as? [[String: Any]] else { break }
+
+            for person in connections {
+                let names = person["names"] as? [[String: Any]] ?? []
+                let firstName = names.first?["givenName"] as? String ?? ""
+                let lastName = names.first?["familyName"] as? String ?? ""
+                if firstName.isEmpty && lastName.isEmpty { continue }
+
+                let emailAddrs = person["emailAddresses"] as? [[String: Any]] ?? []
+                let emails = emailAddrs.compactMap { $0["value"] as? String }
+                if !emails.isEmpty && emails.contains(where: { existingEmails.contains($0) }) {
+                    skipped += 1
+                    continue
+                }
+
+                let phones = person["phoneNumbers"] as? [[String: Any]] ?? []
+                let phoneNums = phones.compactMap { $0["value"] as? String }
+                let orgs = person["organizations"] as? [[String: Any]] ?? []
+                let company = orgs.first?["name"] as? String ?? ""
+                let jobTitle = orgs.first?["title"] as? String ?? ""
+
+                var item: [String: Any] = [
+                    "id": UUID().uuidString,
+                    "firstName": firstName,
+                    "lastName": lastName,
+                    "email": emails,
+                    "phone": phoneNums,
+                    "source": "google-contacts",
+                    "status": "active",
+                    "isCompanyContact": false,
+                    "tags": ["Google Import"],
+                    "createdAt": now,
+                    "updatedAt": now
+                ]
+                if !company.isEmpty { item["company"] = company }
+                if !jobTitle.isEmpty { item["jobTitle"] = jobTitle }
+
+                let birthdays = person["birthdays"] as? [[String: Any]] ?? []
+                if let bdayDate = birthdays.first?["date"] as? [String: Any],
+                   let year = bdayDate["year"] as? Int,
+                   let month = bdayDate["month"] as? Int,
+                   let day = bdayDate["day"] as? Int {
+                    var dc = DateComponents()
+                    dc.year = year; dc.month = month; dc.day = day
+                    if let date = Calendar.current.date(from: dc) {
+                        item["birthday"] = DaemonListener.isoFormatter.string(from: date)
+                    }
+                }
+
+                let urls = person["urls"] as? [[String: Any]] ?? []
+                if let website = urls.first?["value"] as? String {
+                    item["social"] = ["website": website]
+                }
+
+                imported.append(item)
+            }
+
+            nextPageToken = json["nextPageToken"] as? String
+        } while nextPageToken != nil
+
+        if !imported.isEmpty {
+            var contacts = crm["contacts"] as? [[String: Any]] ?? []
+            contacts.append(contentsOf: imported)
+            crm["contacts"] = contacts
+            saveCRM(crm)
+        }
+
+        return jsonOK(["success": true, "imported": imported.count, "skipped": skipped, "total": ((crm["contacts"] as? [[String: Any]])?.count ?? 0)])
+    }
+
+    // MARK: - Teams Persistence
+
+    private var teamsFileURL: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("KoboldOS/teams.json")
+    }
+
+    private func loadTeams() -> [[String: Any]] {
+        guard let data = try? Data(contentsOf: teamsFileURL),
+              let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            return []
+        }
+        return arr
+    }
+
+    private func saveTeams(_ teams: [[String: Any]]) {
+        let dir = teamsFileURL.deletingLastPathComponent()
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        if let data = try? JSONSerialization.data(withJSONObject: teams, options: [.sortedKeys]) {
+            try? data.write(to: teamsFileURL, options: .atomic)
+        }
+    }
+
+    private func handleTeamsList() -> String {
+        let teams = loadTeams()
+        guard let data = try? JSONSerialization.data(withJSONObject: ["teams": teams, "count": teams.count], options: [.sortedKeys]),
+              let str = String(data: data, encoding: .utf8) else {
+            return jsonError("Serialization failed")
+        }
+        return httpResponse(status: "200 OK", body: str)
+    }
+
+    private func handleTeamsPost(body: Data) -> String {
+        guard let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+              let action = json["action"] as? String else {
+            return jsonError("Missing 'action'")
+        }
+        var teams = loadTeams()
+        let now = DaemonListener.isoFormatter.string(from: Date())
+
+        switch action {
+        case "create":
+            var team = json["data"] as? [String: Any] ?? json
+            team.removeValue(forKey: "action")
+            if team["id"] == nil { team["id"] = UUID().uuidString }
+            if team["createdAt"] == nil { team["createdAt"] = now }
+            team["updatedAt"] = now
+            teams.append(team)
+            saveTeams(teams)
+            return jsonOK(["success": true, "id": team["id"] as Any])
+
+        case "update":
+            guard let id = json["id"] as? String ?? (json["data"] as? [String: Any])?["id"] as? String else {
+                return jsonError("Missing 'id'")
+            }
+            guard let idx = teams.firstIndex(where: { ($0["id"] as? String) == id }) else {
+                return jsonError("Not found")
+            }
+            var updated = teams[idx]
+            let newData = json["data"] as? [String: Any] ?? json
+            for (key, value) in newData where key != "action" {
+                updated[key] = value
+            }
+            updated["updatedAt"] = now
+            teams[idx] = updated
+            saveTeams(teams)
+            return jsonOK(["success": true, "id": id])
+
+        case "delete":
+            guard let id = json["id"] as? String else { return jsonError("Missing 'id'") }
+            teams.removeAll { ($0["id"] as? String) == id }
+            saveTeams(teams)
+            return jsonOK(["success": true, "deleted": id])
+
+        default:
+            return jsonError("Unknown action: \(action)")
+        }
+    }
+
+    // MARK: - Workflow State (Canvas Nodes + Connections)
+
+    private func workflowStateURL(for projectId: String) -> URL {
+        let docsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        return docsDir.appendingPathComponent("KoboldOS/workflows/\(projectId).json")
+    }
+
+    private func handleWorkflowStateLoad(projectId: String) -> String {
+        let url = workflowStateURL(for: projectId)
+        guard let data = try? Data(contentsOf: url),
+              let state = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            // Return empty state
+            return jsonOK(["nodes": [] as [Any], "connections": [] as [Any]])
+        }
+        guard let jsonData = try? JSONSerialization.data(withJSONObject: state, options: [.sortedKeys]),
+              let str = String(data: jsonData, encoding: .utf8) else {
+            return jsonError("Serialization failed")
+        }
+        return httpResponse(status: "200 OK", body: str)
+    }
+
+    private func handleWorkflowStateSave(projectId: String, body: Data) -> String {
+        guard let state = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else {
+            return jsonError("Invalid JSON")
+        }
+        let url = workflowStateURL(for: projectId)
+        let dir = url.deletingLastPathComponent()
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        if let data = try? JSONSerialization.data(withJSONObject: state, options: [.sortedKeys]) {
+            try? data.write(to: url, options: .atomic)
+        }
+        return jsonOK(["success": true])
     }
 }
 

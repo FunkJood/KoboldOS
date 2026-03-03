@@ -7,14 +7,14 @@ import Foundation
 
 public struct MemorySaveTool: Tool {
     public let name = "memory_save"
-    public let description = "Save a single memory with type, tags, and emotional weight. Types: 'kurzzeit' (temporary), 'langzeit' (permanent), 'wissen' (knowledge), 'lösungen' (solutions that worked), 'fehler' (errors to avoid). For errors use negative valence, for solutions use positive valence and link to the error ID."
+    public let description = "Save a single memory with type, tags, and emotional weight. Types: 'kurzzeit' (temporary session context), 'langzeit' (permanent facts about user/preferences), 'wissen' (learned knowledge, external facts, references), 'lösungen' (proven solutions that worked), 'fehler' (errors to avoid), 'regeln' (rules/instructions that ALWAYS apply — user directives, constraints, permanent policies), 'verhalten' (procedural memory — processes, reactions, habits, workflows: 'When X happens do Y', 'Debugging steps: 1→2→3'). For errors use negative valence, for solutions use positive valence and link to the error ID. For rules use high arousal (0.9). For verhalten use valence=0.3, arousal=0.7."
     public let riskLevel: RiskLevel = .low
 
     public var schema: ToolSchema {
         ToolSchema(
             properties: [
                 "text": ToolSchemaProperty(type: "string", description: "The memory content to save", required: true),
-                "type": ToolSchemaProperty(type: "string", description: "Memory type: 'kurzzeit', 'langzeit', 'wissen', 'lösungen', or 'fehler'", required: true),
+                "type": ToolSchemaProperty(type: "string", description: "Memory type: 'kurzzeit' (temp session), 'langzeit' (permanent user facts), 'wissen' (learned knowledge/facts), 'lösungen' (proven solutions), 'fehler' (errors), 'regeln' (rules/directives that ALWAYS apply), 'verhalten' (procedural memory — processes, reactions, habits)", required: true),
                 "tags": ToolSchemaProperty(type: "string", description: "Comma-separated tags, e.g. 'coding,python,snippet'", required: false),
                 "valence": ToolSchemaProperty(type: "string", description: "Emotional weight: -1.0 (negative/error) to +1.0 (positive/success). Default 0.0", required: false),
                 "arousal": ToolSchemaProperty(type: "string", description: "Importance: 0.0 (low) to 1.0 (critical). Default 0.5", required: false),
@@ -68,7 +68,7 @@ public struct MemoryRecallTool: Tool {
         ToolSchema(
             properties: [
                 "query": ToolSchemaProperty(type: "string", description: "Search text (leave empty to browse by type/tags)", required: false),
-                "type": ToolSchemaProperty(type: "string", description: "Filter by type: 'kurzzeit', 'langzeit', 'wissen', 'lösungen', 'fehler'", required: false),
+                "type": ToolSchemaProperty(type: "string", description: "Filter by type: 'kurzzeit', 'langzeit', 'wissen', 'lösungen', 'fehler', 'regeln', 'verhalten'", required: false),
                 "tags": ToolSchemaProperty(type: "string", description: "Filter by tags (comma-separated)", required: false)
             ],
             required: []

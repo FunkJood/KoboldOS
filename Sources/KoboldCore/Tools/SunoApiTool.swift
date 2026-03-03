@@ -62,7 +62,7 @@ public struct SunoApiTool: Tool {
         let style = arguments["style"] ?? ""
         let title = arguments["title"] ?? ""
         let instrumental = arguments["instrumental"]?.lowercased() == "true"
-        let model = arguments["model"] ?? "V4"
+        let model = arguments["model"] ?? "V5"
 
         // Custom mode when style + title are provided
         let customMode = !style.isEmpty && !title.isEmpty

@@ -10,6 +10,8 @@ enum MemoryType: String, CaseIterable, Identifiable {
     case wissen    = "Wissen"
     case lösungen  = "Lösungen"
     case fehler    = "Fehler"
+    case regeln    = "Regeln"
+    case verhalten = "Verhalten"
 
     var id: String { rawValue }
 
@@ -20,6 +22,8 @@ enum MemoryType: String, CaseIterable, Identifiable {
         case .wissen:    return "book.closed.fill"
         case .lösungen:  return "lightbulb.fill"
         case .fehler:    return "exclamationmark.triangle.fill"
+        case .regeln:    return "shield.checkered"
+        case .verhalten: return "figure.walk"
         }
     }
 
@@ -30,6 +34,8 @@ enum MemoryType: String, CaseIterable, Identifiable {
         case .wissen:    return .koboldGold
         case .lösungen:  return .blue
         case .fehler:    return .red
+        case .regeln:    return .orange
+        case .verhalten: return .purple
         }
     }
 
@@ -40,6 +46,8 @@ enum MemoryType: String, CaseIterable, Identifiable {
         case .wissen:    return "wissen"
         case .lösungen:  return "lösungen"
         case .fehler:    return "fehler"
+        case .regeln:    return "regeln"
+        case .verhalten: return "verhalten"
         }
     }
 
@@ -50,11 +58,39 @@ enum MemoryType: String, CaseIterable, Identifiable {
         case .langzeit:
             return "Dauerhaft — bleibt über alle Sitzungen"
         case .wissen:
-            return "Gelerntes Wissen — Lösungen & Fakten"
+            return "Gelerntes Wissen — Fakten & Referenzen"
         case .lösungen:
             return "Bewährte Lösungen — was funktioniert hat"
         case .fehler:
             return "Bekannte Fehler — was schiefgegangen ist"
+        case .regeln:
+            return "Feste Regeln — Anweisungen die IMMER gelten"
+        case .verhalten:
+            return "Prozedurales Gedächtnis — Abläufe & Reaktionen"
+        }
+    }
+
+    func localizedName(_ lang: AppLanguage) -> String {
+        switch self {
+        case .kurzzeit:  return lang.memShortTerm
+        case .langzeit:  return lang.memLongTerm
+        case .wissen:    return lang.memKnowledge
+        case .lösungen:  return lang.memSolutions
+        case .fehler:    return lang.memErrors
+        case .regeln:    return lang.memRules
+        case .verhalten: return lang.memBehavior
+        }
+    }
+
+    func localizedDesc(_ lang: AppLanguage) -> String {
+        switch self {
+        case .kurzzeit:  return lang.memShortTermDesc
+        case .langzeit:  return lang.memLongTermDesc
+        case .wissen:    return lang.memKnowledgeDesc
+        case .lösungen:  return lang.memSolutionsDesc
+        case .fehler:    return lang.memErrorsDesc
+        case .regeln:    return lang.memRulesDesc
+        case .verhalten: return lang.memBehaviorDesc
         }
     }
 
@@ -64,6 +100,8 @@ enum MemoryType: String, CaseIterable, Identifiable {
         case "wissen":    return .wissen
         case "lösungen":  return .lösungen
         case "fehler":    return .fehler
+        case "regeln":    return .regeln
+        case "verhalten": return .verhalten
         default: return .kurzzeit
         }
     }
@@ -87,13 +125,16 @@ enum MemoryType: String, CaseIterable, Identifiable {
 struct TaggedMemoryEntry: Identifiable {
     let id: String
     var text: String
-    var memoryType: MemoryType
+    var memoryTypes: [MemoryType]
     var tags: [String]
     var timestamp: Date
     var valence: Float = 0.0
     var arousal: Float = 0.5
     var linkedEntryId: String? = nil
     var source: String? = nil
+
+    /// Backward-compat: primary type (first in array)
+    var memoryType: MemoryType { memoryTypes.first ?? .kurzzeit }
 }
 
 // MARK: - Legacy MemoryBlock (for core memory blocks)
@@ -114,6 +155,8 @@ struct MemoryBlock: Identifiable {
             case .wissen:    prefix = "ws."
             case .lösungen:  prefix = "ls."
             case .fehler:    prefix = "fe."
+            case .regeln:    prefix = "rg."
+            case .verhalten: prefix = "vh."
             }
             if label.hasPrefix(prefix) {
                 return String(label.dropFirst(prefix.count))
@@ -128,6 +171,7 @@ struct MemoryBlock: Identifiable {
 struct MemoryView: View {
     @ObservedObject var viewModel: RuntimeViewModel
     @EnvironmentObject var l10n: LocalizationManager
+    private var lang: AppLanguage { l10n.language }
 
     // Tagged entries (new system)
     @State private var entries: [TaggedMemoryEntry] = []
@@ -148,13 +192,13 @@ struct MemoryView: View {
 
     // Add entry form
     @State private var newText = ""
-    @State private var newType: MemoryType = .langzeit
+    @State private var newTypes: Set<MemoryType> = [.langzeit]
     @State private var newTags = ""
 
     // Edit entry form
     @State private var editingEntry: TaggedMemoryEntry? = nil
     @State private var editText = ""
-    @State private var editType: MemoryType = .langzeit
+    @State private var editTypes: Set<MemoryType> = [.langzeit]
     @State private var editTags = ""
 
     // Archival & versioning state
@@ -165,7 +209,7 @@ struct MemoryView: View {
     var filteredEntries: [TaggedMemoryEntry] {
         var result = entries
         if let type_ = filterType {
-            result = result.filter { $0.memoryType == type_ }
+            result = result.filter { $0.memoryTypes.contains(type_) }
         }
         if let tag = filterTag {
             result = result.filter { $0.tags.map { $0.lowercased() }.contains(tag.lowercased()) }
@@ -200,7 +244,7 @@ struct MemoryView: View {
                             Image(systemName: "exclamationmark.triangle.fill").foregroundColor(.orange)
                             Text(errorMsg).font(.caption).foregroundColor(.secondary)
                             Spacer()
-                            Button("Erneut versuchen") { Task { await loadAll() } }
+                            Button(lang.retry) { Task { await loadAll() } }
                                 .font(.caption).buttonStyle(.bordered)
                         }
                     }
@@ -240,8 +284,8 @@ struct MemoryView: View {
     var memoryHeader: some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text("Gedächtnis").font(.title2.bold())
-                Text("Erinnerungen, Wissen und Lernfortschritt des Agenten")
+                Text(lang.memTitle).font(.title2.bold())
+                Text(lang.memSubtitle)
                     .font(.caption).foregroundColor(.secondary)
             }
             Spacer()
@@ -251,14 +295,14 @@ struct MemoryView: View {
                     .transition(.opacity)
                     .animation(.easeInOut, value: saveStatus)
             }
-            GlassButton(title: "Neu", icon: "plus", isPrimary: true) {
+            GlassButton(title: lang.newLabel, icon: "plus", isPrimary: true) {
                 showAddEntry = true
             }
-            .help("Neue Erinnerung hinzufügen")
-            GlassButton(title: "Exportieren", icon: "square.and.arrow.up", isPrimary: false) {
+            .help(lang.addMemoryHint)
+            GlassButton(title: lang.exportLabel, icon: "square.and.arrow.up", isPrimary: false) {
                 exportMemory()
             }
-            GlassButton(title: "Aktualisieren", icon: "arrow.clockwise", isPrimary: false) {
+            GlassButton(title: lang.refreshLabel, icon: "arrow.clockwise", isPrimary: false) {
                 Task { await loadAll() }
             }
         }
@@ -272,7 +316,7 @@ struct MemoryView: View {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 14.5))
                     .foregroundColor(.secondary)
-                TextField("Erinnerungen durchsuchen...", text: $searchText)
+                TextField(lang.memSearchPlaceholder, text: $searchText)
                     .textFieldStyle(.plain)
                     .font(.system(size: 15.5))
                 if !searchText.isEmpty {
@@ -290,9 +334,9 @@ struct MemoryView: View {
 
             // Type filter chips
             HStack(spacing: 6) {
-                typeFilterChip(nil, label: "Alle")
+                typeFilterChip(nil, label: lang.allLabel)
                 ForEach(MemoryType.allCases) { type_ in
-                    typeFilterChip(type_, label: type_.rawValue)
+                    typeFilterChip(type_, label: type_.localizedName(lang))
                 }
             }
         }
@@ -305,13 +349,13 @@ struct MemoryView: View {
             if !allTags.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
-                        Text("Tags:").font(.system(size: 12.5, weight: .semibold)).foregroundColor(.secondary)
+                        Text(lang.tagsLabel).font(.system(size: 12.5, weight: .semibold)).foregroundColor(.secondary)
 
                         if filterTag != nil {
                             Button(action: { withAnimation { filterTag = nil } }) {
                                 HStack(spacing: 3) {
                                     Image(systemName: "xmark").font(.system(size: 9))
-                                    Text("Alle").font(.system(size: 12.5))
+                                    Text(lang.allLabel).font(.system(size: 12.5))
                                 }
                                 .foregroundColor(.secondary)
                                 .padding(.horizontal, 6).padding(.vertical, 3)
@@ -377,27 +421,56 @@ struct MemoryView: View {
     // MARK: - Memory Type Info
 
     var memoryTypeInfo: some View {
-        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
-            ForEach(MemoryType.allCases) { type_ in
-                let count = entries.filter { $0.memoryType == type_ }.count
+        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+            // Gesamt-Box
+            Button(action: { withAnimation(.easeInOut(duration: 0.15)) { filterType = nil } }) {
                 GlassCard(padding: 10, cornerRadius: 10) {
                     HStack(spacing: 8) {
-                        Image(systemName: type_.icon)
+                        Image(systemName: "tray.full.fill")
                             .font(.system(size: 18.5))
-                            .foregroundColor(type_.color)
+                            .foregroundColor(.koboldGold)
                             .frame(width: 24)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(type_.rawValue).font(.system(size: 14.5, weight: .semibold))
-                            Text(type_.description)
+                            Text(lang.totalLabel).font(.system(size: 14.5, weight: .semibold))
+                            Text(lang.allMemories)
                                 .font(.system(size: 11.5)).foregroundColor(.secondary)
                                 .lineLimit(2)
                         }
                         Spacer()
-                        Text("\(count)")
+                        Text("\(entries.count)")
                             .font(.system(size: 16.5, weight: .bold, design: .monospaced))
-                            .foregroundColor(type_.color)
+                            .foregroundColor(.koboldGold)
                     }
                 }
+            }.buttonStyle(.plain)
+
+            // Kategorie-Boxen
+            ForEach(MemoryType.allCases) { type_ in
+                let count = entries.filter { $0.memoryTypes.contains(type_) }.count
+                Button(action: { withAnimation(.easeInOut(duration: 0.15)) { filterType = filterType == type_ ? nil : type_ } }) {
+                    GlassCard(padding: 10, cornerRadius: 10) {
+                        HStack(spacing: 8) {
+                            Image(systemName: type_.icon)
+                                .font(.system(size: 18.5))
+                                .foregroundColor(type_.color)
+                                .frame(width: 24)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(type_.localizedName(lang)).font(.system(size: 14.5, weight: .semibold))
+                                Text(type_.localizedDesc(lang))
+                                    .font(.system(size: 11.5)).foregroundColor(.secondary)
+                                    .lineLimit(2)
+                            }
+                            Spacer()
+                            Text("\(count)")
+                                .font(.system(size: 16.5, weight: .bold, design: .monospaced))
+                                .foregroundColor(type_.color)
+                        }
+                    }
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(filterType == type_ ? type_.color.opacity(0.5) : Color.clear, lineWidth: 2)
+                    )
+                }.buttonStyle(.plain)
             }
         }
     }
@@ -407,7 +480,7 @@ struct MemoryView: View {
     var taggedMemoryList: some View {
         Group {
             if isLoading && entries.isEmpty {
-                GlassProgressBar(value: 0.5, label: "Lade Erinnerungen...")
+                GlassProgressBar(value: 0.5, label: lang.loadingMemories)
                     .padding(.horizontal, 4)
             } else if filteredEntries.isEmpty {
                 emptyState
@@ -418,7 +491,7 @@ struct MemoryView: View {
                             Task { await deleteEntry(id: entry.id) }
                         }, onEdit: {
                             editText = entry.text
-                            editType = entry.memoryType
+                            editTypes = Set(entry.memoryTypes)
                             editTags = entry.tags.joined(separator: ", ")
                             editingEntry = entry
                         })
@@ -435,14 +508,14 @@ struct MemoryView: View {
             VStack(spacing: 12) {
                 Image(systemName: "brain.filled.head.profile")
                     .font(.system(size: 36)).foregroundColor(.secondary)
-                Text(searchText.isEmpty && filterType == nil && filterTag == nil ? "Keine Erinnerungen" : "Keine Treffer")
+                Text(searchText.isEmpty && filterType == nil && filterTag == nil ? lang.noMemoriesTitle : lang.noMatchesTitle)
                     .font(.headline)
                 Text(searchText.isEmpty && filterType == nil && filterTag == nil
-                     ? "Der Agent hat noch keine Erinnerungen gespeichert. Sprich mit ihm — er lernt automatisch."
-                     : "Keine Erinnerungen passen zu deiner Suche.")
+                     ? lang.noMemories
+                     : lang.noMatchesDesc)
                     .font(.caption).foregroundColor(.secondary).multilineTextAlignment(.center)
                 if searchText.isEmpty && filterType == nil && filterTag == nil {
-                    GlassButton(title: "Erste Erinnerung hinzufügen", icon: "plus", isPrimary: true) {
+                    GlassButton(title: lang.addFirstMemory, icon: "plus", isPrimary: true) {
                         showAddEntry = true
                     }
                 }
@@ -459,7 +532,7 @@ struct MemoryView: View {
                 HStack(spacing: 6) {
                     Image(systemName: showLegacyBlocks ? "chevron.down" : "chevron.right")
                         .font(.system(size: 12.5))
-                    Text("Core Memory Blöcke").font(.system(size: 14.5, weight: .semibold))
+                    Text(lang.coreBlocks).font(.system(size: 14.5, weight: .semibold))
                     Text("(\(blocks.count))").font(.system(size: 13.5)).foregroundColor(.secondary)
                     Spacer()
                 }
@@ -488,20 +561,20 @@ struct MemoryView: View {
     var archivalSection: some View {
         GlassCard {
             VStack(alignment: .leading, spacing: 12) {
-                GlassSectionHeader(title: "Archiv", icon: "tray.full.fill")
-                Text("Automatisch archivierte Erinnerungen wenn Core Memory >80% voll ist.")
+                GlassSectionHeader(title: lang.archiveLabel, icon: "tray.full.fill")
+                Text(lang.archiveAutoDesc)
                     .font(.caption).foregroundColor(.secondary)
                 HStack(spacing: 16) {
                     VStack(alignment: .leading) {
                         Text("\(archivalCount)").font(.title3.bold()).foregroundColor(.koboldEmerald)
-                        Text("Einträge").font(.caption2).foregroundColor(.secondary)
+                        Text(lang.entriesLabel).font(.caption2).foregroundColor(.secondary)
                     }
                     VStack(alignment: .leading) {
                         Text(formatBytes(archivalSize)).font(.title3.bold()).foregroundColor(.koboldGold)
-                        Text("Gesamtgröße").font(.caption2).foregroundColor(.secondary)
+                        Text(lang.totalSize).font(.caption2).foregroundColor(.secondary)
                     }
                     Spacer()
-                    GlassButton(title: "Aktualisieren", icon: "arrow.clockwise", isPrimary: false) {
+                    GlassButton(title: lang.refreshLabel, icon: "arrow.clockwise", isPrimary: false) {
                         Task { await loadArchival() }
                     }
                 }
@@ -523,7 +596,7 @@ struct MemoryView: View {
                             }
                         }
                         if archivalEntries.count > 5 {
-                            Text("... und \(archivalEntries.count - 5) weitere")
+                            Text(lang.andMore(archivalEntries.count - 5))
                                 .font(.caption2).foregroundColor(.secondary)
                         }
                     }
@@ -537,18 +610,18 @@ struct MemoryView: View {
     var snapshotsSection: some View {
         GlassCard {
             VStack(alignment: .leading, spacing: 12) {
-                GlassSectionHeader(title: "Gedächtnis-Backup", icon: "externaldrive.fill")
-                Text("Erstelle einen Snapshot aller Erinnerungen.")
+                GlassSectionHeader(title: lang.memBackup, icon: "externaldrive.fill")
+                Text(lang.createSnapshot)
                     .font(.caption).foregroundColor(.secondary)
                 HStack(spacing: 8) {
-                    GlassButton(title: "Snapshot erstellen", icon: "camera", isPrimary: false) {
+                    GlassButton(title: lang.createSnapshotBtn, icon: "camera", isPrimary: false) {
                         Task { await createSnapshot() }
                     }
-                    GlassButton(title: "Als JSON exportieren", icon: "square.and.arrow.up", isPrimary: false) {
+                    GlassButton(title: lang.exportAsJson, icon: "square.and.arrow.up", isPrimary: false) {
                         exportMemory()
                     }
                     Spacer()
-                    Text("\(entries.count) Erinnerungen · \(blocks.count) Blöcke")
+                    Text("\(lang.memoriesCount(entries.count)) · \(lang.blocksCount(blocks.count))")
                         .font(.caption2).foregroundColor(.secondary)
                 }
             }
@@ -559,33 +632,42 @@ struct MemoryView: View {
 
     var addEntrySheet: some View {
         VStack(spacing: 20) {
-            Text("Neue Erinnerung").font(.title3.bold()).padding(.top, 20)
+            Text(lang.newMemoryTitle).font(.title3.bold()).padding(.top, 20)
 
-            // Memory Type Picker
+            // Memory Type Multi-Select
             VStack(alignment: .leading, spacing: 6) {
-                Text("Typ").font(.caption.bold()).foregroundColor(.secondary)
+                HStack {
+                    Text(lang.categoriesLabel).font(.caption.bold()).foregroundColor(.secondary)
+                    Text(lang.multipleAllowed).font(.caption2).foregroundColor(.secondary)
+                }
                 HStack(spacing: 8) {
                     ForEach(MemoryType.allCases) { type_ in
-                        Button(action: { newType = type_ }) {
+                        let isOn = newTypes.contains(type_)
+                        Button(action: {
+                            if isOn && newTypes.count > 1 { newTypes.remove(type_) }
+                            else if !isOn { newTypes.insert(type_) }
+                        }) {
                             HStack(spacing: 5) {
                                 Image(systemName: type_.icon).font(.system(size: 13.5))
-                                Text(type_.rawValue).font(.system(size: 14.5, weight: .medium))
+                                Text(type_.localizedName(lang)).font(.system(size: 14.5, weight: .medium))
                             }
-                            .foregroundColor(newType == type_ ? type_.color : .secondary)
+                            .foregroundColor(isOn ? type_.color : .secondary)
                             .padding(.horizontal, 10).padding(.vertical, 6)
                             .background(RoundedRectangle(cornerRadius: 8)
-                                .fill(newType == type_ ? type_.color.opacity(0.2) : Color.white.opacity(0.06))
+                                .fill(isOn ? type_.color.opacity(0.2) : Color.white.opacity(0.06))
                                 .overlay(RoundedRectangle(cornerRadius: 8)
-                                    .stroke(newType == type_ ? type_.color.opacity(0.5) : Color.white.opacity(0.1), lineWidth: 1)))
+                                    .stroke(isOn ? type_.color.opacity(0.5) : Color.white.opacity(0.1), lineWidth: 1)))
                         }
                         .buttonStyle(.plain)
                     }
                 }
-                Text(newType.description).font(.caption2).foregroundColor(.secondary)
+                if let first = newTypes.first {
+                    Text(first.localizedDesc(lang)).font(.caption2).foregroundColor(.secondary)
+                }
             }
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("Inhalt").font(.caption.bold()).foregroundColor(.secondary)
+                Text(lang.contentLabel).font(.caption.bold()).foregroundColor(.secondary)
                 TextEditor(text: $newText)
                     .font(.system(size: 15.5))
                     .frame(minHeight: 80, maxHeight: 160)
@@ -596,17 +678,17 @@ struct MemoryView: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
-                    Text("Tags").font(.caption.bold()).foregroundColor(.secondary)
-                    Text("(kommagetrennt)").font(.caption2).foregroundColor(.secondary)
+                    Text(lang.tagsNoColon).font(.caption.bold()).foregroundColor(.secondary)
+                    Text(lang.commaSeparated).font(.caption2).foregroundColor(.secondary)
                 }
-                GlassTextField(text: $newTags, placeholder: "z.B. coding, python, projekt...")
+                GlassTextField(text: $newTags, placeholder: lang.tagExample)
             }
 
             HStack(spacing: 12) {
-                GlassButton(title: "Abbrechen", isPrimary: false) {
-                    showAddEntry = false; newText = ""; newTags = ""
+                GlassButton(title: lang.cancel, isPrimary: false) {
+                    showAddEntry = false; newText = ""; newTags = ""; newTypes = [.langzeit]
                 }
-                GlassButton(title: "Speichern", icon: "checkmark", isPrimary: true,
+                GlassButton(title: lang.save, icon: "checkmark", isPrimary: true,
                             isDisabled: newText.trimmingCharacters(in: .whitespaces).isEmpty) {
                     Task { await addEntry() }
                 }
@@ -622,32 +704,41 @@ struct MemoryView: View {
 
     func editEntrySheet(for entry: TaggedMemoryEntry) -> some View {
         VStack(spacing: 20) {
-            Text("Erinnerung bearbeiten").font(.title3.bold()).padding(.top, 20)
+            Text(lang.editMemoryTitle).font(.title3.bold()).padding(.top, 20)
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("Typ").font(.caption.bold()).foregroundColor(.secondary)
+                HStack {
+                    Text(lang.categoriesLabel).font(.caption.bold()).foregroundColor(.secondary)
+                    Text(lang.multipleAllowed).font(.caption2).foregroundColor(.secondary)
+                }
                 HStack(spacing: 8) {
                     ForEach(MemoryType.allCases) { type_ in
-                        Button(action: { editType = type_ }) {
+                        let isOn = editTypes.contains(type_)
+                        Button(action: {
+                            if isOn && editTypes.count > 1 { editTypes.remove(type_) }
+                            else if !isOn { editTypes.insert(type_) }
+                        }) {
                             HStack(spacing: 5) {
                                 Image(systemName: type_.icon).font(.system(size: 13.5))
-                                Text(type_.rawValue).font(.system(size: 14.5, weight: .medium))
+                                Text(type_.localizedName(lang)).font(.system(size: 14.5, weight: .medium))
                             }
-                            .foregroundColor(editType == type_ ? type_.color : .secondary)
+                            .foregroundColor(isOn ? type_.color : .secondary)
                             .padding(.horizontal, 10).padding(.vertical, 6)
                             .background(RoundedRectangle(cornerRadius: 8)
-                                .fill(editType == type_ ? type_.color.opacity(0.2) : Color.white.opacity(0.06))
+                                .fill(isOn ? type_.color.opacity(0.2) : Color.white.opacity(0.06))
                                 .overlay(RoundedRectangle(cornerRadius: 8)
-                                    .stroke(editType == type_ ? type_.color.opacity(0.5) : Color.white.opacity(0.1), lineWidth: 1)))
+                                    .stroke(isOn ? type_.color.opacity(0.5) : Color.white.opacity(0.1), lineWidth: 1)))
                         }
                         .buttonStyle(.plain)
                     }
                 }
-                Text(editType.description).font(.caption2).foregroundColor(.secondary)
+                if let first = editTypes.first {
+                    Text(first.localizedDesc(lang)).font(.caption2).foregroundColor(.secondary)
+                }
             }
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("Inhalt").font(.caption.bold()).foregroundColor(.secondary)
+                Text(lang.contentLabel).font(.caption.bold()).foregroundColor(.secondary)
                 TextEditor(text: $editText)
                     .font(.system(size: 15.5))
                     .frame(minHeight: 80, maxHeight: 160)
@@ -658,17 +749,17 @@ struct MemoryView: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
-                    Text("Tags").font(.caption.bold()).foregroundColor(.secondary)
-                    Text("(kommagetrennt)").font(.caption2).foregroundColor(.secondary)
+                    Text(lang.tagsNoColon).font(.caption.bold()).foregroundColor(.secondary)
+                    Text(lang.commaSeparated).font(.caption2).foregroundColor(.secondary)
                 }
-                GlassTextField(text: $editTags, placeholder: "z.B. coding, python, projekt...")
+                GlassTextField(text: $editTags, placeholder: lang.tagExample)
             }
 
             HStack(spacing: 12) {
-                GlassButton(title: "Abbrechen", isPrimary: false) {
+                GlassButton(title: lang.cancel, isPrimary: false) {
                     editingEntry = nil
                 }
-                GlassButton(title: "Speichern", icon: "checkmark", isPrimary: true,
+                GlassButton(title: lang.save, icon: "checkmark", isPrimary: true,
                             isDisabled: editText.trimmingCharacters(in: .whitespaces).isEmpty) {
                     Task { await updateEntry(id: entry.id) }
                 }
@@ -696,14 +787,21 @@ struct MemoryView: View {
             entries = entryList.compactMap { item in
                 guard let id = item["id"] as? String,
                       let text = item["text"] as? String else { return nil }
-                let type = item["type"] as? String ?? "kurzzeit"
+                // Multi-category: parse "types" array, fallback to single "type"
+                let memTypes: [MemoryType]
+                if let typesArr = item["types"] as? [String], !typesArr.isEmpty {
+                    memTypes = typesArr.map { MemoryType.from(apiValue: $0) }
+                } else {
+                    let type = item["type"] as? String ?? "kurzzeit"
+                    memTypes = [MemoryType.from(apiValue: type)]
+                }
                 let tags = item["tags"] as? [String] ?? []
                 let ts = (item["timestamp"] as? String).flatMap { fmt.date(from: $0) } ?? Date()
                 let valence = (item["valence"] as? Double).map { Float($0) } ?? 0.0
                 let arousal = (item["arousal"] as? Double).map { Float($0) } ?? 0.5
                 let linkedId = item["linked_id"] as? String
                 let source = item["source"] as? String
-                return TaggedMemoryEntry(id: id, text: text, memoryType: MemoryType.from(apiValue: type), tags: tags, timestamp: ts, valence: valence, arousal: arousal, linkedEntryId: linkedId, source: source)
+                return TaggedMemoryEntry(id: id, text: text, memoryTypes: memTypes, tags: tags, timestamp: ts, valence: valence, arousal: arousal, linkedEntryId: linkedId, source: source)
             }
 
             // Load tags
@@ -728,15 +826,17 @@ struct MemoryView: View {
         guard let url = URL(string: viewModel.baseURL + "/memory/entries") else { return }
         var req = viewModel.authorizedRequest(url: url, method: "POST")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let typesArr = newTypes.map { $0.apiValue }
         req.httpBody = try? JSONSerialization.data(withJSONObject: [
             "text": text,
-            "type": newType.apiValue,
+            "type": typesArr.first ?? "langzeit",
+            "types": typesArr,
             "tags": tags
         ] as [String : Any])
         _ = try? await URLSession.shared.data(for: req)
 
-        showAddEntry = false; newText = ""; newTags = ""
-        withAnimation { saveStatus = "Gespeichert" }
+        showAddEntry = false; newText = ""; newTags = ""; newTypes = [.langzeit]
+        withAnimation { saveStatus = lang.savedStatus }
         await loadEntries()
         try? await Task.sleep(nanoseconds: 2_000_000_000)
         withAnimation { saveStatus = "" }
@@ -752,16 +852,18 @@ struct MemoryView: View {
         guard let url = URL(string: viewModel.baseURL + "/memory/entries") else { return }
         var req = viewModel.authorizedRequest(url: url, method: "PATCH")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let typesArr = editTypes.map { $0.apiValue }
         req.httpBody = try? JSONSerialization.data(withJSONObject: [
             "id": id,
             "text": text,
-            "type": editType.apiValue,
+            "type": typesArr.first ?? "langzeit",
+            "types": typesArr,
             "tags": tags
         ] as [String: Any])
         _ = try? await URLSession.shared.data(for: req)
 
         editingEntry = nil
-        withAnimation { saveStatus = "Aktualisiert" }
+        withAnimation { saveStatus = lang.updatedStatus }
         await loadEntries()
         try? await Task.sleep(nanoseconds: 2_000_000_000)
         withAnimation { saveStatus = "" }
@@ -784,7 +886,7 @@ struct MemoryView: View {
         defer { isLoading = false }
 
         guard viewModel.isConnected else {
-            errorMsg = "Daemon nicht verbunden"
+            errorMsg = lang.daemonDisconnected
             return
         }
         guard let url = URL(string: viewModel.baseURL + "/memory") else { return }
@@ -792,7 +894,7 @@ struct MemoryView: View {
         do {
             let (data, resp) = try await viewModel.authorizedData(from: url)
             if let http = resp as? HTTPURLResponse, http.statusCode != 200 {
-                errorMsg = "HTTP-Fehler \(http.statusCode)"
+                errorMsg = "\(lang.httpError) \(http.statusCode)"
                 return
             }
             guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -806,7 +908,7 @@ struct MemoryView: View {
                 return MemoryBlock(label: label, content: value, limit: limit, memoryType: type_)
             }
         } catch {
-            errorMsg = "Verbindungsfehler: \(error.localizedDescription)"
+            errorMsg = "\(lang.connectionErrorPrefix): \(error.localizedDescription)"
         }
     }
 
@@ -819,7 +921,7 @@ struct MemoryView: View {
             "content": block.content
         ])
         _ = try? await URLSession.shared.data(for: req)
-        withAnimation { saveStatus = "Gespeichert" }
+        withAnimation { saveStatus = lang.savedStatus }
         try? await Task.sleep(nanoseconds: 2_000_000_000)
         withAnimation { saveStatus = "" }
     }
@@ -851,14 +953,17 @@ struct MemoryView: View {
         guard let url = URL(string: viewModel.baseURL + "/memory/snapshot") else { return }
         let req = viewModel.authorizedRequest(url: url, method: "POST")
         _ = try? await URLSession.shared.data(for: req)
-        withAnimation { saveStatus = "Snapshot erstellt" }
+        withAnimation { saveStatus = lang.snapshotCreatedStatus }
         try? await Task.sleep(nanoseconds: 2_000_000_000)
         withAnimation { saveStatus = "" }
     }
 
     func exportMemory() {
         var exportData: [[String: Any]] = entries.map {
-            ["id": $0.id, "text": $0.text, "type": $0.memoryType.apiValue, "tags": $0.tags,
+            ["id": $0.id, "text": $0.text,
+             "type": $0.memoryType.apiValue,
+             "types": $0.memoryTypes.map { $0.apiValue },
+             "tags": $0.tags,
              "timestamp": ISO8601DateFormatter().string(from: $0.timestamp)]
         }
         // Also include legacy blocks
@@ -874,7 +979,7 @@ struct MemoryView: View {
         panel.allowedContentTypes = [.json]
         if panel.runModal() == .OK, let url = panel.url {
             try? json.write(to: url, atomically: true, encoding: .utf8)
-            withAnimation { saveStatus = "Exportiert" }
+            withAnimation { saveStatus = lang.exportedStatus }
             Task {
                 try? await Task.sleep(nanoseconds: 2_000_000_000)
                 withAnimation { self.saveStatus = "" }
@@ -901,23 +1006,27 @@ struct TaggedMemoryCard: View {
     let entry: TaggedMemoryEntry
     let onDelete: () -> Void
     let onEdit: () -> Void
+    @EnvironmentObject var l10n: LocalizationManager
+    private var lang: AppLanguage { l10n.language }
     @State private var showDeleteConfirm = false
 
     var body: some View {
         GlassCard(padding: 12, cornerRadius: 10) {
             VStack(alignment: .leading, spacing: 8) {
-                // Header: type badge + tags + date + delete
+                // Header: type badges + tags + date + delete
                 HStack(spacing: 6) {
-                    // Type badge
-                    HStack(spacing: 3) {
-                        Image(systemName: entry.memoryType.icon)
-                            .font(.system(size: 12.5))
-                        Text(entry.memoryType.rawValue)
-                            .font(.system(size: 12.5, weight: .semibold))
+                    // Type badges (multi-category)
+                    ForEach(entry.memoryTypes) { type_ in
+                        HStack(spacing: 3) {
+                            Image(systemName: type_.icon)
+                                .font(.system(size: 12.5))
+                            Text(type_.localizedName(lang))
+                                .font(.system(size: 12.5, weight: .semibold))
+                        }
+                        .foregroundColor(type_.color)
+                        .padding(.horizontal, 6).padding(.vertical, 3)
+                        .background(Capsule().fill(type_.color.opacity(0.15)))
                     }
-                    .foregroundColor(entry.memoryType.color)
-                    .padding(.horizontal, 6).padding(.vertical, 3)
-                    .background(Capsule().fill(entry.memoryType.color.opacity(0.15)))
 
                     // Tags
                     ForEach(entry.tags, id: \.self) { tag in
@@ -977,9 +1086,9 @@ struct TaggedMemoryCard: View {
                             .foregroundColor(.red.opacity(0.6))
                     }
                     .buttonStyle(.plain)
-                    .confirmationDialog("Erinnerung löschen?", isPresented: $showDeleteConfirm, titleVisibility: .visible) {
-                        Button("Löschen", role: .destructive) { onDelete() }
-                        Button("Abbrechen", role: .cancel) {}
+                    .confirmationDialog(lang.deleteMemoryConfirm, isPresented: $showDeleteConfirm, titleVisibility: .visible) {
+                        Button(lang.delete, role: .destructive) { onDelete() }
+                        Button(lang.cancel, role: .cancel) {}
                     }
                 }
 
@@ -1006,6 +1115,8 @@ struct LegacyMemoryBlockCard: View {
     @Binding var block: MemoryBlock
     let onSave: () -> Void
     let onDelete: () -> Void
+    @EnvironmentObject var l10n: LocalizationManager
+    private var lang: AppLanguage { l10n.language }
     @State private var isEditing = false
     @State private var showDeleteConfirm = false
 
@@ -1017,7 +1128,7 @@ struct LegacyMemoryBlockCard: View {
                         .font(.system(size: 14.5))
                         .foregroundColor(block.memoryType.color)
                     GlassStatusBadge(label: block.displayLabel, color: block.memoryType.color, icon: "tag.fill")
-                    Text(block.memoryType.rawValue)
+                    Text(block.memoryType.localizedName(lang))
                         .font(.system(size: 12.5))
                         .foregroundColor(block.memoryType.color.opacity(0.8))
                         .padding(.horizontal, 5).padding(.vertical, 2)
@@ -1038,9 +1149,9 @@ struct LegacyMemoryBlockCard: View {
                         Image(systemName: "trash").foregroundColor(.red.opacity(0.7))
                     }
                     .buttonStyle(.plain)
-                    .confirmationDialog("Block '\(block.displayLabel)' löschen?", isPresented: $showDeleteConfirm, titleVisibility: .visible) {
-                        Button("Löschen", role: .destructive) { onDelete() }
-                        Button("Abbrechen", role: .cancel) {}
+                    .confirmationDialog(lang.deleteBlockConfirm(block.displayLabel), isPresented: $showDeleteConfirm, titleVisibility: .visible) {
+                        Button(lang.delete, role: .destructive) { onDelete() }
+                        Button(lang.cancel, role: .cancel) {}
                     }
                 }
                 if isEditing {
@@ -1052,13 +1163,13 @@ struct LegacyMemoryBlockCard: View {
                         .scrollContentBackground(.hidden)
                     HStack {
                         Spacer()
-                        GlassButton(title: "Speichern", icon: "checkmark", isPrimary: true) {
+                        GlassButton(title: lang.save, icon: "checkmark", isPrimary: true) {
                             onSave()
                             withAnimation { isEditing = false }
                         }
                     }
                 } else {
-                    Text(block.content.isEmpty ? "(leer)" : block.content)
+                    Text(block.content.isEmpty ? lang.emptyBlock : block.content)
                         .font(.system(size: 14.5, design: .monospaced))
                         .foregroundColor(block.content.isEmpty ? .secondary : .primary)
                         .lineLimit(4)

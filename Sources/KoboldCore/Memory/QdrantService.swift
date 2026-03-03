@@ -96,6 +96,7 @@ public actor QdrantService {
                 print("[Qdrant] Collection '\(collectionName)' erstellt (dim=\(vectorSize))")
                 // Payload-Indizes für schnelle Filterung erstellen
                 await createPayloadIndex(field: "type", schema: "keyword")
+                await createPayloadIndex(field: "types", schema: "keyword")
                 await createPayloadIndex(field: "tags", schema: "keyword")
                 return true
             } else {
@@ -121,9 +122,9 @@ public actor QdrantService {
 
     // MARK: - Upsert
 
-    /// Speichert einen Vektor mit Payload in Qdrant
+    /// Speichert einen Vektor mit Payload in Qdrant (Multi-Kategorie Support)
     public func upsert(id: String, vector: [Float], text: String,
-                       memoryType: String, tags: [String]) async -> Bool {
+                       memoryType: String, memoryTypes: [String]? = nil, tags: [String]) async -> Bool {
         guard isEnabled, isReachable else { return false }
         guard let url = URL(string: "\(baseURL)/collections/\(collectionName)/points") else { return false }
 
@@ -132,12 +133,14 @@ public actor QdrantService {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = 10
 
+        let types = memoryTypes ?? [memoryType]
         let point: [String: Any] = [
             "id": id,
             "vector": vector,
             "payload": [
                 "text": text,
-                "type": memoryType,
+                "type": types.first ?? memoryType,   // Backward-compat (singular)
+                "types": types,                        // Multi-Kategorie
                 "tags": tags,
                 "updated_at": ISO8601DateFormatter().string(from: Date())
             ] as [String: Any]
@@ -153,9 +156,9 @@ public actor QdrantService {
         }
     }
 
-    /// Batch-Upsert für initiale Migration
+    /// Batch-Upsert für initiale Migration (Multi-Kategorie Support)
     public func upsertBatch(points: [(id: String, vector: [Float], text: String,
-                                       memoryType: String, tags: [String])]) async -> Bool {
+                                       memoryType: String, memoryTypes: [String], tags: [String])]) async -> Bool {
         guard isEnabled, isReachable else { return false }
         guard !points.isEmpty else { return true }
         guard let url = URL(string: "\(baseURL)/collections/\(collectionName)/points") else { return false }
@@ -171,7 +174,8 @@ public actor QdrantService {
                 "vector": point.vector,
                 "payload": [
                     "text": point.text,
-                    "type": point.memoryType,
+                    "type": point.memoryTypes.first ?? point.memoryType,
+                    "types": point.memoryTypes,
                     "tags": point.tags,
                     "updated_at": ISO8601DateFormatter().string(from: Date())
                 ] as [String: Any]

@@ -48,17 +48,6 @@ struct AgentModelConfig: Codable, Identifiable {
             contextLength: 8192,
             supportsVision: true
         ),
-        AgentModelConfig(
-            id: "utility",
-            displayName: "Utility",
-            emoji: "⚡",
-            description: "Hilfs-Agent — schnelle Aufgaben und Tool-Ausführung",
-            modelName: "",
-            systemPrompt: "You are a utility agent. Execute tasks quickly and efficiently.",
-            temperature: 0.5,
-            contextLength: 4096,
-            supportsVision: false
-        ),
     ]
 }
 
@@ -123,6 +112,8 @@ class AgentsStore: ObservableObject {
 
 struct AgentsView: View {
     @ObservedObject var viewModel: RuntimeViewModel
+    @EnvironmentObject var l10n: LocalizationManager
+    private var lang: AppLanguage { l10n.language }
     @ObservedObject private var store = AgentsStore.shared
     @State private var expandedId: String? = nil
     @State private var toolRoutingExpanded: Bool = false
@@ -133,8 +124,8 @@ struct AgentsView: View {
                 // Header
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Agenten-Konfiguration").font(.headline)
-                        Text("Modell, Temperatur, System-Prompt und Vision pro Agent")
+                        Text(lang.agentConfig).font(.headline)
+                        Text(lang.agentConfigDesc)
                             .font(.caption).foregroundColor(.secondary)
                     }
                     Spacer()
@@ -159,13 +150,13 @@ struct AgentsView: View {
                             } else {
                                 Image(systemName: "arrow.clockwise")
                             }
-                            Text(ollamaRestarting ? "Starte Ollama..." : "Modelle neu laden")
+                            Text(ollamaRestarting ? lang.startingOllama : lang.reloadModels)
                         }
                         .font(.system(size: 14.5))
                     }
                     .buttonStyle(.bordered)
                     .disabled(ollamaRestarting)
-                    .help("Ollama neustarten und Modelle abrufen")
+                    .help(lang.restartOllamaHint)
                 }
 
                 // Ollama Backend Status + Worker-Pool (integriert)
@@ -224,16 +215,16 @@ struct AgentsView: View {
                         Circle()
                             .fill(ollamaRestarting ? Color.orange : (viewModel.ollamaStatus == "Active" ? Color.green : Color.red))
                             .frame(width: 8, height: 8)
-                        Text(ollamaRestarting ? "Neustart..." : (viewModel.ollamaStatus == "Active" ? "Aktiv" : "Offline"))
+                        Text(ollamaRestarting ? lang.restartingLabel : (viewModel.ollamaStatus == "Active" ? lang.activeStatusLabel : lang.offline))
                             .font(.system(size: 13.5, weight: .medium))
                             .foregroundColor(ollamaRestarting ? .orange : (viewModel.ollamaStatus == "Active" ? .green : .red))
                     }
                 }
-                Text("Verbindung zu Ollama auf http://localhost:11434")
+                Text(lang.ollamaConnection)
                     .font(.caption2).foregroundColor(.secondary)
 
                 if !viewModel.ollamaModels.isEmpty {
-                    Text("Modelle: \(viewModel.ollamaModels.joined(separator: ", "))")
+                    Text("\(lang.modelsPrefix): \(viewModel.ollamaModels.joined(separator: ", "))")
                         .font(.caption2).foregroundColor(.secondary).lineLimit(2)
                 }
 
@@ -241,18 +232,18 @@ struct AgentsView: View {
 
                 // Worker-Pool (integriert)
                 HStack(spacing: 12) {
-                    Text("Parallele Chats:")
+                    Text(lang.parallelChats)
                         .font(.system(size: 13.5, weight: .medium))
                     Stepper("\(workerPoolSize) Worker", value: $workerPoolSize, in: 1...16)
                         .font(.system(size: 13.5))
                         .frame(maxWidth: 160)
                     Spacer()
                 }
-                Text("Mehr Worker = mehr parallele Chats. Ollama muss mit passender Parallelität laufen.")
+                Text(lang.moreWorkersDesc)
                     .font(.caption2).foregroundColor(.secondary)
 
                 HStack(spacing: 8) {
-                    Button("Ollama prüfen") {
+                    Button(lang.checkOllama) {
                         Task { await viewModel.checkOllamaStatus() }
                     }
                     .buttonStyle(.bordered).controlSize(.small)
@@ -272,7 +263,7 @@ struct AgentsView: View {
                     }) {
                         HStack(spacing: 4) {
                             if ollamaRestarting { ProgressView().scaleEffect(0.6) }
-                            Text(ollamaRestarting ? "Starte neu..." : "Neu starten (\(workerPoolSize)x parallel)")
+                            Text(ollamaRestarting ? lang.restartingLabel : "\(lang.restartNow) (\(workerPoolSize)x parallel)")
                         }
                     }
                     .buttonStyle(.bordered).controlSize(.small)
@@ -287,10 +278,10 @@ struct AgentsView: View {
     /// Tool routing data: which agent gets which tools and why
     private static let toolRoutingDefaults: [(tool: String, role: String, icon: String, defaultAgents: [String], reason: String)] = [
         // ── Kern-System ──────────────────────────────────────────
-        ("shell",              "Shell",              "terminal.fill",              ["general", "coder", "utility"],  "Bash/Zsh-Befehle im Terminal ausführen, Pakete installieren, Prozesse starten"),
-        ("file",               "Dateisystem",        "doc.fill",                   ["general", "coder", "utility"],  "Dateien und Ordner lesen, erstellen, bearbeiten und durchsuchen"),
+        ("shell",              "Shell",              "terminal.fill",              ["general", "coder"],  "Bash/Zsh-Befehle im Terminal ausführen, Pakete installieren, Prozesse starten"),
+        ("file",               "Dateisystem",        "doc.fill",                   ["general", "coder"],  "Dateien und Ordner lesen, erstellen, bearbeiten und durchsuchen"),
         ("browser",            "Browser",            "globe",                      ["general", "web"],               "Webseiten laden, DOM parsen und Inhalte extrahieren"),
-        ("calculator",         "Rechner",            "plusminus",                  ["general", "coder", "utility"],  "Mathematische Berechnungen, Einheiten-Umrechnung, Formeln"),
+        ("calculator",         "Rechner",            "plusminus",                  ["general", "coder"],  "Mathematische Berechnungen, Einheiten-Umrechnung, Formeln"),
         ("response",           "Antwort",            "text.bubble.fill",           ["general", "coder", "web"],      "Finale Antwort an den Benutzer formulieren und senden"),
         ("checklist",          "Checkliste",         "list.bullet.clipboard",      ["general", "coder"],             "Arbeitsfortschritt in strukturierten Checklisten verfolgen"),
 
@@ -314,9 +305,9 @@ struct AgentsView: View {
         ("delegate_parallel",  "Parallel",           "person.3.fill",              ["general"],                      "Mehrere Sub-Agents gleichzeitig für parallele Arbeit starten"),
 
         // ── macOS-System ─────────────────────────────────────────
-        ("applescript",        "AppleScript",        "applescript",                ["general", "utility"],           "macOS-Apps steuern: Mail, Finder, Safari, Messages etc."),
-        ("calendar",           "Kalender",           "calendar",                   ["general", "utility"],           "Termine erstellen, Erinnerungen setzen, Kalender abfragen"),
-        ("contacts",           "Kontakte",           "person.crop.circle",         ["general", "utility"],           "Kontakte nach Name, Nummer oder E-Mail durchsuchen"),
+        ("applescript",        "AppleScript",        "applescript",                ["general"],           "macOS-Apps steuern: Mail, Finder, Safari, Messages etc."),
+        ("calendar",           "Kalender",           "calendar",                   ["general"],           "Termine erstellen, Erinnerungen setzen, Kalender abfragen"),
+        ("contacts",           "Kontakte",           "person.crop.circle",         ["general"],           "Kontakte nach Name, Nummer oder E-Mail durchsuchen"),
         ("screen_control",     "Bildschirm",         "rectangle.on.rectangle",     ["general"],                      "Screenshots erstellen, Bildschirm analysieren, UI-Elemente erkennen"),
         ("vision",             "Vision",             "eye.fill",                   ["general"],                      "Bilder und Screenshots mit KI analysieren und beschreiben"),
         ("self_awareness",     "Selbstprüfung",      "person.fill.questionmark",   ["general"],                      "Eigenen Status, Fähigkeiten und Systeminfos abfragen"),
@@ -337,6 +328,7 @@ struct AgentsView: View {
         ("whatsapp_api",       "WhatsApp",           "message.fill",               ["general"],                      "WhatsApp-Nachrichten über die Business-API senden"),
         ("slack_api",          "Slack",              "number.square.fill",         ["general"],                      "Slack-Nachrichten senden, Channels und Threads verwalten"),
         ("twilio_sms",         "SMS (Twilio)",       "phone.fill",                ["general"],                      "SMS-Nachrichten über Twilio senden"),
+        ("phone_call",         "Telefon (Twilio)",   "phone.arrow.up.right.fill", ["general"],                      "Telefonanrufe über Twilio oder ElevenLabs tätigen und verwalten"),
 
         // ── Cloud-Dienste ────────────────────────────────────────
         ("google_api",         "Google",             "globe",                      ["general", "web"],               "Google Drive, Gmail, Calendar, YouTube und weitere Dienste"),
@@ -391,7 +383,6 @@ struct AgentsView: View {
         case "general": return "General"
         case "coder":      return "Dev"
         case "web":        return "Web"
-        case "utility":    return "Utility"
         default:           return String(id.prefix(6))
         }
     }
@@ -430,9 +421,9 @@ struct AgentsView: View {
                             .cornerRadius(10)
 
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Tool-Routing")
+                            Text(lang.toolRoutingTitle)
                                 .font(.system(size: 16.5, weight: .semibold))
-                            Text("Welche Tools stehen welchem Sub-Agenten zur Verfügung")
+                            Text(lang.toolRouting)
                                 .font(.caption).foregroundColor(.secondary)
                                 .lineLimit(1)
                         }
@@ -464,7 +455,7 @@ struct AgentsView: View {
                     Divider().padding(.horizontal, 14)
 
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Deaktivierte Tools werden aus dem System-Prompt entfernt. General hat immer Zugriff auf alle Tools als Orchestrator.")
+                        Text(lang.toolRoutingDesc)
                             .font(.system(size: 12))
                             .foregroundColor(.secondary)
                     }
@@ -472,7 +463,7 @@ struct AgentsView: View {
 
                     // Table header
                     HStack(spacing: 12) {
-                        Text("Tool")
+                        Text(lang.toolLabel)
                             .font(.system(size: 12.5, weight: .bold))
                             .frame(width: 130, alignment: .leading)
                         HStack(spacing: 4) {
@@ -483,7 +474,7 @@ struct AgentsView: View {
                                     .frame(width: 48)
                             }
                         }
-                        Text("Beschreibung")
+                        Text(lang.descriptionLabel)
                             .font(.system(size: 12.5, weight: .bold))
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
@@ -518,7 +509,7 @@ struct AgentsView: View {
                                             .opacity(enabled ? 1.0 : 0.3)
                                     }
                                     .buttonStyle(.plain)
-                                    .help(enabled ? "\(config.displayName): aktiv" : "\(config.displayName): deaktiviert")
+                                    .help(enabled ? "\(config.displayName): \(lang.activeToolLabel)" : "\(config.displayName): \(lang.disabledToolLabel)")
                                 }
                             }
 
@@ -563,6 +554,8 @@ struct AgentsView: View {
 struct AgentActivityBanner: View {
     let session: ActiveAgentSession
     let onStop: () -> Void
+    @EnvironmentObject var l10n: LocalizationManager
+    private var lang: AppLanguage { l10n.language }
 
     var body: some View {
         HStack(spacing: 10) {
@@ -583,7 +576,7 @@ struct AgentActivityBanner: View {
                     Label(session.elapsed, systemImage: "clock")
                         .font(.system(size: 12.5))
                         .foregroundColor(.secondary)
-                    Label("\(session.stepCount) Schritte", systemImage: "arrow.triangle.2.circlepath")
+                    Label("\(session.stepCount) \(lang.stepsLabel)", systemImage: "arrow.triangle.2.circlepath")
                         .font(.system(size: 12.5))
                         .foregroundColor(.secondary)
                 }
@@ -597,7 +590,7 @@ struct AgentActivityBanner: View {
                     .foregroundColor(.orange)
             }
             .buttonStyle(.plain)
-            .help("Stoppen")
+            .help(lang.stopLabel)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
@@ -620,9 +613,20 @@ struct AgentConfigCard: View {
     let isExpanded: Bool
     let onToggle: () -> Void
     let onSave: () -> Void
+    @EnvironmentObject var l10n: LocalizationManager
+    private var lang: AppLanguage { l10n.language }
 
     var activeModel: String {
-        config.modelName.isEmpty ? "Standard" : config.modelName
+        config.modelName.isEmpty ? lang.standardLabel : config.modelName
+    }
+
+    private var localizedAgentDesc: String {
+        switch config.id {
+        case "general": return lang.agentGenDesc
+        case "coder":   return lang.agentCoderDesc
+        case "web":     return lang.agentWebDesc
+        default:        return config.description
+        }
     }
 
     var body: some View {
@@ -640,7 +644,7 @@ struct AgentConfigCard: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(config.displayName)
                                 .font(.system(size: 16.5, weight: .semibold))
-                            Text(config.description)
+                            Text(localizedAgentDesc)
                                 .font(.caption).foregroundColor(.secondary)
                                 .lineLimit(1)
                         }
@@ -690,18 +694,18 @@ struct AgentConfigCard: View {
 
                         // Model picker (Ollama-only)
                         VStack(alignment: .leading, spacing: 6) {
-                            Label("Ollama Modell", systemImage: "cpu.fill")
+                            Label(lang.ollamaModel, systemImage: "cpu.fill")
                                 .font(.caption.bold()).foregroundColor(.secondary)
 
                             if ollamaModels.isEmpty {
                                 HStack {
                                     Image(systemName: "exclamationmark.triangle").foregroundColor(.orange)
-                                    Text("Keine Ollama Modelle geladen — klicke oben 'Modelle laden'")
+                                    Text(lang.noOllamaModels)
                                         .font(.caption).foregroundColor(.secondary)
                                 }
                             } else {
                                 Picker("", selection: $config.modelName) {
-                                    Text("Standard (globales Modell)").tag("")
+                                    Text(lang.standardGlobalModel).tag("")
                                     Divider()
                                     ForEach(ollamaModels, id: \.self) { model in
                                         Text(model).tag(model)
@@ -712,12 +716,12 @@ struct AgentConfigCard: View {
                             }
 
                             HStack {
-                                Text("oder manuell:").font(.caption).foregroundColor(.secondary)
-                                TextField("z.B. llama3:latest", text: $config.modelName)
+                                Text(lang.orManual).font(.caption).foregroundColor(.secondary)
+                                TextField(lang.modelPlaceholder, text: $config.modelName)
                                     .textFieldStyle(.roundedBorder)
                                     .font(.system(.caption, design: .monospaced))
                             }
-                            Text("Leer = globales Standard-Modell wird verwendet")
+                            Text(lang.emptyUsesGlobal)
                                 .font(.caption2).foregroundColor(.secondary)
                         }
 
@@ -726,7 +730,7 @@ struct AgentConfigCard: View {
                         // Temperature + Context
                         HStack(spacing: 20) {
                             VStack(alignment: .leading, spacing: 4) {
-                                Label("Temperatur: \(String(format: "%.1f", config.temperature))",
+                                Label("\(lang.temperatureLabel): \(String(format: "%.1f", config.temperature))",
                                       systemImage: "thermometer.medium")
                                     .font(.caption.bold()).foregroundColor(.secondary)
                                 Slider(value: $config.temperature, in: 0...1, step: 0.1)
@@ -734,7 +738,7 @@ struct AgentConfigCard: View {
                                     .tint(.koboldEmerald)
                             }
                             VStack(alignment: .leading, spacing: 4) {
-                                Label("Kontextlänge", systemImage: "text.justify")
+                                Label(lang.contextLength, systemImage: "text.justify")
                                     .font(.caption.bold()).foregroundColor(.secondary)
                                 Picker("", selection: $config.contextLength) {
                                     Text("4K").tag(4096)
@@ -757,9 +761,9 @@ struct AgentConfigCard: View {
                                 .foregroundColor(config.supportsVision ? .koboldEmerald : .secondary)
                                 .frame(width: 20)
                             VStack(alignment: .leading, spacing: 2) {
-                                Text("Vision / Multimodal")
+                                Text(lang.visionMultimodal)
                                     .font(.system(size: 15.5, weight: .medium))
-                                Text("Aktiviert Bildanalyse — nutze ein Vision-Modell wie llava oder llama3.2-vision.")
+                                Text(lang.visionEnableDesc)
                                     .font(.caption).foregroundColor(.secondary)
                             }
                             Spacer()
@@ -773,7 +777,7 @@ struct AgentConfigCard: View {
 
                         // System Prompt
                         VStack(alignment: .leading, spacing: 6) {
-                            Label("System-Prompt", systemImage: "text.quote")
+                            Label(lang.systemPromptLabel, systemImage: "text.quote")
                                 .font(.caption.bold()).foregroundColor(.secondary)
                             TextEditor(text: $config.systemPrompt)
                                 .font(.system(size: 13.5))
@@ -787,7 +791,7 @@ struct AgentConfigCard: View {
                         // Save button
                         HStack {
                             Spacer()
-                            GlassButton(title: "Speichern", icon: "checkmark", isPrimary: true) {
+                            GlassButton(title: lang.save, icon: "checkmark", isPrimary: true) {
                                 onSave()
                                 onToggle()
                             }

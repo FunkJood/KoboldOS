@@ -8,13 +8,31 @@ public struct EmbeddedEntry: Codable, Sendable {
     public let text: String
     public let embedding: [Float]
     public let memoryType: String
+    public let memoryTypes: [String]
     public let tags: [String]
     public let updatedAt: Date
 
     public init(id: String, text: String, embedding: [Float],
-                memoryType: String, tags: [String], updatedAt: Date = Date()) {
+                memoryType: String, memoryTypes: [String]? = nil, tags: [String], updatedAt: Date = Date()) {
         self.id = id; self.text = text; self.embedding = embedding
-        self.memoryType = memoryType; self.tags = tags; self.updatedAt = updatedAt
+        self.memoryType = memoryType; self.memoryTypes = memoryTypes ?? [memoryType]
+        self.tags = tags; self.updatedAt = updatedAt
+    }
+
+    // Backward-compat decoding
+    enum CodingKeys: String, CodingKey {
+        case id, text, embedding, memoryType, memoryTypes, tags, updatedAt
+    }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        text = try c.decode(String.self, forKey: .text)
+        embedding = try c.decode([Float].self, forKey: .embedding)
+        let primary = try c.decode(String.self, forKey: .memoryType)
+        memoryType = primary
+        memoryTypes = try c.decodeIfPresent([String].self, forKey: .memoryTypes) ?? [primary]
+        tags = try c.decode([String].self, forKey: .tags)
+        updatedAt = try c.decode(Date.self, forKey: .updatedAt)
     }
 }
 
@@ -49,15 +67,16 @@ public actor EmbeddingStore {
     // MARK: - Upsert
 
     public func upsert(id: String, text: String, embedding: [Float],
-                       memoryType: String, tags: [String]) {
+                       memoryType: String, memoryTypes: [String]? = nil, tags: [String]) {
+        let types = memoryTypes ?? [memoryType]
         entries[id] = EmbeddedEntry(id: id, text: text, embedding: embedding,
-                                    memoryType: memoryType, tags: tags)
+                                    memoryType: memoryType, memoryTypes: types, tags: tags)
         scheduleSave()
 
         // Qdrant-Sync (Fire & Forget — blockiert nicht den Hauptpfad)
         Task.detached(priority: .utility) {
             await QdrantService.shared.upsert(id: id, vector: embedding, text: text,
-                                               memoryType: memoryType, tags: tags)
+                                               memoryType: memoryType, memoryTypes: types, tags: tags)
         }
         print("[EmbeddingStore] embedded: \(id.prefix(8))… dim=\(embedding.count)")
     }
@@ -138,7 +157,7 @@ public actor EmbeddingStore {
             for entry in missing {
                 if let emb = await EmbeddingRunner.shared.embed(entry.text) {
                     upsert(id: entry.id, text: entry.text, embedding: emb,
-                           memoryType: entry.memoryType, tags: entry.tags)
+                           memoryType: entry.memoryType, memoryTypes: entry.memoryTypes, tags: entry.tags)
                 }
             }
             print("[EmbeddingStore] reembedMissing: done")
@@ -174,7 +193,7 @@ public actor EmbeddingStore {
             let end = min(start + batchSize, allEntries.count)
             let batch = allEntries[start..<end].map { entry in
                 (id: entry.id, vector: entry.embedding, text: entry.text,
-                 memoryType: entry.memoryType, tags: entry.tags)
+                 memoryType: entry.memoryType, memoryTypes: entry.memoryTypes, tags: entry.tags)
             }
             let _ = await QdrantService.shared.upsertBatch(points: batch)
         }

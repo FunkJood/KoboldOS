@@ -5,6 +5,7 @@ import SwiftUI
 @available(macOS 14.0, *)
 struct VoiceView: View {
     @ObservedObject var viewModel: RuntimeViewModel
+    @EnvironmentObject var l10n: LocalizationManager
     @StateObject private var recorder = AudioRecordingManager.shared
     @ObservedObject private var ttsManager = TTSManager.shared
     @ObservedObject private var sttManager = STTManager.shared
@@ -266,7 +267,7 @@ struct VoiceView: View {
         if !recorder.hasMicrophonePermission {
             HStack(spacing: 6) {
                 Image(systemName: "mic.slash.fill").foregroundColor(.red).font(.caption)
-                Text("Mikrofon-Berechtigung fehlt.").font(.caption).foregroundColor(.secondary)
+                Text(l10n.language.micMissing).font(.caption).foregroundColor(.secondary)
                 Button("Öffnen") {
                     NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!)
                 }.font(.caption)
@@ -578,7 +579,7 @@ struct VoiceView: View {
             // Header
             HStack {
                 Image(systemName: "text.bubble.fill").foregroundColor(.koboldGold)
-                Text("Gespräch").font(.headline)
+                Text(l10n.language.conversation).font(.headline)
                 Spacer()
                 if sessionCharacters > 0 {
                     HStack(spacing: 4) {
@@ -605,7 +606,7 @@ struct VoiceView: View {
                     Image(systemName: "waveform.circle")
                         .font(.system(size: 48))
                         .foregroundColor(.secondary.opacity(0.3))
-                    Text("Drücke den Mikrofon-Button und sprich.\nDein Gespräch erscheint hier.")
+                    Text(l10n.language.pressRecordHint)
                         .font(.callout)
                         .foregroundColor(.secondary.opacity(0.5))
                         .multilineTextAlignment(.center)

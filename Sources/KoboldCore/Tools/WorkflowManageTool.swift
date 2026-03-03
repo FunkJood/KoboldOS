@@ -31,7 +31,7 @@ public struct WorkflowManageTool: Tool, Sendable {
                 ),
                 "node_type": ToolSchemaProperty(
                     type: "string",
-                    description: "Node type: Trigger, Input, Agent, Tool, Output, Condition, Merger, Delay, Webhook, Formula"
+                    description: "Node type: Trigger, Input, Agent, Tool, Output, Condition, Merger, Delay, Webhook, Formula, Loop, Error-Handler, Sub-Workflow, Task, Retry, Switch, Note"
                 ),
                 "title": ToolSchemaProperty(
                     type: "string",
@@ -83,11 +83,52 @@ public struct WorkflowManageTool: Tool, Sendable {
                 ),
                 "condition_expression": ToolSchemaProperty(
                     type: "string",
-                    description: "Condition expression for Condition nodes"
+                    description: "Condition expression for Condition nodes. Supports: contains('text'), isEmpty, length > N, startsWith('x'), endsWith('x'), matches(/regex/), equals('x'), json.field == 'value'"
                 ),
                 "delay_seconds": ToolSchemaProperty(
                     type: "string",
                     description: "Delay in seconds for Delay nodes"
+                ),
+                "connection_type": ToolSchemaProperty(
+                    type: "string",
+                    description: "Connection type: normal (default) or error (for error-handling branches)",
+                    enumValues: ["normal", "error"]
+                ),
+                "loop_separator": ToolSchemaProperty(
+                    type: "string",
+                    description: "Separator for Loop nodes to split input into items (default: newline)"
+                ),
+                "loop_max_iterations": ToolSchemaProperty(
+                    type: "string",
+                    description: "Maximum iterations for Loop nodes (default: 100)"
+                ),
+                "sub_workflow_project_id": ToolSchemaProperty(
+                    type: "string",
+                    description: "Target project ID for Sub-Workflow nodes"
+                ),
+                "task_id_ref": ToolSchemaProperty(
+                    type: "string",
+                    description: "Task ID reference for Task nodes"
+                ),
+                "retry_count": ToolSchemaProperty(
+                    type: "string",
+                    description: "Number of retry attempts for Retry nodes (default: 3)"
+                ),
+                "retry_delay_seconds": ToolSchemaProperty(
+                    type: "string",
+                    description: "Delay between retries in seconds for Retry nodes (default: 5)"
+                ),
+                "switch_cases": ToolSchemaProperty(
+                    type: "string",
+                    description: "JSON array of switch cases for Switch nodes. Each case: {\"label\": \"name\", \"expression\": \"contains('x')\", \"portIndex\": 0}"
+                ),
+                "note_text": ToolSchemaProperty(
+                    type: "string",
+                    description: "Free text content for Note nodes (documentation only, no execution)"
+                ),
+                "formula_expression": ToolSchemaProperty(
+                    type: "string",
+                    description: "Formula template with variables: {{input}}, {{date}}, {{length}}, {{lines}}, {{env.KEY}}, {{uuid}}, {{timestamp}}, {{random}}"
                 ),
                 "steps": ToolSchemaProperty(
                     type: "string",
@@ -279,7 +320,8 @@ public struct WorkflowManageTool: Tool, Sendable {
             return "Projekt nicht gefunden."
         }
         let nodeType = arguments["node_type"] ?? "Agent"
-        let validTypes = ["Trigger", "Input", "Agent", "Tool", "Output", "Condition", "Merger", "Delay", "Webhook", "Formula"]
+        let validTypes = ["Trigger", "Input", "Agent", "Tool", "Output", "Condition", "Merger", "Delay", "Webhook", "Formula",
+                          "Loop", "Error-Handler", "Sub-Workflow", "Task", "Retry", "Switch", "Note"]
         guard validTypes.contains(nodeType) else {
             return "Ungültiger node_type '\(nodeType)'. Erlaubt: \(validTypes.joined(separator: ", "))"
         }
@@ -304,6 +346,30 @@ public struct WorkflowManageTool: Tool, Sendable {
         if delaySec > 0 { nodeDict["delaySeconds"] = delaySec }
         if let at = agentType, !at.isEmpty { nodeDict["agentType"] = at }
         if let mo = modelOverride, !mo.isEmpty { nodeDict["modelOverride"] = mo }
+
+        // New node type properties
+        if let ls = arguments["loop_separator"], !ls.isEmpty { nodeDict["loopSeparator"] = ls }
+        if let lm = arguments["loop_max_iterations"], let lmInt = Int(lm) { nodeDict["loopMaxIterations"] = lmInt }
+        if let swpId = arguments["sub_workflow_project_id"], !swpId.isEmpty { nodeDict["subWorkflowProjectId"] = swpId }
+        if let tid = arguments["task_id_ref"], !tid.isEmpty { nodeDict["taskIdRef"] = tid }
+        if let rc = arguments["retry_count"], let rcInt = Int(rc) { nodeDict["retryCount"] = rcInt }
+        if let rds = arguments["retry_delay_seconds"], let rdsInt = Int(rds) { nodeDict["retryDelaySeconds"] = rdsInt }
+        if let nt = arguments["note_text"], !nt.isEmpty { nodeDict["noteText"] = nt }
+        if let fe = arguments["formula_expression"], !fe.isEmpty { nodeDict["formulaExpression"] = fe }
+
+        // Parse switch cases from JSON
+        if let scJSON = arguments["switch_cases"], !scJSON.isEmpty,
+           let scData = scJSON.data(using: .utf8),
+           let scArr = try? JSONSerialization.jsonObject(with: scData) as? [[String: Any]] {
+            nodeDict["switchCases"] = scArr.map { sc in
+                [
+                    "id": UUID().uuidString,
+                    "label": sc["label"] as? String ?? "",
+                    "expression": sc["expression"] as? String ?? "",
+                    "portIndex": sc["portIndex"] as? Int ?? 0
+                ] as [String: Any]
+            }
+        }
 
         // Auto-add trigger config for trigger nodes
         if nodeType == "Trigger" {
@@ -359,11 +425,13 @@ public struct WorkflowManageTool: Tool, Sendable {
         }
         if duplicate { return "Diese Verbindung existiert bereits." }
 
-        connections.append(makeConnectionDict(sourceId: sourceId, targetId: targetId))
+        let connType = arguments["connection_type"] ?? "normal"
+        connections.append(makeConnectionDict(sourceId: sourceId, targetId: targetId, connectionType: connType))
         saveWorkflowState(nodes: nodes, connections: connections, projectId: projectId)
         notifyWorkflowChanged(projectId)
 
-        return "Verbindung erstellt: \(String(sourceId.prefix(8))) → \(String(targetId.prefix(8)))"
+        let typeLabel = connType == "error" ? " (Error-Pfad)" : ""
+        return "Verbindung erstellt: \(String(sourceId.prefix(8))) → \(String(targetId.prefix(8)))\(typeLabel)"
     }
 
     // MARK: - Set Trigger
@@ -428,6 +496,14 @@ public struct WorkflowManageTool: Tool, Sendable {
             if let tc = node["triggerConfig"] as? [String: Any], let tt = tc["type"] as? String {
                 extras.append("trigger=\(tt)")
             }
+            if let ls = node["loopSeparator"] as? String, !ls.isEmpty { extras.append("sep=\(ls)") }
+            if let lm = node["loopMaxIterations"] as? Int { extras.append("maxIter=\(lm)") }
+            if let swpId = node["subWorkflowProjectId"] as? String { extras.append("subWf=\(String(swpId.prefix(8)))") }
+            if let tid = node["taskIdRef"] as? String { extras.append("task=\(String(tid.prefix(8)))") }
+            if let rc = node["retryCount"] as? Int { extras.append("retry=\(rc)") }
+            if let rds = node["retryDelaySeconds"] as? Int { extras.append("retryDelay=\(rds)s") }
+            if let sc = node["switchCases"] as? [[String: Any]] { extras.append("cases=\(sc.count)") }
+            if node["noteText"] as? String != nil { extras.append("note") }
             let extrasStr = extras.isEmpty ? "" : " [\(extras.joined(separator: ", "))]"
             lines.append("  • \(title) (\(type)) ID:\(id)\(extrasStr)")
         }
@@ -437,7 +513,9 @@ public struct WorkflowManageTool: Tool, Sendable {
             for conn in connections {
                 let src = String((conn["sourceNodeId"] as? String ?? "").prefix(8))
                 let tgt = String((conn["targetNodeId"] as? String ?? "").prefix(8))
-                lines.append("  \(src) → \(tgt)")
+                let ct = conn["connectionType"] as? String ?? "normal"
+                let label = ct == "error" ? " [ERROR]" : ""
+                lines.append("  \(src) → \(tgt)\(label)")
             }
         }
 
@@ -605,13 +683,14 @@ public struct WorkflowManageTool: Tool, Sendable {
         return dict
     }
 
-    private func makeConnectionDict(sourceId: String, targetId: String) -> [String: Any] {
+    private func makeConnectionDict(sourceId: String, targetId: String, connectionType: String = "normal") -> [String: Any] {
         [
             "id": UUID().uuidString,
             "sourceNodeId": sourceId,
             "targetNodeId": targetId,
             "sourcePort": 0,
-            "targetPort": 0
+            "targetPort": 0,
+            "connectionType": connectionType
         ]
     }
 

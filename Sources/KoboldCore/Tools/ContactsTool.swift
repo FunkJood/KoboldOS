@@ -5,14 +5,17 @@ import Contacts
 // MARK: - ContactsTool (macOS implementation)
 public struct ContactsTool: Tool, @unchecked Sendable {
     public let name = "contacts"
-    public let description = "Kontakte durchsuchen (search) oder auflisten (list_recent)"
+    public let description = "Apple-Kontakte durchsuchen (search, list_recent) und CRM verwalten (crm_list, crm_create, crm_update, crm_delete, crm_search)"
     public let riskLevel: RiskLevel = .low
 
     public var schema: ToolSchema {
         ToolSchema(
             properties: [
-                "action": ToolSchemaProperty(type: "string", description: "search | list_recent", required: true),
-                "query": ToolSchemaProperty(type: "string", description: "Suchbegriff (Name)"),
+                "action": ToolSchemaProperty(type: "string", description: "search | list_recent | crm_list | crm_create | crm_update | crm_delete | crm_search", required: true),
+                "query": ToolSchemaProperty(type: "string", description: "Suchbegriff (Name oder Text)"),
+                "collection": ToolSchemaProperty(type: "string", description: "CRM-Sammlung: contacts | companies | deals | activities (für crm_* Aktionen)"),
+                "data": ToolSchemaProperty(type: "string", description: "JSON-String mit Feldern für crm_create/crm_update (z.B. '{\"firstName\":\"Max\",\"lastName\":\"Muster\",\"email\":\"max@test.de\"}')", required: false),
+                "id": ToolSchemaProperty(type: "string", description: "ID für crm_update/crm_delete"),
             ],
             required: ["action"]
         )
@@ -60,8 +63,10 @@ public struct ContactsTool: Tool, @unchecked Sendable {
             return try searchContacts(arguments)
         case "list_recent":
             return try listRecent()
+        case "crm_list", "crm_create", "crm_update", "crm_delete", "crm_search":
+            return try await crmAction(action: action, arguments: arguments)
         default:
-            return "Unbekannte Aktion: \(action). Verfügbar: search, list_recent"
+            return "Unbekannte Aktion: \(action). Verfügbar: search, list_recent, crm_list, crm_create, crm_update, crm_delete, crm_search"
         }
     }
 
@@ -129,6 +134,129 @@ public struct ContactsTool: Tool, @unchecked Sendable {
             out += "  Geburtstag: \(fmt.string(from: d))\n"
         }
         return out + "\n"
+    }
+
+    // MARK: - CRM Actions (via Daemon API)
+
+    private func crmAction(action: String, arguments: [String: String]) async throws -> String {
+        let collection = arguments["collection"] ?? "contacts"
+        let daemonPort = UserDefaults.standard.integer(forKey: "kobold.daemon.port")
+        let port = daemonPort > 0 ? daemonPort : 8080
+        let baseURL = "http://localhost:\(port)"
+
+        // Bearer token from settings
+        let token = UserDefaults.standard.string(forKey: "kobold.auth.token") ?? ""
+
+        switch action {
+        case "crm_list":
+            guard let url = URL(string: "\(baseURL)/\(collection)") else { return "Ungültige URL" }
+            var req = URLRequest(url: url)
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            let (data, _) = try await URLSession.shared.data(for: req)
+            guard let json = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+                return String(data: data, encoding: .utf8) ?? "Keine Daten"
+            }
+            if json.isEmpty { return "Keine \(collection) gefunden." }
+            return formatCRMList(json, collection: collection)
+
+        case "crm_create":
+            guard let dataStr = arguments["data"], !dataStr.isEmpty else { return "Fehlend: 'data' (JSON-String mit Feldern)" }
+            guard let url = URL(string: "\(baseURL)/\(collection)") else { return "Ungültige URL" }
+            var req = URLRequest(url: url)
+            req.httpMethod = "POST"
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            // Parse and wrap data
+            guard let parsed = try? JSONSerialization.jsonObject(with: Data(dataStr.utf8)) as? [String: Any] else {
+                return "Ungültiges JSON in 'data'"
+            }
+            var body = parsed
+            body["action"] = "create"
+            req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+            let (respData, _) = try await URLSession.shared.data(for: req)
+            return String(data: respData, encoding: .utf8) ?? "Erstellt"
+
+        case "crm_update":
+            guard let id = arguments["id"], !id.isEmpty else { return "Fehlend: 'id'" }
+            guard let dataStr = arguments["data"], !dataStr.isEmpty else { return "Fehlend: 'data' (JSON-String mit zu ändernden Feldern)" }
+            guard let url = URL(string: "\(baseURL)/\(collection)") else { return "Ungültige URL" }
+            var req = URLRequest(url: url)
+            req.httpMethod = "POST"
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            guard var body = try? JSONSerialization.jsonObject(with: Data(dataStr.utf8)) as? [String: Any] else {
+                return "Ungültiges JSON in 'data'"
+            }
+            body["action"] = "update"
+            body["id"] = id
+            req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+            let (respData, _) = try await URLSession.shared.data(for: req)
+            return String(data: respData, encoding: .utf8) ?? "Aktualisiert"
+
+        case "crm_delete":
+            guard let id = arguments["id"], !id.isEmpty else { return "Fehlend: 'id'" }
+            guard let url = URL(string: "\(baseURL)/\(collection)") else { return "Ungültige URL" }
+            var req = URLRequest(url: url)
+            req.httpMethod = "POST"
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            req.httpBody = try? JSONSerialization.data(withJSONObject: ["action": "delete", "id": id])
+            let (respData, _) = try await URLSession.shared.data(for: req)
+            return String(data: respData, encoding: .utf8) ?? "Gelöscht"
+
+        case "crm_search":
+            let query = arguments["query"] ?? ""
+            guard !query.isEmpty else { return "Fehlend: 'query' (Suchbegriff)" }
+            guard let url = URL(string: "\(baseURL)/\(collection)?search=\(query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query)") else { return "Ungültige URL" }
+            var req = URLRequest(url: url)
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            let (data, _) = try await URLSession.shared.data(for: req)
+            guard let json = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+                return String(data: data, encoding: .utf8) ?? "Keine Daten"
+            }
+            if json.isEmpty { return "Keine Ergebnisse für '\(query)' in \(collection)." }
+            return formatCRMList(json, collection: collection)
+
+        default:
+            return "Unbekannte CRM-Aktion: \(action)"
+        }
+    }
+
+    private func formatCRMList(_ items: [[String: Any]], collection: String) -> String {
+        var out = "\(items.count) \(collection):\n\n"
+        for item in items.prefix(20) {
+            switch collection {
+            case "contacts":
+                let first = item["firstName"] as? String ?? ""
+                let last = item["lastName"] as? String ?? ""
+                let email = item["email"] as? String ?? ""
+                let status = item["status"] as? String ?? ""
+                out += "- \(first) \(last)"
+                if !email.isEmpty { out += " | \(email)" }
+                if !status.isEmpty { out += " [\(status)]" }
+                out += "\n"
+            case "companies":
+                let name = item["name"] as? String ?? "?"
+                let industry = item["industry"] as? String ?? ""
+                out += "- \(name)"
+                if !industry.isEmpty { out += " (\(industry))" }
+                out += "\n"
+            case "deals":
+                let title = item["title"] as? String ?? "?"
+                let value = item["value"] as? Double ?? 0
+                let stage = item["stage"] as? String ?? ""
+                out += "- \(title) — \(String(format: "%.0f€", value)) [\(stage)]\n"
+            case "activities":
+                let type = item["type"] as? String ?? "?"
+                let desc = item["description"] as? String ?? ""
+                out += "- [\(type)] \(desc.prefix(60))\n"
+            default:
+                let id = item["id"] as? String ?? "?"
+                out += "- \(id): \(item.description.prefix(80))\n"
+            }
+        }
+        if items.count > 20 { out += "... und \(items.count - 20) weitere\n" }
+        return out
     }
 }
 

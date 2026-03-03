@@ -13,6 +13,7 @@ import KoboldCore
 struct SettingsView: View {
     @ObservedObject var viewModel: RuntimeViewModel
     @EnvironmentObject var l10n: LocalizationManager
+    private var lang: AppLanguage { l10n.language }
     @ObservedObject private var launchAgent = LaunchAgentManager.shared
     @ObservedObject private var agentsStore = AgentsStore.shared
     @ObservedObject private var updateManager = UpdateManager.shared
@@ -129,7 +130,7 @@ struct SettingsView: View {
     @State private var showSecretsManager: Bool = false
     @State private var connectionsVerified: Bool = false
 
-    private let sections = ["Allgemein", "Agenten", "Benachrichtigungen", "Berechtigungen", "Datenschutz", "Fähigkeiten", "Gedächtnis", "Persönlichkeit", "Sprache & Audio", "Sicherheit", "Integrationen", "Über"]
+    private let sections = ["Allgemein", "Agenten", "Benachrichtigungen", "Berechtigungen", "Kontakte", "Teams", "Datenschutz", "Fähigkeiten", "Gedächtnis", "Persönlichkeit", "Sprache & Audio", "Sicherheit", "Integrationen", "Über"]
 
     var body: some View {
         HStack(spacing: 0) {
@@ -170,6 +171,8 @@ struct SettingsView: View {
                     case "Agenten":            agentsSettingsSection()
                     case "Benachrichtigungen": notificationsSettingsSection()
                     case "Berechtigungen":     permissionsSection()
+                    case "Kontakte":           contactsSettingsSection()
+                    case "Teams":              teamsSettingsSection()
                     case "Datenschutz":        securitySection()
                     case "Fähigkeiten":        skillsSettingsSection()
                     case "Gedächtnis":         memoryPolicySection(); memorySettingsSection()
@@ -194,6 +197,8 @@ struct SettingsView: View {
         case "Allgemein":          return "gear"
         case "Benachrichtigungen": return "bell.badge.fill"
         case "Berechtigungen":     return "hand.raised.fill"
+        case "Kontakte":           return "person.crop.rectangle.stack.fill"
+        case "Teams":              return "person.3.sequence.fill"
         case "Datenschutz":        return "lock.shield.fill"
         case "Fähigkeiten":       return "sparkles"
         case "Gedächtnis":         return "brain.head.profile"
@@ -225,7 +230,7 @@ struct SettingsView: View {
                 HStack(spacing: 6) {
                     Image(systemName: saveConfirmed == section ? "checkmark.circle.fill" : "square.and.arrow.down")
                         .font(.system(size: 14.5))
-                    Text(saveConfirmed == section ? "Gespeichert" : "Speichern")
+                    Text(saveConfirmed == section ? "Gespeichert" : lang.save)
                         .font(.system(size: 15.5, weight: .medium))
                 }
                 .foregroundColor(saveConfirmed == section ? .koboldEmerald : .primary)
@@ -261,7 +266,7 @@ struct SettingsView: View {
 
                 VStack(alignment: .leading, spacing: 10) {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Name").font(.caption).foregroundColor(.secondary)
+                        Text(lang.nameLabel).font(.caption).foregroundColor(.secondary)
                         TextField("Dein Name", text: $profileName)
                             .textFieldStyle(.roundedBorder)
                     }
@@ -386,7 +391,7 @@ struct SettingsView: View {
                         Text("100").tag(100)
                         Text("200").tag(200)
                     }.pickerStyle(.segmented).frame(maxWidth: 250)
-                    Text("Einträge").font(.caption).foregroundColor(.secondary)
+                    Text(lang.entries).font(.caption).foregroundColor(.secondary)
                 }
 
                 if proactiveEngine.heartbeatLog.isEmpty {
@@ -466,7 +471,7 @@ struct SettingsView: View {
                         if let notes = updateManager.releaseNotes, !notes.isEmpty {
                             Text(notes).font(.system(size: 12.5)).foregroundColor(.secondary).lineLimit(3)
                         }
-                        Button("Installieren") {
+                        Button(lang.installLabel) {
                             Task { await updateManager.downloadAndInstall() }
                         }
                         .buttonStyle(.borderedProminent)
@@ -528,7 +533,7 @@ struct SettingsView: View {
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
-                Button("Öffnen") {
+                Button(lang.open) {
                     let expanded = NSString(string: defaultWorkDir).expandingTildeInPath
                     let url = URL(fileURLWithPath: expanded)
                     try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
@@ -559,7 +564,7 @@ struct SettingsView: View {
             FuturisticBox(icon: "wand.and.stars", title: "Onboarding", accent: .koboldGold) {
                 Text("Wizard erneut zeigen")
                     .font(.caption).foregroundColor(.secondary)
-                Button("Zurücksetzen") {
+                Button(lang.resetItem) {
                     UserDefaults.standard.set(false, forKey: "kobold.hasOnboarded")
                 }
                 .buttonStyle(.bordered)
@@ -621,7 +626,7 @@ struct SettingsView: View {
                         if let progress = toolEnv.pythonDownloadProgress {
                             ProgressView(value: progress).frame(width: 80).tint(.koboldEmerald)
                         } else {
-                            Button("Installieren") {
+                            Button(lang.installLabel) {
                                 Task { try? await toolEnv.downloadPython() }
                             }
                             .buttonStyle(.borderedProminent)
@@ -886,17 +891,17 @@ struct SettingsView: View {
                            icon: "checkmark.shield.fill", color: .koboldEmerald,
                            binding: $permSelfCheck)
                 Divider()
-                permToggle("Benachrichtigungen",
+                permToggle(lang.permNotifications,
                            detail: "Erlaubt dem Agent macOS-Benachrichtigungen zu senden",
                            icon: "bell.fill", color: .indigo,
                            binding: $permNotifications)
                 Divider()
-                permToggle("Kalender & Erinnerungen",
+                permToggle(lang.permCalendar,
                            detail: "Events lesen/erstellen, Erinnerungen verwalten",
                            icon: "calendar", color: .red,
                            binding: $permCalendar)
                 Divider()
-                permToggle("Kontakte",
+                permToggle(lang.permContacts,
                            detail: "Kontakte durchsuchen und lesen",
                            icon: "person.crop.rectangle.stack.fill", color: .blue,
                            binding: $permContacts)
@@ -939,16 +944,16 @@ struct SettingsView: View {
 
         // Apple System Permissions — Request macOS access
         // macOS System-Berechtigungen (zusammengelegt)
-        FuturisticBox(icon: "apple.logo", title: "macOS System-Berechtigungen", accent: .red) {
-                Text("Fordere macOS-Systemzugriff an. Diese Berechtigungen werden vom Betriebssystem verwaltet.")
+        FuturisticBox(icon: "apple.logo", title: lang.macosPerms, accent: .red) {
+                Text(lang.macosPermsDesc)
                     .font(.caption).foregroundColor(.secondary)
 
-                systemPermRow(title: "Kalender & Erinnerungen", icon: "calendar", color: .red,
+                systemPermRow(title: lang.permCalendar, icon: "calendar", color: .red,
                               detail: "Termine erstellen, lesen und Erinnerungen verwalten") {
                     requestCalendarAccess()
                 }
                 Divider()
-                systemPermRow(title: "Kontakte", icon: "person.crop.rectangle.stack.fill", color: .blue,
+                systemPermRow(title: lang.permContacts, icon: "person.crop.rectangle.stack.fill", color: .blue,
                               detail: "Kontakte durchsuchen und lesen") {
                     requestContactsAccess()
                 }
@@ -958,31 +963,31 @@ struct SettingsView: View {
                     requestAppleScriptAccess()
                 }
                 Divider()
-                systemPermRow(title: "Benachrichtigungen", icon: "bell.fill", color: .orange,
+                systemPermRow(title: lang.permNotifications, icon: "bell.fill", color: .orange,
                               detail: "Push-Benachrichtigungen auf deinem Mac") {
                     requestNotificationAccess()
                 }
                 Divider()
-                macOSPermRow("Kamera", icon: "camera.fill",
+                macOSPermRow(lang.permCamera, icon: "camera.fill",
                              detail: "Für Bild-Aufnahmen und Vision") {
                     NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera")!)
                 }
                 Divider()
-                macOSPermRow("Mikrofon", icon: "mic.fill",
+                macOSPermRow(lang.permMicrophone, icon: "mic.fill",
                              detail: "Für Audio-Aufnahmen") {
                     NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!)
                 }
                 Divider()
-                macOSPermRow("Bildschirmaufnahme", icon: "rectangle.dashed",
+                macOSPermRow(lang.permScreenCapture, icon: "rectangle.dashed",
                              detail: "Für Screenshot-Tool") {
                     NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
                 }
                 Divider()
                 HStack {
                     Image(systemName: "gearshape.fill").foregroundColor(.secondary)
-                    Text("Weitere Berechtigungen findest du unter")
+                    Text(lang.morePerms)
                         .font(.caption).foregroundColor(.secondary)
-                    Button("Systemeinstellungen → Datenschutz") {
+                    Button(lang.sysSettingsPrivacy) {
                         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy")!)
                     }
                     .font(.caption).buttonStyle(.link)
@@ -990,40 +995,40 @@ struct SettingsView: View {
         }
 
         // Shell Permissions — 3 Tier Toggles (Blacklist-System)
-        FuturisticBox(icon: "terminal.fill", title: "Shell-Berechtigungen (Blacklist)", accent: .red) {
+        FuturisticBox(icon: "terminal.fill", title: lang.shellPerms, accent: .red) {
                 Text("Tiers bestimmen den Zugriffslevel. Power-Tier erlaubt alles ausser Blacklist (sudo, rm -rf /, etc.).")
                     .font(.caption).foregroundColor(.secondary)
 
                 shellTierCard(
-                    title: "Sicher",
+                    title: lang.shellSafe,
                     icon: "checkmark.shield.fill",
                     color: .koboldEmerald,
                     commands: "ls, pwd, cat, head, tail, wc, echo, whoami, date, uname, sw_vers, uptime, which",
-                    description: "Nur lesende Info-Befehle (Allowlist)",
+                    description: lang.shellSafeDesc,
                     isOn: $shellSafeTier
                 )
                 shellTierCard(
-                    title: "Normal",
+                    title: lang.shellNormal,
                     icon: "gearshape.fill",
                     color: .koboldGold,
                     commands: "+ grep, find, sort, mkdir, cp, mv, touch, git, open, pbcopy",
-                    description: "Dateisystem & Git (Allowlist, keine Pipes)",
+                    description: lang.shellNormalDesc,
                     isOn: $shellNormalTier
                 )
                 shellTierCard(
-                    title: "Power",
+                    title: lang.shellPower,
                     icon: "bolt.fill",
                     color: .red,
                     commands: "Alles erlaubt ausser Blacklist — inkl. Pipes, Redirects, python3, curl, npm, etc.",
-                    description: "Voller Zugriff (nur Blacklist-Schutz)",
+                    description: lang.shellPowerDesc,
                     isOn: $shellPowerTier
                 )
         }
 
         // Custom blacklist + whitelist
         HStack(alignment: .top, spacing: 16) {
-            FuturisticBox(icon: "xmark.shield.fill", title: "Benutzerdefinierte Blacklist", accent: .red) {
-                    Text("Zusätzlich blockierte Befehle (kommagetrennt).")
+            FuturisticBox(icon: "xmark.shield.fill", title: lang.customBlacklist, accent: .red) {
+                    Text(lang.customBlacklistDesc)
                         .font(.caption).foregroundColor(.secondary)
                     TextField("z.B. docker, terraform, ansible", text: Binding(
                         get: { UserDefaults.standard.string(forKey: "kobold.shell.customBlacklist") ?? "" },
@@ -1121,7 +1126,7 @@ struct SettingsView: View {
                 Text(detail).font(.caption).foregroundColor(.secondary)
             }
             Spacer()
-            Button("Öffnen", action: action)
+            Button(lang.open, action: action)
                 .buttonStyle(.bordered)
                 .font(.caption)
         }
@@ -1208,7 +1213,7 @@ struct SettingsView: View {
 
         // Datenpersistenz
         FuturisticBox(icon: "externaldrive.fill", title: "Datenpersistenz", accent: .koboldGold) {
-                Text("Steuere ob Daten (Gedächtnis, Chat-Verlauf, Skills) auch nach dem Löschen der App erhalten bleiben.")
+                Text(lang.dataRetention)
                     .font(.caption).foregroundColor(.secondary)
                 Toggle("Daten über App-Löschung hinaus speichern", isOn: $persistDataAfterDelete)
                     .toggleStyle(.switch)
@@ -1279,12 +1284,12 @@ struct SettingsView: View {
 
                 // Category checkmarks
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 6) {
-                    Toggle("Gedächtnis", isOn: $backupMemories)
+                    Toggle(lang.memTitle, isOn: $backupMemories)
                     Toggle("Secrets & API-Keys", isOn: $backupSecrets)
                     Toggle("Chats & Sessions", isOn: $backupChats)
                     Toggle("Skills", isOn: $backupSkills)
-                    Toggle("Einstellungen", isOn: $backupSettings)
-                    Toggle("Aufgaben", isOn: $backupTasks)
+                    Toggle(lang.settings, isOn: $backupSettings)
+                    Toggle(lang.tasks, isOn: $backupTasks)
                     Toggle("Workflows", isOn: $backupWorkflows)
                 }
                 .toggleStyle(.checkbox)
@@ -1510,8 +1515,8 @@ struct SettingsView: View {
                         Text("Verbose").tag(0)
                         Text("Debug").tag(1)
                         Text("Info").tag(2)
-                        Text("Warnung").tag(3)
-                        Text("Fehler").tag(4)
+                        Text(lang.warningLabel).tag(3)
+                        Text(lang.errorLabel).tag(4)
                     }
                     .pickerStyle(.segmented)
                     .frame(maxWidth: 350)
@@ -1559,7 +1564,7 @@ struct SettingsView: View {
             FuturisticBox(icon: "arrow.counterclockwise.circle.fill", title: "Wiederherstellung", accent: .koboldGold) {
                 Toggle("Daemon automatisch neu starten", isOn: $autoRestartDaemon)
                     .toggleStyle(.switch)
-                Text("Startet den Daemon automatisch bei unerwartetem Abbruch.")
+                Text(lang.autoRestart)
                     .font(.caption2).foregroundColor(.secondary)
 
                 Toggle("Session-Wiederherstellung", isOn: $sessionRecovery)
@@ -2189,7 +2194,7 @@ struct SettingsView: View {
                         }
                         .frame(width: 36, height: 36)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("A2A Berechtigungen").font(.system(size: 17.5, weight: .bold))
+                            Text(lang.a2aPerms).font(.system(size: 17.5, weight: .bold))
                             Text("Lesen & Schreiben pro Ressource").font(.system(size: 13.5)).foregroundColor(.secondary)
                         }
                         Spacer()
@@ -2211,7 +2216,7 @@ struct SettingsView: View {
                     Divider().opacity(0.3)
 
                     VStack(spacing: 8) {
-                        a2aPermRow(label: "Gedächtnis", icon: "brain.fill", color: .cyan,
+                        a2aPermRow(label: lang.memTitle, icon: "brain.fill", color: .cyan,
                                    readBinding: $a2aPermMemoryRead, writeBinding: $a2aPermMemoryWrite)
                         a2aPermRow(label: "Tools", icon: "wrench.fill", color: .koboldGold,
                                    readBinding: $a2aPermToolsRead, writeBinding: $a2aPermToolsWrite)
@@ -2219,9 +2224,9 @@ struct SettingsView: View {
                                    readBinding: $a2aPermFilesRead, writeBinding: $a2aPermFilesWrite)
                         a2aPermRow(label: "Shell", icon: "terminal.fill", color: .red,
                                    readBinding: $a2aPermShellRead, writeBinding: $a2aPermShellWrite)
-                        a2aPermRow(label: "Aufgaben", icon: "checklist", color: .green,
+                        a2aPermRow(label: lang.tasks, icon: "checklist", color: .green,
                                    readBinding: $a2aPermTasksRead, writeBinding: $a2aPermTasksWrite)
-                        a2aPermRow(label: "Einstellungen", icon: "gear", color: .gray,
+                        a2aPermRow(label: lang.settings, icon: "gear", color: .gray,
                                    readBinding: $a2aPermSettingsRead, writeBinding: $a2aPermSettingsWrite)
                         a2aPermRow(label: "Agent", icon: "person.fill", color: .purple,
                                    readBinding: $a2aPermAgentRead, writeBinding: $a2aPermAgentWrite)
@@ -2479,6 +2484,177 @@ struct SettingsView: View {
             Text("in")
                 .font(.system(size: 19.5, weight: .bold, design: .serif))
                 .foregroundColor(.white)
+        }
+    }
+
+    // MARK: - Kontakte Settings
+
+    @AppStorage("kobold.contacts.mode") private var contactsMode: String = "private"
+    @AppStorage("kobold.contacts.showCompanies") private var showCompanies: Bool = true
+    @AppStorage("kobold.contacts.showDeals") private var showDeals: Bool = true
+    @AppStorage("kobold.contacts.showActivities") private var showActivities: Bool = true
+    @AppStorage("kobold.contacts.showPipeline") private var showPipeline: Bool = true
+    @AppStorage("kobold.contacts.autoSync") private var contactsAutoSync: Bool = false
+    @AppStorage("kobold.contacts.googleSync") private var contactsGoogleSync: Bool = false
+    @AppStorage("kobold.contacts.showPhone") private var showPhone: Bool = true
+    @AppStorage("kobold.contacts.showEmail") private var showEmail: Bool = true
+    @AppStorage("kobold.contacts.showAddress") private var showAddress: Bool = true
+    @AppStorage("kobold.contacts.showBirthday") private var showBirthday: Bool = true
+    @AppStorage("kobold.contacts.showSocial") private var showSocial: Bool = false
+    @AppStorage("kobold.contacts.showTags") private var showTags: Bool = true
+    @AppStorage("kobold.contacts.showNotes") private var showNotes: Bool = true
+
+    @ViewBuilder
+    private func contactsSettingsSection() -> some View {
+        sectionTitle(lang.contacts)
+
+        FuturisticBox(icon: "person.crop.rectangle.stack.fill", title: "Nutzungsmodus", accent: .koboldEmerald) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Wähle zwischen privater Kontaktverwaltung und Business-CRM mit erweitertem Funktionsumfang.")
+                    .font(.caption).foregroundColor(.secondary)
+
+                Picker("Modus", selection: $contactsMode) {
+                    Text("Privat").tag("private")
+                    Text("Business CRM").tag("business")
+                }
+                .pickerStyle(.segmented)
+
+                if contactsMode == "private" {
+                    HStack(spacing: 8) {
+                        Image(systemName: "person.fill").foregroundColor(.koboldEmerald)
+                        Text("Einfache Kontaktliste — Name, Telefon, Email, Notizen, Geburtstage").font(.caption).foregroundColor(.secondary)
+                    }
+                } else {
+                    HStack(spacing: 8) {
+                        Image(systemName: "building.2.fill").foregroundColor(.koboldGold)
+                        Text("Volles CRM — Firmen, Deals, Pipeline, Aktivitaeten, Kontakte").font(.caption).foregroundColor(.secondary)
+                    }
+                }
+            }
+        }
+
+        if contactsMode == "business" {
+            FuturisticBox(icon: "eye", title: "Sichtbare Module", accent: .blue) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Toggle("Firmen", isOn: $showCompanies)
+                    Toggle("Deals & Pipeline", isOn: $showDeals)
+                    Toggle("Aktivitaeten", isOn: $showActivities)
+                    Toggle("Pipeline-Board", isOn: $showPipeline)
+                }.font(.system(size: 14))
+            }
+        }
+
+        FuturisticBox(icon: "rectangle.grid.1x2", title: "Sichtbare Felder", accent: .purple) {
+            VStack(alignment: .leading, spacing: 8) {
+                Toggle("Telefonnummern", isOn: $showPhone)
+                Toggle("E-Mail-Adressen", isOn: $showEmail)
+                Toggle("Adressen", isOn: $showAddress)
+                Toggle("Geburtstage", isOn: $showBirthday)
+                Toggle("Social Media", isOn: $showSocial)
+                Toggle("Tags", isOn: $showTags)
+                Toggle("Notizen", isOn: $showNotes)
+            }.font(.system(size: 14))
+        }
+
+        FuturisticBox(icon: "arrow.triangle.2.circlepath", title: "Import & Sync", accent: .orange) {
+            VStack(alignment: .leading, spacing: 12) {
+                Toggle("Apple Kontakte automatisch synchronisieren", isOn: $contactsAutoSync)
+                    .font(.system(size: 14))
+                Text("Importiert neue Apple-Kontakte automatisch beim App-Start.").font(.caption).foregroundColor(.secondary)
+
+                Toggle("Google Kontakte synchronisieren", isOn: $contactsGoogleSync)
+                    .font(.system(size: 14))
+                Text("Erfordert Google-Verbindung unter Integrationen.").font(.caption).foregroundColor(.secondary)
+
+                Toggle("Agent darf Kontakte lesen/schreiben", isOn: $permContacts)
+                    .font(.system(size: 14))
+                Text("Erlaubt dem KI-Agent Zugriff auf deine Kontaktdaten.").font(.caption).foregroundColor(.secondary)
+            }
+        }
+    }
+
+    // MARK: - Teams Settings
+
+    @AppStorage("kobold.teams.defaultRouting") private var teamsDefaultRouting: String = "sequential"
+    @AppStorage("kobold.teams.defaultMaxRounds") private var teamsDefaultMaxRounds: Int = 3
+    @AppStorage("kobold.teams.criticalThinking") private var teamsCriticalThinking: Bool = true
+    @AppStorage("kobold.teams.showSummary") private var teamsShowSummary: Bool = true
+
+    @ViewBuilder
+    private func teamsSettingsSection() -> some View {
+        sectionTitle("Teams")
+
+        FuturisticBox(icon: "person.3.sequence.fill", title: "Team-Konfiguration", accent: .koboldEmerald) {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Teams ermöglichen mehreren KI-Agenten, gemeinsam an Aufgaben zu arbeiten. Jeder Agent hat eine eigene Rolle und Perspektive.")
+                    .font(.caption).foregroundColor(.secondary)
+
+                Divider()
+
+                // Routing-Modus
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Standard Routing-Modus").font(.headline)
+                    Picker("Routing", selection: $teamsDefaultRouting) {
+                        Text("Reihum (Sequential)").tag("sequential")
+                        Text("Leader-Modus").tag("leader")
+                        Text("Round-Robin").tag("round-robin")
+                    }
+                    .pickerStyle(.segmented)
+
+                    Group {
+                        switch teamsDefaultRouting {
+                        case "sequential":
+                            Label("Jeder Agent spricht der Reihe nach. Gut fuer strukturierte Diskussionen.", systemImage: "arrow.right.circle")
+                        case "leader":
+                            Label("Ein Leader-Agent gibt die Richtung vor, die anderen reagieren darauf.", systemImage: "star.circle")
+                        case "round-robin":
+                            Label("Agents diskutieren paarweise abwechselnd. Ideal fuer Debatten.", systemImage: "arrow.triangle.2.circlepath")
+                        default:
+                            EmptyView()
+                        }
+                    }
+                    .font(.caption).foregroundColor(.secondary)
+                }
+
+                Divider()
+
+                // Max Runden
+                HStack {
+                    Text("Max. Diskussionsrunden")
+                    Spacer()
+                    Stepper("\(teamsDefaultMaxRounds)", value: $teamsDefaultMaxRounds, in: 1...10)
+                        .frame(width: 120)
+                }
+
+                Divider()
+
+                // Toggles
+                Toggle("Kritisches Denken aktivieren", isOn: $teamsCriticalThinking)
+                Text("Agents hinterfragen sich gegenseitig und suchen aktiv nach Schwaechen in Argumenten.")
+                    .font(.caption).foregroundColor(.secondary)
+
+                Toggle("Zusammenfassung nach Team-Chat", isOn: $teamsShowSummary)
+                Text("Nach Abschluss einer Team-Diskussion wird automatisch eine Zusammenfassung erstellt.")
+                    .font(.caption).foregroundColor(.secondary)
+            }
+        }
+
+        FuturisticBox(icon: "questionmark.circle", title: "Wie funktionieren Teams?", accent: .koboldGold) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Ein Team besteht aus 2-5 Agenten mit verschiedenen Rollen (z.B. Entwickler, Tester, Designer). Du gibst dem Team eine Aufgabe und beobachtest wie die Agenten diskutieren, Loesungen vorschlagen und gemeinsam ein Ergebnis erarbeiten.")
+                    .font(.caption).foregroundColor(.secondary)
+
+                Divider()
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("Sequential: A spricht, dann B, dann C — fuer klare Reihenfolge", systemImage: "1.circle")
+                        .font(.caption)
+                    Label("Leader: Leader gibt Aufgabe, Team antwortet — fuer gefuehrte Arbeit", systemImage: "2.circle")
+                        .font(.caption)
+                    Label("Round-Robin: A+B diskutieren, dann B+C, dann C+A — fuer tiefe Analyse", systemImage: "3.circle")
+                        .font(.caption)
+                }
+            }
         }
     }
 
@@ -2747,7 +2923,7 @@ struct SettingsView: View {
             FuturisticBox(icon: "arrow.clockwise", title: "Auto-Speichern", accent: .koboldEmerald) {
                     Toggle("Automatisch sichern", isOn: AppStorageToggle("kobold.memory.autosave", default: true))
                         .toggleStyle(.switch)
-                    Text("Speichert bei jeder Aktualisierung.").font(.caption).foregroundColor(.secondary)
+                    Text(lang.savesOnUpdate).font(.caption).foregroundColor(.secondary)
             }
             .frame(maxHeight: .infinity, alignment: .top)
         }
@@ -2806,12 +2982,12 @@ struct SettingsView: View {
                         VStack(alignment: .leading) {
                             Toggle("Fakten extrahieren", isOn: $memoryAutoFragments)
                                 .toggleStyle(.switch)
-                            Text("Speichert wichtige Fakten aus Gesprächen").font(.caption2).foregroundColor(.secondary)
+                            Text(lang.savesImportantFacts).font(.caption2).foregroundColor(.secondary)
                         }
                         VStack(alignment: .leading) {
                             Toggle("Lösungen merken", isOn: $memoryAutoSolutions)
                                 .toggleStyle(.switch)
-                            Text("Speichert Problem/Lösung-Paare").font(.caption2).foregroundColor(.secondary)
+                            Text(lang.savesProblemSolution).font(.caption2).foregroundColor(.secondary)
                         }
                     }
                     Toggle("Intelligente Konsolidierung", isOn: $memoryConsolidation)
@@ -2856,7 +3032,7 @@ struct SettingsView: View {
                     Button("Exportieren") { exportMemory() }.buttonStyle(.bordered)
                     Button("Importieren") { importMemory() }.buttonStyle(.bordered)
                     Spacer()
-                    Button("Zurücksetzen") { resetMemory() }.buttonStyle(.bordered).foregroundColor(.red)
+                    Button(lang.resetItem) { resetMemory() }.buttonStyle(.bordered).foregroundColor(.red)
                 }
         }
 
@@ -2992,8 +3168,8 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 12) {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Port").font(.system(size: 12.5, weight: .medium)).foregroundColor(.secondary)
-                            TextField("Port", value: $webAppPort, format: .number.grouping(.never))
+                            Text(lang.portLabel).font(.system(size: 12.5, weight: .medium)).foregroundColor(.secondary)
+                            TextField(lang.portLabel, value: $webAppPort, format: .number.grouping(.never))
                                 .textFieldStyle(.roundedBorder)
                                 .frame(width: 70)
                         }
@@ -3004,8 +3180,8 @@ struct SettingsView: View {
                         }
                     }
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Passwort").font(.system(size: 12.5, weight: .medium)).foregroundColor(.secondary)
-                        SecureField("Passwort", text: $webAppPassword)
+                        Text(lang.passwordLabel).font(.system(size: 12.5, weight: .medium)).foregroundColor(.secondary)
+                        SecureField(lang.passwordLabel, text: $webAppPassword)
                             .textFieldStyle(.roundedBorder)
                     }
                 }
@@ -3017,7 +3193,7 @@ struct SettingsView: View {
 
                 HStack(spacing: 8) {
                     if webAppEnabled && !webAppPassword.isEmpty {
-                        Button(webAppRunning ? "Stoppen" : "Starten") {
+                        Button(webAppRunning ? lang.stopAction : lang.start) {
                             if webAppRunning {
                                 WebAppServer.shared.stop()
                                 webAppRunning = false
@@ -3042,7 +3218,7 @@ struct SettingsView: View {
                     }
 
                     if webAppRunning {
-                        Button("Öffnen") {
+                        Button(lang.open) {
                             if let url = URL(string: "http://localhost:\(webAppPort)") {
                                 NSWorkspace.shared.open(url)
                             }
@@ -3092,7 +3268,7 @@ struct SettingsView: View {
                     if tunnelRunning && !tunnelURL.isEmpty {
                         HStack(spacing: 5) {
                             Circle().fill(Color.koboldEmerald).frame(width: 7, height: 7)
-                            Text("Verbunden").font(.system(size: 12.5, weight: .semibold)).foregroundColor(.koboldEmerald)
+                            Text(lang.connected).font(.system(size: 12.5, weight: .semibold)).foregroundColor(.koboldEmerald)
                         }
                     }
                 }
@@ -3130,7 +3306,7 @@ struct SettingsView: View {
                     .toggleStyle(.switch).controlSize(.small)
 
                     HStack(spacing: 8) {
-                        Button(tunnelRunning ? "Stoppen" : "Starten") {
+                        Button(tunnelRunning ? lang.stopAction : lang.start) {
                             if tunnelRunning {
                                 WebAppServer.shared.stopTunnel()
                                 tunnelRunning = false
@@ -3164,13 +3340,13 @@ struct SettingsView: View {
                             }
 
                             HStack(spacing: 6) {
-                                Button("Kopieren") {
+                                Button(lang.copy) {
                                     NSPasteboard.general.clearContents()
                                     NSPasteboard.general.setString(tunnelURL, forType: .string)
                                 }
                                 .buttonStyle(.bordered).controlSize(.small)
 
-                                Button("Öffnen") {
+                                Button(lang.open) {
                                     if let url = URL(string: tunnelURL) {
                                         NSWorkspace.shared.open(url)
                                     }
@@ -3258,7 +3434,7 @@ struct SettingsView: View {
                                         .font(.system(size: 12, design: .monospaced))
                                         .foregroundColor(.blue)
                                         .textSelection(.enabled)
-                                    Button("Kopieren") {
+                                    Button(lang.copy) {
                                         NSPasteboard.general.clearContents()
                                         NSPasteboard.general.setString(cfTunnelUrl, forType: .string)
                                     }
@@ -3428,7 +3604,7 @@ struct SettingsView: View {
                             GoogleOAuth.shared.signIn()
                         }
                         .buttonStyle(.bordered).controlSize(.small)
-                        Button("Abmelden") {
+                        Button(lang.signOut) {
                             Task {
                                 await GoogleOAuth.shared.signOut()
                                 googleConnected = false
@@ -3585,7 +3761,7 @@ struct SettingsView: View {
                                 .font(.system(size: 14.5, weight: .medium))
                         }
                     }
-                    Button("Abmelden") {
+                    Button(lang.signOut) {
                         Task {
                             await SoundCloudOAuth.shared.signOut()
                             soundCloudConnected = false
@@ -3783,7 +3959,7 @@ struct SettingsView: View {
                     if isConnected {
                         HStack(spacing: 5) {
                             Circle().fill(Color.koboldEmerald).frame(width: 7, height: 7)
-                            Text("Verbunden").font(.system(size: 12.5, weight: .semibold)).foregroundColor(.koboldEmerald)
+                            Text(lang.connected).font(.system(size: 12.5, weight: .semibold)).foregroundColor(.koboldEmerald)
                         }
                     }
                 }
@@ -3864,7 +4040,7 @@ struct SettingsView: View {
         // Systemsounds
         HStack(alignment: .top, spacing: 16) {
             FuturisticBox(icon: "speaker.wave.2.fill", title: "Systemsounds", accent: .koboldGold) {
-                    Text("Abspielen von Sound-Effekten bei Tool-Ausführung, Fehlern und Abschluss.")
+                    Text(lang.soundEffectsDesc)
                         .font(.caption).foregroundColor(.secondary)
                     Toggle("Sounds aktivieren", isOn: $soundsEnabled)
                         .toggleStyle(.switch)
@@ -4490,7 +4666,7 @@ struct SettingsView: View {
 
     @ViewBuilder
     private func agentsSettingsSection() -> some View {
-        sectionTitle("Agenten")
+        sectionTitle(lang.agents)
         AgentsView(viewModel: viewModel)
             .frame(minHeight: 600)
     }
@@ -4622,7 +4798,7 @@ struct SettingsView: View {
                     .textFieldStyle(.roundedBorder)
                     .font(.system(size: 14.5))
                     .onSubmit { addNewGoal() }
-                Button("Hinzufügen") { addNewGoal() }
+                Button(lang.addItem) { addNewGoal() }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
                     .disabled(newGoalText.trimmingCharacters(in: .whitespaces).isEmpty)
@@ -4639,7 +4815,7 @@ struct SettingsView: View {
         sectionTitle("Autonomie & Proaktivität")
 
         FuturisticBox(icon: "lightbulb.fill", title: "Proaktive Vorschläge", accent: .koboldGold) {
-            Text("Der Agent analysiert regelmäßig den Kontext und schlägt passende Aktionen vor — Morgen-Briefings, Fehlerdiagnosen, Systemchecks.")
+            Text(lang.proactiveDesc)
                 .font(.caption).foregroundColor(.secondary)
 
             Toggle("Proaktive Vorschläge aktivieren", isOn: $proactiveEngine.isEnabled)
@@ -4647,7 +4823,7 @@ struct SettingsView: View {
 
             Toggle("Agent darf eigenständig anschreiben", isOn: AppStorageToggle("kobold.proactive.allowInitiate", default: false))
                 .toggleStyle(.switch).tint(.koboldGold)
-            Text("Erlaubt dem Agent, von sich aus Nachrichten zu senden — z.B. Erinnerungen, Warnungen oder Hinweise.")
+            Text(lang.proactiveNotifDesc)
                 .font(.caption2).foregroundColor(.secondary)
 
             HStack {
@@ -4728,7 +4904,48 @@ struct SettingsView: View {
                 Text("Tipp: Hier kannst du dem Agent detailliert sagen, was er sich merken soll und was nicht. Diese Regeln gelten zusätzlich zur gewählten Memory Policy.")
                     .font(.caption2).foregroundColor(.secondary)
         }
+
+        FuturisticBox(icon: "cylinder.split.1x2", title: "Qdrant Vektordatenbank", accent: .purple) {
+            VStack(alignment: .leading, spacing: 10) {
+                Toggle("Qdrant aktivieren", isOn: Binding(
+                    get: { UserDefaults.standard.bool(forKey: "kobold.qdrant.enabled") },
+                    set: { UserDefaults.standard.set($0, forKey: "kobold.qdrant.enabled") }
+                ))
+                .font(.system(size: 14))
+
+                Text("Semantische Suche via HNSW-Index — deutlich schneller bei vielen Erinnerungen (>1000). Qdrant muss separat installiert und gestartet sein.")
+                    .font(.caption).foregroundColor(.secondary)
+
+                HStack(spacing: 8) {
+                    Text("URL:").font(.system(size: 13, weight: .medium))
+                    TextField("http://localhost:6333", text: Binding(
+                        get: { UserDefaults.standard.string(forKey: "kobold.qdrant.url") ?? "http://localhost:6333" },
+                        set: { UserDefaults.standard.set($0, forKey: "kobold.qdrant.url") }
+                    ))
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 13, design: .monospaced))
+                }
+
+                HStack(spacing: 12) {
+                    Button(lang.testConnection) {
+                        Task {
+                            let ok = await QdrantService.shared.checkHealth()
+                            qdrantStatus = ok ? lang.connected : "Nicht erreichbar"
+                        }
+                    }
+                    .font(.system(size: 13)).buttonStyle(.bordered)
+
+                    if !qdrantStatus.isEmpty {
+                        Label(qdrantStatus, systemImage: qdrantStatus == lang.connected ? "checkmark.circle.fill" : "xmark.circle.fill")
+                            .font(.caption)
+                            .foregroundColor(qdrantStatus == lang.connected ? .green : .red)
+                    }
+                }
+            }
+        }
     }
+
+    @State private var qdrantStatus: String = ""
 
     // MARK: - Proaktive Einstellungen
 
@@ -4899,10 +5116,11 @@ private extension Int {
 
 struct IdleTasksSettingsView: View {
     @ObservedObject private var proactiveEngine = ProactiveEngine.shared
+    @EnvironmentObject var l10n: LocalizationManager
 
     var body: some View {
         FuturisticBox(icon: "moon.zzz.fill", title: "Idle Aufgaben", accent: .indigo) {
-            Text("Aufgaben die der Agent automatisch erledigt, wenn du den Computer nicht benutzt.")
+            Text(l10n.language.idleTasksSettingsDesc)
                 .font(.caption).foregroundColor(.secondary)
 
             // Hauptschalter
@@ -5005,7 +5223,7 @@ struct IdleTasksSettingsView: View {
 
                     // Berechtigungen (rechts)
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("Berechtigungen").font(.caption2.bold()).foregroundColor(.secondary)
+                        Text(l10n.language.permissions).font(.caption2.bold()).foregroundColor(.secondary)
                         HStack(spacing: 14) {
                             Toggle("Shell", isOn: $proactiveEngine.idleAllowShell)
                                 .toggleStyle(.switch).tint(.orange)

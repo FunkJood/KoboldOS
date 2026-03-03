@@ -1174,7 +1174,7 @@ struct SubAgentSpawnBubble: View {
     var body: some View {
         HStack(spacing: 6) {
             Text(profileEmoji).font(.system(size: 12.5))
-            Text("Sub-Agent").font(.system(size: 12.5, weight: .semibold)).foregroundColor(.cyan)
+            Text(LocalizationManager.shared.language.subAgent).font(.system(size: 12.5, weight: .semibold)).foregroundColor(.cyan)
             Text(profile.capitalized).font(.system(size: 12.5, weight: .bold)).foregroundColor(.cyan)
             Text("gestartet").font(.system(size: 12.5)).foregroundColor(.secondary)
         }
@@ -1323,7 +1323,7 @@ struct ImageBubble: View {
                    let img = NSImage(data: data) {
                     await MainActor.run { loadedImage = img }
                 } else {
-                    await MainActor.run { loadError = "URL konnte nicht geladen werden: \(path)" }
+                    await MainActor.run { loadError = "\(LocalizationManager.shared.language.urlLoadError) \(path)" }
                 }
             }
             return
@@ -1431,7 +1431,7 @@ struct ThinkingPanelBubble: View {
                         ScrollView {
                             LazyVStack(alignment: .leading, spacing: 2) {
                                 if hiddenCount > 0 {
-                                    Text("\(hiddenCount) ältere Schritte")
+                                    Text("\(hiddenCount) \(LocalizationManager.shared.language.olderSteps)")
                                         .font(.caption).foregroundColor(.secondary)
                                         .padding(.leading, 8).padding(.top, 4)
                                 }
@@ -1651,7 +1651,7 @@ struct NotificationPopover: View {
                 Spacer()
                 if !viewModel.notifications.isEmpty {
                     Button(action: { viewModel.clearNotifications() }) {
-                        Text("Alle löschen")
+                        Text(LocalizationManager.shared.language.deleteAll)
                             .font(.system(size: 13.5))
                             .foregroundColor(.secondary)
                     }
@@ -1874,7 +1874,7 @@ struct AgentChecklistOverlay: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Image(systemName: "checklist").font(.system(size: 14.5, weight: .semibold)).foregroundColor(.koboldEmerald)
-                Text("Fortschritt").font(.system(size: 14.5, weight: .semibold))
+                Text(LocalizationManager.shared.language.progressLabel).font(.system(size: 14.5, weight: .semibold))
                 Spacer()
                 Text("\(completedCount)/\(items.count)")
                     .font(.system(size: 13.5, weight: .bold, design: .monospaced))
@@ -1936,7 +1936,7 @@ struct SubAgentActivityBanner: View {
                     Image(systemName: "person.2.fill")
                         .font(.system(size: 12.5))
                         .foregroundColor(.cyan)
-                    Text("Sub-Agent aktiv: \(agent.toolName.capitalized)")
+                    Text("\(LocalizationManager.shared.language.subAgentActive) \(agent.toolName.capitalized)")
                         .font(.system(size: 13.5, weight: .semibold))
                         .foregroundColor(.cyan)
                     Spacer()
@@ -2267,7 +2267,7 @@ struct CallMonitorOverlay: View {
                     )
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Ausgehender Anruf")
+                    Text(LocalizationManager.shared.language.outgoingCall)
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundColor(.white)
                     Text("\(toNumber) — \(statusLabel)")
@@ -2314,7 +2314,7 @@ struct CallMonitorOverlay: View {
                                 ProgressView()
                                     .scaleEffect(0.7)
                                     .progressViewStyle(.circular)
-                                Text("Warte auf Verbindung...")
+                                Text(LocalizationManager.shared.language.waitingConnection)
                                     .font(.system(size: 12))
                                     .foregroundColor(.white.opacity(0.4))
                             }
@@ -2358,7 +2358,7 @@ struct CallMonitorOverlay: View {
                 HStack {
                     Image(systemName: callStatus == "done" ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
                         .foregroundColor(callStatus == "done" ? .green : .orange)
-                    Text(callStatus == "done" ? "Anruf beendet" : callStatus == "failed" ? "Anruf fehlgeschlagen" : "Timeout")
+                    Text(callStatus == "done" ? LocalizationManager.shared.language.callEnded : callStatus == "failed" ? LocalizationManager.shared.language.callFailed : "Timeout")
                         .font(.system(size: 12, weight: .medium))
                         .foregroundColor(.white.opacity(0.8))
                     Spacer()
@@ -2397,7 +2397,7 @@ struct CallMonitorOverlay: View {
     private var statusLabel: String {
         switch callStatus {
         case "done": return "Beendet"
-        case "failed": return "Fehlgeschlagen"
+        case "failed": return LocalizationManager.shared.language.failedLabel
         case "timeout": return "Timeout"
         case "in-progress": return "Aktiv"
         case "initiated": return "Verbindung..."
@@ -2423,7 +2423,7 @@ struct CallMonitorOverlay: View {
                 let msg = trimmed.replacingOccurrences(of: "**Gesprächspartner:**", with: "").trimmingCharacters(in: .whitespaces)
                 return TranscriptEntry(speaker: "Gesprächspartner", message: msg, isAgent: false)
             } else {
-                return TranscriptEntry(speaker: "System", message: trimmed, isAgent: true)
+                return TranscriptEntry(speaker: LocalizationManager.shared.language.systemLabel, message: trimmed, isAgent: true)
             }
         }
     }
@@ -2468,7 +2468,7 @@ struct ToolApprovalOverlay: View {
                     )
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Tool-Bestätigung erforderlich")
+                    Text(LocalizationManager.shared.language.toolConfirmRequired)
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundColor(.white)
                     Text("\(request.toolName) — Risiko: \(riskLabel)")
@@ -2607,5 +2607,42 @@ extension String {
             start = end
         }
         return chunks
+    }
+}
+
+// MARK: - Safe Array Subscript
+
+extension Array {
+    subscript(safe index: Int) -> Element? {
+        indices.contains(index) ? self[index] : nil
+    }
+}
+
+// MARK: - InfoTooltip
+
+/// Transparentes "?" Icon mit Tooltip-Text — für Feld-Erklärungen im Inspector
+struct InfoTooltip: View {
+    let text: String
+
+    var body: some View {
+        Image(systemName: "questionmark.circle")
+            .font(.system(size: 12))
+            .foregroundColor(.secondary.opacity(0.5))
+            .help(text)
+    }
+}
+
+/// Label + InfoTooltip kombiniert — spart Boilerplate im Inspector
+struct LabelWithTooltip: View {
+    let label: String
+    let tooltip: String
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Text(label)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(.secondary)
+            InfoTooltip(text: tooltip)
+        }
     }
 }

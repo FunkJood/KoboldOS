@@ -269,7 +269,6 @@ public actor SkillLoader {
             - **coder**: Code schreiben, Debugging, Architektur
             - **web**: Recherche, Web-Suche, APIs, Reports
             - **reviewer**: Code-Review, Qualitätsprüfung
-            - **utility**: System-Aufgaben, Dateien, Shell
             - **general**: Allgemeine Aufgaben (Standard)
 
             Tipps:

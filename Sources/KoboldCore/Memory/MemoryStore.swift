@@ -21,7 +21,8 @@ public struct SnapshotInfo: Sendable, Codable {
 public struct MemoryEntry: Sendable, Codable {
     public let id: String
     public var text: String
-    public var memoryType: String   // "kurzzeit", "langzeit", "wissen", "lösungen", "fehler"
+    public var memoryType: String   // Primary type (backward-compat) — "kurzzeit", "langzeit", "wissen", "lösungen", "fehler", "regeln", "verhalten"
+    public var memoryTypes: [String] // Multi-category support — all assigned types
     public let timestamp: Date
     public var tags: [String]
 
@@ -37,6 +38,7 @@ public struct MemoryEntry: Sendable, Codable {
         id: String = UUID().uuidString,
         text: String,
         memoryType: String = "kurzzeit",
+        memoryTypes: [String]? = nil,
         timestamp: Date = Date(),
         tags: [String] = [],
         valence: Float = 0.0,
@@ -46,7 +48,8 @@ public struct MemoryEntry: Sendable, Codable {
     ) {
         self.id = id
         self.text = text
-        self.memoryType = memoryType
+        self.memoryTypes = memoryTypes ?? [memoryType]
+        self.memoryType = self.memoryTypes.first ?? memoryType
         self.timestamp = timestamp
         self.tags = tags
         self.valence = valence
@@ -57,7 +60,7 @@ public struct MemoryEntry: Sendable, Codable {
 
     // Backward-compatible decoding (old entries without new fields)
     enum CodingKeys: String, CodingKey {
-        case id, text, memoryType, timestamp, tags
+        case id, text, memoryType, memoryTypes, timestamp, tags
         case valence, arousal, linkedEntryId, source
     }
 
@@ -65,7 +68,9 @@ public struct MemoryEntry: Sendable, Codable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(String.self, forKey: .id)
         text = try container.decode(String.self, forKey: .text)
-        memoryType = try container.decodeIfPresent(String.self, forKey: .memoryType) ?? "kurzzeit"
+        let primaryType = try container.decodeIfPresent(String.self, forKey: .memoryType) ?? "kurzzeit"
+        memoryTypes = try container.decodeIfPresent([String].self, forKey: .memoryTypes) ?? [primaryType]
+        memoryType = memoryTypes.first ?? primaryType
         timestamp = try container.decode(Date.self, forKey: .timestamp)
         tags = try container.decodeIfPresent([String].self, forKey: .tags) ?? []
         valence = try container.decodeIfPresent(Float.self, forKey: .valence) ?? 0.0
@@ -149,6 +154,7 @@ public actor MemoryStore {
     public func add(
         text: String,
         memoryType: String = "kurzzeit",
+        memoryTypes: [String]? = nil,
         tags: [String] = [],
         valence: Float = 0.0,
         arousal: Float = 0.5,
@@ -157,7 +163,8 @@ public actor MemoryStore {
     ) async throws -> MemoryEntry {
         ensureLoaded()
         let entry = MemoryEntry(
-            text: text, memoryType: memoryType, tags: tags,
+            text: text, memoryType: memoryType, memoryTypes: memoryTypes,
+            tags: tags,
             valence: valence, arousal: arousal,
             linkedEntryId: linkedEntryId, source: source
         )
@@ -169,7 +176,8 @@ public actor MemoryStore {
             if let emb = await EmbeddingRunner.shared.embed(capturedEntry.text) {
                 await EmbeddingStore.shared.upsert(
                     id: capturedEntry.id, text: capturedEntry.text,
-                    embedding: emb, memoryType: capturedEntry.memoryType, tags: capturedEntry.tags
+                    embedding: emb, memoryType: capturedEntry.memoryType,
+                    memoryTypes: capturedEntry.memoryTypes, tags: capturedEntry.tags
                 )
             }
         }
@@ -178,11 +186,17 @@ public actor MemoryStore {
 
     // MARK: - Update
 
-    public func update(id: String, text: String? = nil, memoryType: String? = nil, tags: [String]? = nil) async throws -> MemoryEntry? {
+    public func update(id: String, text: String? = nil, memoryType: String? = nil, memoryTypes: [String]? = nil, tags: [String]? = nil) async throws -> MemoryEntry? {
         ensureLoaded()
         guard let index = localEntries.firstIndex(where: { $0.id == id }) else { return nil }
         if let text = text { localEntries[index].text = text }
-        if let memoryType = memoryType { localEntries[index].memoryType = memoryType }
+        if let memoryTypes = memoryTypes, !memoryTypes.isEmpty {
+            localEntries[index].memoryTypes = memoryTypes
+            localEntries[index].memoryType = memoryTypes.first ?? localEntries[index].memoryType
+        } else if let memoryType = memoryType {
+            localEntries[index].memoryType = memoryType
+            localEntries[index].memoryTypes = [memoryType]
+        }
         if let tags = tags { localEntries[index].tags = tags }
         try saveEntry(localEntries[index])
         // Re-embed updated entry
@@ -191,7 +205,8 @@ public actor MemoryStore {
             if let emb = await EmbeddingRunner.shared.embed(capturedEntry.text) {
                 await EmbeddingStore.shared.upsert(
                     id: capturedEntry.id, text: capturedEntry.text,
-                    embedding: emb, memoryType: capturedEntry.memoryType, tags: capturedEntry.tags
+                    embedding: emb, memoryType: capturedEntry.memoryType,
+                    memoryTypes: capturedEntry.memoryTypes, tags: capturedEntry.tags
                 )
             }
         }

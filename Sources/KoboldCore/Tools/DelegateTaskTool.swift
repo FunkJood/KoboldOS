@@ -73,7 +73,6 @@ enum SubAgentProfile {
         case "researcher", "web":    return .web          // Websuche, Analyse, Informationen sammeln
         case "instructor":           return .general       // Legacy-Alias für general
         case "reviewer":             return .coder        // Code-Review mit Coder-Tools
-        case "utility":              return .general      // Allgemeine Aufgaben (Shell, Dateien, Rechner)
         default:                     return .general
         }
     }
@@ -100,8 +99,8 @@ public struct DelegateTaskTool: Tool, Sendable {
             properties: [
                 "profile": ToolSchemaProperty(
                     type: "string",
-                    description: "Agent-Profil: coder (Code/Dateien), web (Recherche/APIs/Browser), reviewer (Code-Review), utility (Shell/Rechner). Standard: general",
-                    enumValues: ["coder", "web", "reviewer", "utility", "general"]
+                    description: "Agent-Profil: coder (Code/Dateien), web (Recherche/APIs/Browser), reviewer (Code-Review). Standard: general",
+                    enumValues: ["coder", "web", "reviewer", "general"]
                 ),
                 "message": ToolSchemaProperty(
                     type: "string",

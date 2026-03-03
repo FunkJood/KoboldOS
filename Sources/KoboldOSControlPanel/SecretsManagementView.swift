@@ -4,6 +4,8 @@ import KoboldCore
 // MARK: - SecretsManagementView (Keychain-backed)
 
 struct SecretsManagementView: View {
+    @EnvironmentObject var l10n: LocalizationManager
+    private var lang: AppLanguage { l10n.language }
     @State private var secrets: [SecretEntry] = []
     @State private var newKeyName: String = ""
     @State private var newKeyValue: String = ""
@@ -48,6 +50,16 @@ struct SecretsManagementView: View {
             case .other:      return .secondary
             }
         }
+
+        func localizedName(_ lang: AppLanguage) -> String {
+            switch self {
+            case .apiKey:     return lang.catApiKey
+            case .password:   return lang.catPassword
+            case .token:      return lang.catToken
+            case .credential: return lang.catCredential
+            case .other:      return lang.catOther
+            }
+        }
     }
 
     var filteredSecrets: [SecretEntry] {
@@ -60,15 +72,15 @@ struct SecretsManagementView: View {
             // Header
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Passwort-Manager").font(.title2.bold())
-                    Text("Sichere Keychain-Verwaltung").font(.caption).foregroundColor(.secondary)
+                    Text(lang.passwordManager).font(.title2.bold())
+                    Text(l10n.language.secureKeychain).font(.caption).foregroundColor(.secondary)
                 }
                 Spacer()
 
                 // Search
                 HStack(spacing: 6) {
                     Image(systemName: "magnifyingglass").foregroundColor(.secondary).font(.system(size: 14.5))
-                    TextField("Suchen...", text: $searchText)
+                    TextField(lang.searchDots, text: $searchText)
                         .textFieldStyle(.plain)
                         .font(.system(size: 14.5))
                 }
@@ -76,7 +88,7 @@ struct SecretsManagementView: View {
                 .background(RoundedRectangle(cornerRadius: 8).fill(Color.koboldSurface))
                 .frame(width: 180)
 
-                GlassButton(title: "Hinzufügen", icon: "plus", isPrimary: true) {
+                GlassButton(title: lang.addItem, icon: "plus", isPrimary: true) {
                     showingAddSheet = true
                 }
             }
@@ -88,7 +100,7 @@ struct SecretsManagementView: View {
                 VStack {
                     Spacer()
                     ProgressView().scaleEffect(1.2)
-                    Text("Lade Keychain...").font(.caption).foregroundColor(.secondary).padding(.top, 8)
+                    Text(lang.loadingKeychain).font(.caption).foregroundColor(.secondary).padding(.top, 8)
                     Spacer()
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -120,9 +132,9 @@ struct SecretsManagementView: View {
             HStack(spacing: 16) {
                 Label("macOS Keychain", systemImage: "lock.shield.fill")
                     .font(.system(size: 12.5)).foregroundColor(.secondary)
-                Label("Verschlüsselt", systemImage: "checkmark.seal.fill")
+                Label(l10n.language.encrypted, systemImage: "checkmark.seal.fill")
                     .font(.system(size: 12.5)).foregroundColor(.secondary)
-                Label("\(secrets.count) Einträge", systemImage: "key.fill")
+                Label("\(secrets.count) \(l10n.language.entries)", systemImage: "key.fill")
                     .font(.system(size: 12.5)).foregroundColor(.secondary)
                 Spacer()
             }
@@ -144,12 +156,12 @@ struct SecretsManagementView: View {
             Image(systemName: "lock.shield.fill")
                 .font(.system(size: 49))
                 .foregroundColor(.secondary.opacity(0.4))
-            Text("Keine Secrets gespeichert")
+            Text(lang.noSecretsStored)
                 .font(.title3).foregroundColor(.secondary)
-            Text("API-Keys, Passwörter und Tokens werden sicher\nim macOS Keychain gespeichert.")
+            Text(lang.secretsEmptyDesc)
                 .font(.caption).foregroundColor(.secondary.opacity(0.7))
                 .multilineTextAlignment(.center)
-            GlassButton(title: "Erstes Secret anlegen", icon: "plus") {
+            GlassButton(title: lang.createFirstSecret, icon: "plus") {
                 showingAddSheet = true
             }
             Spacer()
@@ -175,7 +187,7 @@ struct SecretsManagementView: View {
                     HStack(spacing: 6) {
                         Text(secret.name)
                             .font(.system(size: 15.5, weight: .semibold))
-                        Text(secret.category.rawValue)
+                        Text(secret.category.localizedName(lang))
                             .font(.system(size: 11.5, weight: .medium))
                             .foregroundColor(secret.category.color)
                             .padding(.horizontal, 5).padding(.vertical, 2)
@@ -208,7 +220,7 @@ struct SecretsManagementView: View {
                             .cornerRadius(6)
                     }
                     .buttonStyle(.plain)
-                    .help("Anzeigen/Verbergen")
+                    .help(lang.showHide)
 
                     // Copy
                     Button(action: { copySecret(secret) }) {
@@ -220,7 +232,7 @@ struct SecretsManagementView: View {
                             .cornerRadius(6)
                     }
                     .buttonStyle(.plain)
-                    .help("In Zwischenablage kopieren")
+                    .help(lang.copyToClipboard)
 
                     // Delete
                     Button(action: { deleteSecret(secret) }) {
@@ -232,7 +244,7 @@ struct SecretsManagementView: View {
                             .cornerRadius(6)
                     }
                     .buttonStyle(.plain)
-                    .help("Löschen")
+                    .help(lang.delete)
                 }
             }
         }
@@ -244,7 +256,7 @@ struct SecretsManagementView: View {
         VStack(spacing: 0) {
             // Sheet header
             HStack {
-                Text("Neues Secret").font(.headline)
+                Text(lang.newSecret).font(.headline)
                 Spacer()
                 Button(action: { showingAddSheet = false }) {
                     Image(systemName: "xmark.circle.fill").foregroundColor(.secondary)
@@ -258,13 +270,13 @@ struct SecretsManagementView: View {
             VStack(alignment: .leading, spacing: 16) {
                 // Category picker
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Kategorie").font(.caption.weight(.semibold)).foregroundColor(.secondary)
+                    Text(lang.categoryLabel).font(.caption.weight(.semibold)).foregroundColor(.secondary)
                     HStack(spacing: 8) {
                         ForEach(SecretCategory.allCases, id: \.self) { cat in
                             Button(action: { selectedCategory = cat }) {
                                 HStack(spacing: 4) {
                                     Image(systemName: cat.icon).font(.system(size: 13.5))
-                                    Text(cat.rawValue).font(.system(size: 13.5, weight: .medium))
+                                    Text(cat.localizedName(lang)).font(.system(size: 13.5, weight: .medium))
                                 }
                                 .foregroundColor(selectedCategory == cat ? .white : cat.color)
                                 .padding(.horizontal, 10).padding(.vertical, 6)
@@ -281,14 +293,14 @@ struct SecretsManagementView: View {
 
                 // Name field
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Name / Bezeichnung").font(.caption.weight(.semibold)).foregroundColor(.secondary)
+                    Text(lang.nameDesignation).font(.caption.weight(.semibold)).foregroundColor(.secondary)
                     GlassTextField(text: $newKeyName, placeholder: "z.B. OpenAI API Key")
                 }
 
                 // Value field
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Wert / Schlüssel").font(.caption.weight(.semibold)).foregroundColor(.secondary)
-                    SecureField("Geheimer Wert eingeben...", text: $newKeyValue)
+                    Text(lang.valueKey).font(.caption.weight(.semibold)).foregroundColor(.secondary)
+                    SecureField(lang.enterSecretValue, text: $newKeyValue)
                         .textFieldStyle(.plain)
                         .padding(.horizontal, 12).padding(.vertical, 9)
                         .background(
@@ -300,7 +312,7 @@ struct SecretsManagementView: View {
 
                 // Common presets
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Schnell-Vorlagen").font(.caption.weight(.semibold)).foregroundColor(.secondary)
+                    Text(lang.quickTemplates).font(.caption.weight(.semibold)).foregroundColor(.secondary)
                     HStack(spacing: 6) {
                         presetButton("OpenAI", name: "openai_api_key", category: .apiKey)
                         presetButton("Anthropic", name: "anthropic_api_key", category: .apiKey)
@@ -315,10 +327,10 @@ struct SecretsManagementView: View {
 
             // Actions
             HStack {
-                Button("Abbrechen") { showingAddSheet = false }
+                Button(lang.cancel) { showingAddSheet = false }
                     .keyboardShortcut(.escape, modifiers: [])
                 Spacer()
-                GlassButton(title: "Speichern", icon: "lock.fill", isPrimary: true, isDisabled: newKeyName.isEmpty || newKeyValue.isEmpty) {
+                GlassButton(title: l10n.language.save, icon: "lock.fill", isPrimary: true, isDisabled: newKeyName.isEmpty || newKeyValue.isEmpty) {
                     saveNewSecret()
                 }
             }
@@ -387,7 +399,7 @@ struct SecretsManagementView: View {
                 newKeyName = ""
                 newKeyValue = ""
                 showingAddSheet = false
-                statusMessage = "'\(name)' gespeichert"
+                statusMessage = "'\(name)' \(lang.secretSaved)"
                 clearStatusAfterDelay()
             }
         }
@@ -399,7 +411,7 @@ struct SecretsManagementView: View {
             await MainActor.run {
                 secrets.removeAll { $0.id == secret.id }
                 showValue.remove(secret.id)
-                statusMessage = "'\(secret.name)' gelöscht"
+                statusMessage = "'\(secret.name)' \(lang.secretDeleted)"
                 clearStatusAfterDelay()
             }
         }
@@ -417,7 +429,7 @@ struct SecretsManagementView: View {
             await MainActor.run {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(value, forType: .string)
-                statusMessage = "'\(secret.name)' kopiert (wird in 30s gelöscht)"
+                statusMessage = "'\(secret.name)' \(lang.secretCopied)"
                 DispatchQueue.main.asyncAfter(deadline: .now() + 30) {
                     if NSPasteboard.general.string(forType: .string) == value {
                         NSPasteboard.general.clearContents()

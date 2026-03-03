@@ -42,7 +42,7 @@ struct ChatView: View {
                             } label: {
                                 HStack(spacing: 6) {
                                     Image(systemName: "arrow.up.circle.fill")
-                                    Text("\(startIndex) ältere Nachrichten laden")
+                                    Text("\(startIndex) \(l10n.language.olderMessages)")
                                 }
                                 .font(.system(size: 12.5, weight: .medium))
                                 .foregroundColor(.secondary)
@@ -94,7 +94,7 @@ struct ChatView: View {
             if !viewModel.messageQueue.isEmpty && viewModel.agentLoading {
                 HStack(spacing: 6) {
                     Image(systemName: "tray.full.fill").font(.system(size: 12.5)).foregroundColor(.koboldGold)
-                    Text("\(viewModel.messageQueue.count) Nachricht\(viewModel.messageQueue.count > 1 ? "en" : "") in Warteschlange")
+                    Text("\(viewModel.messageQueue.count) \(l10n.language.messagesQueued)")
                         .font(.system(size: 12.5, weight: .medium)).foregroundColor(.koboldGold)
                     Spacer()
                     // Send next immediately
@@ -251,26 +251,28 @@ struct ChatView: View {
 
     // MARK: - Empty State
 
-    private static let exampleSets: [[String]] = [
+    private var exampleSets: [[String]] {
         [
-            "Was kannst du alles?",
-            "Räum meinen Desktop auf",
-            "Wie viel Speicherplatz habe ich noch?",
-            "Hilf mir beim Brainstorming",
-        ],
-        [
-            "Welches Modell nutzt du gerade?",
-            "Zeig mir was auf meinem Desktop liegt",
-            "Erstelle ein kleines Python-Skript",
-            "Schreibe eine kurze Nachricht per Telegram",
-        ],
-        [
-            "Fasse diese Webseite zusammen",
-            "Suche im Internet nach aktuellen Nachrichten",
-            "Welche Programme laufen gerade?",
-            "Erzähl mir einen Witz",
-        ],
-    ]
+            [
+                "Was kannst du alles?",
+                "Räum meinen Desktop auf",
+                l10n.language.suggestStorage,
+                "Hilf mir beim Brainstorming",
+            ],
+            [
+                "Welches Modell nutzt du gerade?",
+                "Zeig mir was auf meinem Desktop liegt",
+                "Erstelle ein kleines Python-Skript",
+                l10n.language.suggestTelegram,
+            ],
+            [
+                "Fasse diese Webseite zusammen",
+                l10n.language.suggestWebSearch,
+                "Welche Programme laufen gerade?",
+                "Erzähl mir einen Witz",
+            ],
+        ]
+    }
 
     @State private var activeTips: [String] = []
     @State private var tipRotation: Double = 0
@@ -282,7 +284,7 @@ struct ChatView: View {
         if !aiTips.isEmpty {
             activeTips = Array(aiTips.shuffled().prefix(4))
         } else {
-            let allTips = Self.exampleSets.flatMap { $0 }
+            let allTips = exampleSets.flatMap { $0 }
             activeTips = Array(allTips.shuffled().prefix(4))
         }
         withAnimation(.easeInOut(duration: 0.3)) {
@@ -416,7 +418,7 @@ struct ChatView: View {
                         .cornerRadius(8)
                 }
                 .buttonStyle(.plain)
-                .help(showAgentSteps ? "Agent-Schritte ausblenden" : "Agent-Schritte einblenden")
+                .help(showAgentSteps ? l10n.language.hideSteps : l10n.language.showSteps)
 
                 // Clear chat — keep session, remove content and reset context
                 Button(action: { clearCurrentChat() }) {
@@ -468,7 +470,7 @@ struct ChatView: View {
                             .cornerRadius(10)
                     }
                     .buttonStyle(.plain)
-                    .help("Agent stoppen")
+                    .help(l10n.language.stopAgent)
                 } else if viewModel.agentWasStopped && viewModel.lastAgentPrompt != nil {
                     // Resume button after agent was stopped
                     HStack(spacing: 6) {
@@ -481,7 +483,7 @@ struct ChatView: View {
                                 .cornerRadius(10)
                         }
                         .buttonStyle(.plain)
-                        .help("Agent fortsetzen")
+                        .help(l10n.language.resumeAgent)
 
                         Button(action: send) {
                             Image(systemName: "paperplane.fill")
@@ -526,7 +528,7 @@ struct ChatView: View {
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = true
         panel.allowedContentTypes = [] // allow all
-        panel.message = "Dateien, Bilder, Audio oder Video anhängen"
+        panel.message = l10n.language.attachFiles
         panel.prompt = "Anhängen"
 
         if panel.runModal() == .OK {
@@ -657,7 +659,7 @@ struct ChatView: View {
         .help(recorder.isRecording ? "Aufnahme stoppen (Leertaste)" :
                 (isTranscribing ? "Transkribiere..." :
                     (!sttManager.isModelLoaded ? "Whisper-Modell nicht geladen" :
-                        (!recorder.hasMicrophonePermission ? "Mikrofon-Berechtigung fehlt" : "Spracheingabe (Leertaste)"))))
+                        (!recorder.hasMicrophonePermission ? l10n.language.micMissing : l10n.language.voiceInput))))
         .keyboardShortcut(.space, modifiers: [])
         .onAppear {
             recorder.onSpeechCaptured = handleVoiceCapture

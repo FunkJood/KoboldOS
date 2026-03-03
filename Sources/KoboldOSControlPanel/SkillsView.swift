@@ -4,6 +4,7 @@ import KoboldCore
 // MARK: - SkillsView
 
 struct SkillsView: View {
+    @EnvironmentObject var l10n: LocalizationManager
     @State private var skills: [Skill] = []
     @State private var isLoading = true
     @State private var selectedSkill: Skill? = nil
@@ -48,7 +49,7 @@ struct SkillsView: View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Skills").font(.title2.bold())
-                Text("Markdown-Dateien, die in den System-Prompt des Agenten injiziert werden.")
+                Text(l10n.language.skillsDesc)
                     .font(.caption).foregroundColor(.secondary)
             }
             Spacer()
@@ -134,7 +135,7 @@ struct SkillsView: View {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.init(filenameExtension: "md")!]
         panel.allowsMultipleSelection = true
-        panel.message = "Wähle Markdown-Dateien als Skills"
+        panel.message = l10n.language.selectMarkdownFiles
         guard panel.runModal() == .OK else { return }
 
         let skillsDir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!

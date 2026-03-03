@@ -42,14 +42,8 @@ struct ProactiveRule: Identifiable, Codable {
         case startup = "Start"
     }
 
-    static let defaults: [ProactiveRule] = [
-        ProactiveRule(id: "morning", name: "Morgen-Briefing", triggerType: .timeOfDay, triggerValue: "08:00",
-                      prompt: "Gib mir eine Zusammenfassung meiner heutigen Termine und offenen Aufgaben.", enabled: true),
-        ProactiveRule(id: "evening", name: "Tagesabschluss", triggerType: .timeOfDay, triggerValue: "17:00",
-                      prompt: "Fasse zusammen was heute erledigt wurde und was morgen ansteht.", enabled: true),
-        ProactiveRule(id: "startup", name: "Start-Tipp", triggerType: .startup, triggerValue: "",
-                      prompt: "Was kann ich alles für dich tun? Zeig mir deine Fähigkeiten.", enabled: true),
-    ]
+    /// No hardcoded defaults — user creates all rules via UI
+    static let defaults: [ProactiveRule] = []
 }
 
 // MARK: - GoalEntry (user-defined long-term goals influencing agent autonomy)
@@ -101,17 +95,8 @@ struct IdleTask: Identifiable, Codable {
         self.priority = priority; self.lastRun = nil; self.runCount = 0; self.cooldownMinutes = cooldownMinutes
     }
 
-    static let examples: [IdleTask] = [
-        // Konkrete Aufgaben
-        IdleTask(name: "Brew Updates prüfen", prompt: "Prüfe ob Homebrew-Pakete veraltet sind und zeig mir eine Zusammenfassung.", priority: .medium, cooldownMinutes: 120),
-        IdleTask(name: "Downloads aufräumen", prompt: "Schau in meinen Downloads-Ordner und schlage vor welche Dateien gelöscht werden können (älter als 30 Tage, doppelt, temporär).", priority: .medium, cooldownMinutes: 180),
-        IdleTask(name: "Speicherplatz checken", prompt: "Prüfe den verfügbaren Speicherplatz und warne mich wenn weniger als 10GB frei sind.", priority: .high, cooldownMinutes: 60),
-        // Vage Richtungen / Explorativ
-        IdleTask(name: "Verbesserungen finden", prompt: "Schau dich um und finde etwas auf meinem System das man verbessern, optimieren oder aufräumen könnte. Sei kreativ — Performance, Organisation, Sicherheit, alles ist fair game.", priority: .medium, cooldownMinutes: 120),
-        IdleTask(name: "Sicherheit im Blick", prompt: "Halte Ausschau nach potenziellen Sicherheitsproblemen auf meinem System — veraltete Software, offene Ports, unsichere Berechtigungen, verdächtige Prozesse. Berichte was dir auffällt.", priority: .high, cooldownMinutes: 180),
-        IdleTask(name: "Neues entdecken", prompt: "Recherchiere etwas Interessantes — neue Tools, Technologien oder Tipps die für mich nützlich sein könnten. Basiere das auf meiner bisherigen Nutzung und meinen Projekten.", priority: .low, cooldownMinutes: 240),
-        IdleTask(name: "Projekte checken", prompt: "Schau in meine Projekte und Repos. Gibt es uncommitted Changes, veraltete Dependencies, TODOs im Code oder andere Dinge die Aufmerksamkeit brauchen? Fass zusammen was du findest.", priority: .medium, cooldownMinutes: 120),
-    ]
+    /// No hardcoded examples — user creates all idle tasks via UI
+    static let examples: [IdleTask] = []
 }
 
 // MARK: - ProactiveEngine
@@ -223,19 +208,9 @@ class ProactiveEngine: ObservableObject {
     func loadRules() {
         if let data = UserDefaults.standard.data(forKey: rulesKey),
            let saved = try? JSONDecoder().decode([ProactiveRule].self, from: data) {
-            // Merge with defaults (add new defaults that don't exist yet)
-            var merged = ProactiveRule.defaults
-            for saved in saved {
-                if let idx = merged.firstIndex(where: { $0.id == saved.id }) {
-                    merged[idx] = saved
-                } else {
-                    merged.append(saved)
-                }
-            }
-            rules = merged
-        } else {
-            rules = ProactiveRule.defaults
+            rules = saved
         }
+        // No auto-populate — user creates rules via UI
     }
 
     func saveRules() {
@@ -293,11 +268,7 @@ class ProactiveEngine: ObservableObject {
            let saved = try? JSONDecoder().decode([IdleTask].self, from: data) {
             idleTasks = saved
         }
-        // Auto-load defaults if empty (user can delete/disable individually)
-        if idleTasks.isEmpty {
-            idleTasks = IdleTask.examples
-            saveIdleTasks()
-        }
+        // No auto-populate — user creates idle tasks via UI
     }
 
     func saveIdleTasks() {
@@ -492,7 +463,7 @@ class ProactiveEngine: ObservableObject {
             heartbeatStatus = "Führt aus: \(userTask.name)"
             addHeartbeatLog(status: "Idle-Aufgabe", action: userTask.name)
             print("[ProactiveEngine] ▶ EXECUTING idle task: \(userTask.name)")
-            viewModel.executeTask(taskId: "idle-tasks", taskName: "Idle-Aufgaben", prompt: permPrefix + userTask.prompt, navigate: true)
+            viewModel.executeTask(taskId: "idle-tasks", taskName: "Idle-Aufgaben", prompt: permPrefix + userTask.prompt, navigate: true, source: "idle")
             markIdleTaskRun(userTask.id)
             idleTasksCompleted += 1
             idleExecutionsThisHour += 1
@@ -508,7 +479,7 @@ class ProactiveEngine: ObservableObject {
             heartbeatStatus = "Führt aus: \(task.title)"
             addHeartbeatLog(status: "Auto-Aufgabe", action: task.title)
             print("[ProactiveEngine] ▶ EXECUTING auto task: \(task.title)")
-            viewModel.executeTask(taskId: "idle-tasks", taskName: "Idle-Aufgaben", prompt: permPrefix + task.action, navigate: true)
+            viewModel.executeTask(taskId: "idle-tasks", taskName: "Idle-Aufgaben", prompt: permPrefix + task.action, navigate: true, source: "idle")
             idleTasksCompleted += 1
             idleExecutionsThisHour += 1
             lastAutoTaskExecution = now
@@ -551,11 +522,13 @@ class ProactiveEngine: ObservableObject {
 
     /// Build permission restrictions string for idle task prompts
     private func idlePermissionPrefix() -> String {
-        var restrictions: [String] = []
+        var restrictions: [String] = [
+            "KEINE Telefonate/Anrufe (phone_call Tool VERBOTEN)",
+            "KEINE selbständige Fehlerbewertung oder Selbstkritik — nur die Aufgabe ausführen"
+        ]
         if !idleAllowShell { restrictions.append("KEIN Shell/Terminal") }
         if !idleAllowNetwork { restrictions.append("KEIN Netzwerk/Browser/HTTP") }
         if !idleAllowFileWrite { restrictions.append("KEINE Dateien schreiben/löschen") }
-        guard !restrictions.isEmpty else { return "" }
         return "[IDLE-TASK EINSCHRÄNKUNGEN: \(restrictions.joined(separator: ", ")). Nutze nur erlaubte Tools.]\n\n"
     }
 

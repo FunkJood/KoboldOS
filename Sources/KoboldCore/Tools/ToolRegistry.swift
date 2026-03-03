@@ -44,6 +44,9 @@ public actor ToolRegistry {
         register(ContactsTool())
         #endif
 
+        // Cross-platform tools (work on macOS + Linux via Daemon API)
+        register(TeamsTool())
+
         print("[ToolRegistry] Setup complete: \(tools.keys.sorted().joined(separator: ", "))")
     }
 

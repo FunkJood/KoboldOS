@@ -711,6 +711,7 @@ struct WebViewRepresentable: NSViewRepresentable {
 
 struct WebBrowserContainerView: View {
     @ObservedObject var manager = SharedBrowserManager.shared
+    @EnvironmentObject var l10n: LocalizationManager
     @State private var urlBarText = ""
 
     var body: some View {
@@ -799,7 +800,7 @@ struct WebBrowserContainerView: View {
             }
             .buttonStyle(.plain)
 
-            TextField("URL oder Suchbegriff eingeben...", text: $urlBarText, onCommit: {
+            TextField(l10n.language.urlOrSearch, text: $urlBarText, onCommit: {
                 manager.activeTab?.navigate(to: urlBarText)
             })
             .textFieldStyle(.roundedBorder)
@@ -823,11 +824,11 @@ struct WebBrowserContainerView: View {
             Image(systemName: "globe")
                 .font(.system(size: 48))
                 .foregroundColor(.secondary.opacity(0.5))
-            Text("Neuen Tab öffnen")
+            Text(l10n.language.openNewTab)
                 .font(.system(size: 14))
                 .foregroundColor(.secondary)
             Button(action: { let _ = manager.newTab(url: "https://www.google.com") }) {
-                Label("Browser öffnen", systemImage: "plus.circle.fill")
+                Label(l10n.language.openBrowser, systemImage: "plus.circle.fill")
             }
             .buttonStyle(.borderedProminent).tint(.koboldEmerald)
         }
@@ -838,6 +839,7 @@ struct WebBrowserContainerView: View {
 // MARK: - Program Runner View (mit Debounced Output)
 
 struct ProgramRunnerView: View {
+    @EnvironmentObject var l10n: LocalizationManager
     @State private var selectedFile: String = ""
     @State private var language: ProgramLanguage = .auto
     @State private var output: String = ""
@@ -866,7 +868,7 @@ struct ProgramRunnerView: View {
     private var programToolbar: some View {
         HStack(spacing: 12) {
             Button(action: pickFile) {
-                Label("Datei auswählen...", systemImage: "doc.badge.plus")
+                Label(l10n.language.selectFile, systemImage: "doc.badge.plus")
             }
             .buttonStyle(.bordered)
 
@@ -895,7 +897,7 @@ struct ProgramRunnerView: View {
                 .buttonStyle(.borderedProminent).tint(.red)
             } else {
                 Button(action: runProgram) {
-                    Label("Ausführen", systemImage: "play.fill")
+                    Label(l10n.language.execute, systemImage: "play.fill")
                 }
                 .buttonStyle(.borderedProminent).tint(.koboldEmerald)
                 .disabled(selectedFile.isEmpty)

@@ -95,6 +95,7 @@ public class RuntimeViewModel: ObservableObject {
     private var connectivityTask: Task<Void, Never>?
     /// A2: Shutdown-Observer Token (für sauberes removeObserver in deinit)
     private var shutdownObserver: NSObjectProtocol?
+    private var webSyncObserver: NSObjectProtocol?
 
     /// Computed: Ist gerade irgendeine Session am Streamen?
     public var isStreamingToDaemon: Bool { !streamingSessions.isEmpty }
@@ -171,6 +172,7 @@ public class RuntimeViewModel: ObservableObject {
 
     // Teams & Workflow
     @Published public var teams: [AgentTeam] = AgentTeam.defaults
+    @Published public var managedTeams: [ManagedTeam] = []
     @Published public var chatMode: ChatMode = .normal
     // taskChatLabel removed — tasks use normal chat sessions now
     @Published public var workflowChatLabel: String = ""
@@ -331,6 +333,24 @@ public class RuntimeViewModel: ObservableObject {
                 self.cleanup()
             }
         }
+        // WebUI Session-Sync: Wenn Daemon sessions.json aktualisiert hat, neu laden
+        webSyncObserver = NotificationCenter.default.addObserver(forName: Notification.Name("koboldSessionsUpdatedByDaemon"), object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.reloadSessionsFromDisk()
+            }
+        }
+        // WebUI-Sync: Daemon bittet um sofortiges Speichern bevor Sessions gelesen werden
+        NotificationCenter.default.addObserver(forName: Notification.Name("koboldForceSessionSave"), object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.forceSaveNow()
+            }
+        }
+        // App-Hintergrund: Sofort speichern wenn App den Fokus verliert
+        NotificationCenter.default.addObserver(forName: NSApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.forceSaveNow()
+            }
+        }
         startConnectivityTimer()
         // Memory Management: Offload inactive sessions + handle system memory pressure
         startSessionOffloadTimer()
@@ -382,6 +402,37 @@ public class RuntimeViewModel: ObservableObject {
         }
     }
     
+    /// Merge Sessions von Disk (WebUI hat neue Session geschrieben) — OHNE aktuelle Session-Daten zu verlieren
+    public func reloadSessionsFromDisk() {
+        let url = sessionsURL
+        Task.detached(priority: .userInitiated) {
+            guard FileManager.default.fileExists(atPath: url.path),
+                  let data = try? Data(contentsOf: url),
+                  let loaded = try? JSONDecoder().decode([ChatSession].self, from: data) else {
+                return
+            }
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                let existingIds = Set(self.sessions.map { $0.id })
+                // Neue Sessions hinzufügen (von WebUI erstellt) ohne existierende zu überschreiben
+                var merged = self.sessions
+                for session in loaded where !existingIds.contains(session.id) {
+                    merged.insert(session, at: 0)
+                }
+                // Bestehende Sessions aktualisieren wenn sie NICHT gerade aktiv gestreamt werden
+                for session in loaded {
+                    if let idx = merged.firstIndex(where: { $0.id == session.id }),
+                       !self.streamingSessions.contains(session.id),
+                       session.id != self.currentSessionId {
+                        merged[idx].messages = session.messages
+                        merged[idx].title = session.title
+                    }
+                }
+                self.sessions = merged
+            }
+        }
+    }
+
     // MARK: - Topics Persistence
 
     private func loadTopics() {
@@ -434,6 +485,16 @@ public class RuntimeViewModel: ObservableObject {
     /// Voice-Modus: Sendet mit source="voice" → Agent antwortet kurz und natürlich
     func sendVoiceMessage(_ text: String) {
         sendMessage(text, source: "voice")
+    }
+
+    /// Team-Diskussionsergebnis als neue Session in der Sidebar ablegen
+    func sendTeamResult(teamName: String, result: String) {
+        let codableMsg = ChatMessageCodable(timestamp: Date(), kind: "assistant", text: result, thinkingEntries: nil)
+        let session = ChatSession(id: UUID(), title: "Team: \(teamName)", messages: [codableMsg])
+        sessions.insert(session, at: 0)
+        let chatMsg = ChatMessage(kind: .assistant(text: result))
+        pendingMessages[session.id] = [chatMsg]
+        debouncedSave()
     }
 
     func sendMessage(_ text: String, targetSessionId: UUID? = nil, agentText: String? = nil, attachments: [MediaAttachment] = [], source: String? = nil) {
@@ -700,11 +761,122 @@ public class RuntimeViewModel: ObservableObject {
         sessionAgentStates[sessionId, default: SessionAgentState()].streamTask = streamTask
     }
     
+    /// Send a workflow node's prompt to the agent via SSE and capture the result.
+    /// Creates/reuses a workflow chat session so all node outputs are visible in one place.
     public func sendWorkflowMessage(_ text: String, modelOverride: String? = nil, agentOverride: String? = nil) {
-        Task {
-            workflowLastResponse = "Processing..."
-            try? await Task.sleep(nanoseconds: 1_000_000_000)
-            workflowLastResponse = "Workflow abgeschlossen."
+        workflowLastResponse = nil
+
+        // Find or create a workflow chat session for the current project
+        let projectId = selectedProjectId?.uuidString ?? "default"
+        let wfTaskId = "workflow-\(projectId)"
+        let wfSessionId: UUID
+        if let existing = sessions.first(where: { $0.taskId == wfTaskId }) {
+            wfSessionId = existing.id
+        } else {
+            let projectName = selectedProject?.name ?? "Workflow"
+            let session = ChatSession(id: UUID(), title: "Workflow: \(projectName)", messages: [], taskId: wfTaskId)
+            sessions.insert(session, at: 0)
+            wfSessionId = session.id
+            debouncedSave()
+        }
+
+        // Append a short user message to the workflow session (truncated for readability)
+        appendMessage(ChatMessage(kind: .user(text: String(text.prefix(300)))), for: wfSessionId)
+
+        Task { [weak self] in
+            guard let self else { return }
+
+            let url = URL(string: "\(self.baseURL)/agent/stream")!
+            var req = self.authorizedRequest(url: url, method: "POST")
+            req.timeoutInterval = 300
+
+            // Resolve agent profile and model
+            let profile = agentOverride ?? "general"
+            let agentConfig = await MainActor.run {
+                AgentsStore.shared.configs.first(where: { $0.id == profile })
+            }
+            let modelName = modelOverride ?? agentConfig?.modelName ?? ""
+
+            // Build minimal conversation history from workflow session
+            let history: [[String: String]] = await MainActor.run {
+                self.conversationHistory(for: wfSessionId, limit: 10)
+                    .compactMap { msg in
+                        switch msg.kind {
+                        case .user(let t): return ["role": "user", "content": t]
+                        case .assistant(let t): return ["role": "assistant", "content": t]
+                        default: return nil
+                        }
+                    }
+            }
+
+            var body: [String: Any] = [
+                "message": text,
+                "agent_type": profile,
+                "provider": "ollama",
+                "model": modelName,
+                "temperature": agentConfig?.temperature ?? 0.7,
+                "source": "workflow"
+            ]
+            if !history.isEmpty { body["conversation_history"] = history }
+
+            guard let bodyData = try? JSONSerialization.data(withJSONObject: body) else {
+                await MainActor.run {
+                    self.appendMessage(ChatMessage(kind: .assistant(text: "Fehler beim Erstellen der Anfrage")), for: wfSessionId)
+                    self.workflowLastResponse = "Fehler beim Erstellen der Anfrage"
+                }
+                return
+            }
+            req.httpBody = bodyData
+
+            // Stream SSE response
+            let accumulator = SSEAccumulator()
+            let lines = self.sseLines(for: req)
+
+            var currentEvent = ""
+            var httpOK = false
+
+            for await line in lines {
+                if Task.isCancelled { break }
+                if line.hasPrefix("__HTTP_STATUS__:") {
+                    let code = Int(line.dropFirst(16)) ?? 0
+                    if code != 200 {
+                        await MainActor.run {
+                            self.appendMessage(ChatMessage(kind: .assistant(text: "Daemon-Fehler (HTTP \(code))")), for: wfSessionId)
+                            self.workflowLastResponse = "Daemon-Fehler (HTTP \(code))"
+                        }
+                        return
+                    }
+                    httpOK = true
+                    continue
+                }
+                guard httpOK else { continue }
+
+                if line.hasPrefix("data: ") {
+                    currentEvent = String(line.dropFirst(6))
+                } else if line.hasPrefix("event: done") || (line.isEmpty && !currentEvent.isEmpty) {
+                    if !currentEvent.isEmpty && currentEvent != "{}" {
+                        await accumulator.processEvent(currentEvent)
+                    }
+                    currentEvent = ""
+                }
+            }
+
+            // Collect final result
+            await accumulator.markDone()
+            let finalResult = await accumulator.takeFinalResult()
+
+            await MainActor.run {
+                if !finalResult.finalAnswer.isEmpty {
+                    self.appendMessage(ChatMessage(kind: .assistant(text: finalResult.finalAnswer)), for: wfSessionId)
+                    self.workflowLastResponse = finalResult.finalAnswer
+                } else if let error = finalResult.error, !error.isEmpty {
+                    self.appendMessage(ChatMessage(kind: .assistant(text: "Fehler: \(error)")), for: wfSessionId)
+                    self.workflowLastResponse = "Fehler: \(error)"
+                } else {
+                    self.workflowLastResponse = "Keine Antwort vom Agent"
+                }
+                self.debouncedSave()
+            }
         }
     }
     
@@ -774,6 +946,32 @@ public class RuntimeViewModel: ObservableObject {
         let defaultProject = Project(id: UUID(), name: "Standard-Projekt")
         self.projects = [defaultProject]
         saveProjects()
+    }
+
+    /// Load user-created teams from daemon for workflow node picker
+    public func loadManagedTeams() async {
+        guard let url = URL(string: baseURL + "/teams") else { return }
+        do {
+            let (data, resp) = try await authorizedData(from: url)
+            guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else { return }
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let arr = json["teams"] as? [[String: Any]] {
+                let parsed = arr.compactMap { dict -> ManagedTeam? in
+                    guard let id = dict["id"] as? String, let name = dict["name"] as? String else { return nil }
+                    let membersArr = dict["members"] as? [[String: Any]] ?? []
+                    let members = membersArr.compactMap { m -> TeamMember? in
+                        guard let n = m["name"] as? String else { return nil }
+                        return TeamMember(id: m["id"] as? String ?? UUID().uuidString, name: n,
+                                          role: m["role"] as? String ?? "", systemPrompt: m["systemPrompt"] as? String ?? "")
+                    }
+                    return ManagedTeam(id: id, name: name, description: dict["description"] as? String ?? "",
+                                       routing: dict["routing"] as? String ?? "sequential", members: members)
+                }
+                await MainActor.run { self.managedTeams = parsed }
+            }
+        } catch {
+            print("[RuntimeVM] loadManagedTeams error: \(error.localizedDescription)")
+        }
     }
 
     /// Parse projects from WorkflowManageTool JSON format (array of dicts with "id" as string)
@@ -943,6 +1141,26 @@ public class RuntimeViewModel: ObservableObject {
         }
     }
 
+    /// Sofortige Session-Persistierung (ohne Debounce) — für WebUI-Sync und App-Hintergrund
+    public func forceSaveNow() {
+        upsertCurrentSession()
+        var snapshot = self.sessions
+        for (sid, pending) in self.pendingMessages where !pending.isEmpty {
+            if let idx = snapshot.firstIndex(where: { $0.id == sid }) {
+                snapshot[idx].messages = pending.map { $0.toCodable() }
+            }
+        }
+        var seen = Set<UUID>()
+        let deduped = snapshot
+            .filter { seen.insert($0.id).inserted }
+            .filter { !$0.messages.isEmpty || $0.id == currentSessionId || $0.taskId != nil }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        if let data = try? encoder.encode(deduped) {
+            try? data.write(to: sessionsURL, options: .atomic)
+        }
+    }
+
     /// Session wechseln mit korrekter Isolation
     public func switchToSession(_ sessionId: UUID) {
         guard sessionId != currentSessionId else { return }
@@ -1040,10 +1258,11 @@ public class RuntimeViewModel: ObservableObject {
         switchToSession(session.id)
     }
 
-    // taskSessions removed — tasks appear in normal chat list now
-    // Not @Published: Diese Arrays werden nie befüllt (Project-System hat Workflows übernommen).
-    // @Published entfernt um unnötige Subscriber-Registrierungen zu vermeiden.
-    public var workflowSessions: [ChatSession] = []
+    // Workflow-Sessions = Sessions deren taskId mit "workflow-" beginnt
+    public var workflowSessions: [ChatSession] {
+        sessions.filter { $0.taskId?.hasPrefix("workflow-") == true }
+            .sorted { $0.createdAt > $1.createdAt }
+    }
     public var workflowDefinitions: [WorkflowDef] = []
 
     public func loadWorkflowDefinitions() {
@@ -1505,7 +1724,7 @@ public class RuntimeViewModel: ObservableObject {
     /// Task ausführen — erstellt Task-Session, sendet Message dorthin.
     /// navigate=true → wechselt UI zur Task-Session (für Cron-Tasks + Idle-Tasks).
     /// navigate=false → läuft unsichtbar im Hintergrund, Notification wenn fertig.
-    public func executeTask(taskId: String, taskName: String, prompt: String, navigate: Bool) {
+    public func executeTask(taskId: String, taskName: String, prompt: String, navigate: Bool, source: String = "scheduled") {
         // 1. Task-Session finden oder erstellen
         let sessionId: UUID
         if let existing = sessions.first(where: { $0.taskId == taskId }) {
@@ -1531,10 +1750,10 @@ public class RuntimeViewModel: ObservableObject {
             messages = pendingMessages[sessionId] ?? []
             objectWillChange.send()
             NotificationCenter.default.post(name: .koboldNavigate, object: SidebarTab.tasks)
-            sendMessage(prompt)
+            sendMessage(prompt, source: source)
         } else {
             // Hintergrund: Nachricht in Task-Session senden ohne UI zu stören
-            sendMessage(prompt, targetSessionId: sessionId)
+            sendMessage(prompt, targetSessionId: sessionId, source: source)
         }
     }
 

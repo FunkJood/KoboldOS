@@ -1424,6 +1424,7 @@ final class SharedTerminalManager: ObservableObject {
 
 struct TerminalContainerView: View {
     @ObservedObject var manager = SharedTerminalManager.shared
+    @EnvironmentObject var l10n: LocalizationManager
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1470,7 +1471,7 @@ struct TerminalContainerView: View {
     private var emptyState: some View {
         VStack(spacing: 16) {
             Image(systemName: "terminal.fill").font(.system(size: 48)).foregroundColor(.secondary.opacity(0.5))
-            Text("Neues Terminal öffnen").font(.system(size: 14)).foregroundColor(.secondary)
+            Text(l10n.language.openNewTerminal).font(.system(size: 14)).foregroundColor(.secondary)
             Button(action: { let _ = manager.newSession() }) {
                 Label("Terminal starten", systemImage: "plus.circle.fill")
             }
