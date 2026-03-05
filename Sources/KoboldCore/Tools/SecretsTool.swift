@@ -41,7 +41,7 @@ public struct SecretsTool: Tool {
     }
 
     public func execute(arguments: [String: String]) async throws -> String {
-        guard permissionEnabled("kobold.perm.secrets", defaultValue: true) else {
+        guard permissionEnabled("kobold.perm.secrets", defaultValue: false) else {
             return "Fehler: Secret-Zugriff ist in den Einstellungen deaktiviert. Aktiviere 'Secrets & Passwörter' unter Einstellungen → Berechtigungen."
         }
 

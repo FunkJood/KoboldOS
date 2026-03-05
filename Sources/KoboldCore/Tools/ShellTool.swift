@@ -212,12 +212,110 @@ public struct ShellTool: Tool, Sendable {
         if isNormalTier { allowed += normalTierAllowlist }
         allowed += customAllowlist  // User-defined extra allowed commands
 
-        let isAllowed = allowed.contains { firstBinary == $0 || firstWord.hasSuffix("/\($0)") }
-        if !isAllowed {
-            throw ToolError.unauthorized(
-                "Command '\(firstBinary)' nicht erlaubt. Aktiviere Power-Tier oder füge es zur Whitelist hinzu."
-            )
+        // Split on pipe/chain operators and validate EACH segment's binary
+        let segments = splitCommandSegments(trimmed)
+        for segment in segments {
+            let segTrimmed = segment.trimmingCharacters(in: .whitespaces)
+            guard !segTrimmed.isEmpty else { continue }
+            let segFirstWord = segTrimmed.components(separatedBy: " ").first ?? ""
+            let segBinary = segFirstWord.components(separatedBy: "/").last ?? segFirstWord
+
+            // Check blacklisted binaries for each segment
+            if blacklistedBinaries.contains(segBinary) {
+                throw ToolError.unauthorized("Binary '\(segBinary)' is permanently blacklisted")
+            }
+
+            let segAllowed = allowed.contains { segBinary == $0 || segFirstWord.hasSuffix("/\($0)") }
+            if !segAllowed {
+                throw ToolError.unauthorized(
+                    "Command '\(segBinary)' nicht erlaubt. Aktiviere Power-Tier oder füge es zur Whitelist hinzu."
+                )
+            }
         }
+    }
+
+    // MARK: - Command Segment Splitting
+
+    /// Splits a command string on pipe and chain operators (|, &&, ||, ;)
+    /// to extract individual command segments for validation.
+    /// Respects quoted strings so operators inside quotes are not treated as separators.
+    private func splitCommandSegments(_ command: String) -> [String] {
+        var segments: [String] = []
+        var current = ""
+        var inSingle = false
+        var inDouble = false
+        var escaped = false
+        let chars = Array(command)
+        var i = 0
+
+        while i < chars.count {
+            let ch = chars[i]
+
+            if escaped {
+                current.append(ch)
+                escaped = false
+                i += 1
+                continue
+            }
+
+            if ch == "\\" {
+                escaped = true
+                current.append(ch)
+                i += 1
+                continue
+            }
+
+            if ch == "'" && !inDouble {
+                inSingle.toggle()
+                current.append(ch)
+                i += 1
+                continue
+            }
+
+            if ch == "\"" && !inSingle {
+                inDouble.toggle()
+                current.append(ch)
+                i += 1
+                continue
+            }
+
+            // Only split on operators when outside quotes
+            if !inSingle && !inDouble {
+                // Check for && or ||
+                if i + 1 < chars.count {
+                    let next = chars[i + 1]
+                    if (ch == "&" && next == "&") || (ch == "|" && next == "|") {
+                        segments.append(current)
+                        current = ""
+                        i += 2
+                        continue
+                    }
+                }
+                // Check for | (single pipe, but not ||)
+                if ch == "|" {
+                    segments.append(current)
+                    current = ""
+                    i += 1
+                    continue
+                }
+                // Check for ;
+                if ch == ";" {
+                    segments.append(current)
+                    current = ""
+                    i += 1
+                    continue
+                }
+            }
+
+            current.append(ch)
+            i += 1
+        }
+
+        if !current.trimmingCharacters(in: .whitespaces).isEmpty {
+            segments.append(current)
+        }
+
+        return segments
     }
 
     // MARK: - Execution

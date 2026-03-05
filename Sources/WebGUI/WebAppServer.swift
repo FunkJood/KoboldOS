@@ -53,6 +53,7 @@ final class WebAppServer: @unchecked Sendable {
 
         do {
             let params = NWParameters.tcp
+            params.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: NWEndpoint.Port(integerLiteral: UInt16(port)))
             let newListener = try NWListener(using: params, on: NWEndpoint.Port(integerLiteral: UInt16(port)))
 
             newListener.newConnectionHandler = { [weak self] conn in
@@ -261,7 +262,7 @@ final class WebAppServer: @unchecked Sendable {
         URLSession.shared.dataTask(with: req) { data, response, _ in
             let status = (response as? HTTPURLResponse)?.statusCode ?? 500
             let body = data ?? Data()
-            let resp = "HTTP/1.1 \(status) OK\r\nContent-Type: application/json\r\nContent-Length: \(body.count)\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n"
+            let resp = "HTTP/1.1 \(status) OK\r\nContent-Type: application/json\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n"
             var fullResp = resp.data(using: .utf8)!
             fullResp.append(body)
             conn.send(content: fullResp, completion: .contentProcessed { _ in conn.cancel() })

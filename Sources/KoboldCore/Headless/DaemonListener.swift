@@ -276,7 +276,7 @@ public actor DaemonListener {
 
         // OpenAI-compatible proxy (für ElevenLabs Custom LLM → Ollama)
         if path == "/v1/chat/completions" && method == "POST" {
-            await handleOpenAIProxy(client: client, body: body)
+            await handleOpenAIProxy(client: client, body: body, origin: headers["origin"])
             return
         }
 
@@ -1419,7 +1419,19 @@ public actor DaemonListener {
 
     // MARK: - OpenAI-Compatible Proxy (für ElevenLabs Custom LLM → lokales Ollama)
 
-    private func handleOpenAIProxy(client: ClientSocket, body: Data?) async {
+    /// Allowed CORS origins for OpenAI-compatible proxy
+    private static let allowedCORSOrigins: Set<String> = [
+        "http://localhost:8090",
+        "http://127.0.0.1:8090"
+    ]
+
+    /// Returns the CORS origin header value if the request origin is allowed, otherwise nil
+    private static func corsOriginHeader(for origin: String?) -> String? {
+        guard let origin, allowedCORSOrigins.contains(origin) else { return nil }
+        return origin
+    }
+
+    private func handleOpenAIProxy(client: ClientSocket, body: Data?, origin: String? = nil) async {
         let proxyStart = CFAbsoluteTimeGetCurrent()
         guard let body else {
             print("[OpenAI Proxy] ❌ Kein Body empfangen")
@@ -1550,7 +1562,8 @@ public actor DaemonListener {
 
         if isStream {
             // SSE-Streaming: Proxy Ollama SSE direkt zum Client
-            let sseHeaders = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: keep-alive\r\nAccess-Control-Allow-Origin: *\r\n\r\n"
+            let corsHeader = Self.corsOriginHeader(for: origin).map { "Access-Control-Allow-Origin: \($0)\r\n" } ?? ""
+            let sseHeaders = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: keep-alive\r\n\(corsHeader)\r\n"
             client.write(sseHeaders)
 
             do {
@@ -1584,7 +1597,8 @@ public actor DaemonListener {
                 let responseBody = String(data: data, encoding: .utf8) ?? "{\"error\":{\"message\":\"Empty response\"}}"
                 let totalTime = (CFAbsoluteTimeGetCurrent() - proxyStart) * 1000.0
                 print("[OpenAI Proxy] ✅ Non-Stream: HTTP \(status), \(data.count) bytes in \(Int(totalTime))ms")
-                client.write("HTTP/1.1 \(status == 200 ? "200 OK" : "\(status) Error")\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: \(responseBody.utf8.count)\r\n\r\n\(responseBody)")
+                let corsNonStream = Self.corsOriginHeader(for: origin).map { "Access-Control-Allow-Origin: \($0)\r\n" } ?? ""
+                client.write("HTTP/1.1 \(status == 200 ? "200 OK" : "\(status) Error")\r\nContent-Type: application/json\r\n\(corsNonStream)Content-Length: \(responseBody.utf8.count)\r\n\r\n\(responseBody)")
             } catch {
                 let errBody = "{\"error\":{\"message\":\"\(error.localizedDescription)\"}}"
                 print("[OpenAI Proxy] ❌ Non-Stream-Fehler: \(error.localizedDescription)")

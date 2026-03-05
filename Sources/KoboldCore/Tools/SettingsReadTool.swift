@@ -23,6 +23,32 @@ public struct SettingsReadTool: Tool {
         "kobold.authToken"
     ]
 
+    /// Keys the agent must NEVER write (security-critical settings).
+    /// Uses exact matches + prefix-based checks in isWriteBlocked().
+    private static let writeBlacklistExact: Set<String> = [
+        "kobold.authToken",
+        "kobold.shell.powerTier",
+        "kobold.autonomyLevel",
+        "kobold.webapp.password",
+        "kobold.webapp.username",
+        "kobold.telegram.token",
+    ]
+
+    /// Prefixes that block ALL keys starting with this string from being SET.
+    private static let writeBlacklistPrefixes: [String] = [
+        "kobold.perm.",
+        "kobold.security.",
+    ]
+
+    /// Returns true if the given key must not be written by the agent.
+    private static func isWriteBlocked(_ key: String) -> Bool {
+        if writeBlacklistExact.contains(key) { return true }
+        for prefix in writeBlacklistPrefixes {
+            if key.hasPrefix(prefix) { return true }
+        }
+        return false
+    }
+
     public func validate(arguments: [String: String]) throws {
         guard let action = arguments["action"], !action.isEmpty else {
             throw ToolError.missingRequired("action")
@@ -105,7 +131,7 @@ public struct SettingsReadTool: Tool {
     // MARK: - Set
 
     private func setSettingValue(key: String, value: String) -> String {
-        if Self.blacklist.contains(key) {
+        if Self.blacklist.contains(key) || Self.isWriteBlocked(key) {
             return "Fehler: '\(key)' darf nicht geändert werden."
         }
         guard key.hasPrefix("kobold.") else {

@@ -53,7 +53,7 @@ final class WebAppServer: @unchecked Sendable {
     }
 
     /// Current WebGUI version — bump when HTML changes to auto-update on-disk copy
-    private static let webGUIVersion = "v0.3.8"
+    private static let webGUIVersion = "v0.3.81"
 
     /// Write default index.html to disk if not present or outdated (agent can then edit it)
     func ensureWebGUIFiles() {
@@ -86,6 +86,7 @@ final class WebAppServer: @unchecked Sendable {
 
         do {
             let params = NWParameters.tcp
+            params.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: NWEndpoint.Port(integerLiteral: UInt16(port)))
             let newListener = try NWListener(using: params, on: NWEndpoint.Port(integerLiteral: UInt16(port)))
 
             newListener.newConnectionHandler = { [weak self] conn in
@@ -387,7 +388,7 @@ final class WebAppServer: @unchecked Sendable {
 
         // CORS preflight
         if method == "OPTIONS" {
-            let resp = "HTTP/1.1 204 No Content\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST, PUT, PATCH, DELETE, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type, Authorization\r\nAccess-Control-Max-Age: 86400\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            let resp = "HTTP/1.1 204 No Content\r\nAccess-Control-Allow-Origin: http://localhost:\(config.port)\r\nAccess-Control-Allow-Methods: GET, POST, PUT, PATCH, DELETE, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type, Authorization\r\nAccess-Control-Max-Age: 86400\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
             conn.send(content: resp.data(using: .utf8), completion: .contentProcessed { _ in conn.cancel() })
             return
         }
@@ -411,7 +412,7 @@ final class WebAppServer: @unchecked Sendable {
         let expectedAuth = "Basic " + Data("\(currentUser):\(currentPass)".utf8).base64EncodedString()
         if auth != expectedAuth && auth != config.basicAuthExpected {
             let unauthBody = "{\"error\":\"Unauthorized\"}"
-            let resp = "HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Headers: Content-Type, Authorization\r\nContent-Length: \(unauthBody.utf8.count)\r\nConnection: close\r\n\r\n\(unauthBody)"
+            let resp = "HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: http://localhost:\(config.port)\r\nAccess-Control-Allow-Headers: Content-Type, Authorization\r\nContent-Length: \(unauthBody.utf8.count)\r\nConnection: close\r\n\r\n\(unauthBody)"
             conn.send(content: resp.data(using: .utf8), completion: .contentProcessed { _ in conn.cancel() })
             return
         }
@@ -419,7 +420,7 @@ final class WebAppServer: @unchecked Sendable {
         // Auth-Check-Endpoint — wer hier ankommt, hat Basic-Auth bestanden
         if path == "/api/auth/check" {
             let okBody = "{\"authenticated\":true}"
-            let okResp = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: \(okBody.utf8.count)\r\nConnection: close\r\n\r\n\(okBody)"
+            let okResp = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: \(okBody.utf8.count)\r\nConnection: close\r\n\r\n\(okBody)"
             conn.send(content: okResp.data(using: .utf8), completion: .contentProcessed { _ in conn.cancel() })
             return
         }
@@ -475,7 +476,7 @@ final class WebAppServer: @unchecked Sendable {
             // Content-Type vom Daemon übernehmen (text/xml für Twilio, application/json für API)
             let contentType = httpResp?.value(forHTTPHeaderField: "Content-Type") ?? "application/json"
             let body = data ?? Data()
-            let resp = "HTTP/1.1 \(status) OK\r\nContent-Type: \(contentType)\r\nContent-Length: \(body.count)\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n"
+            let resp = "HTTP/1.1 \(status) OK\r\nContent-Type: \(contentType)\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n"
             var fullResp = resp.data(using: .utf8)!
             fullResp.append(body)
             conn.send(content: fullResp, completion: .contentProcessed { _ in conn.cancel() })
@@ -499,12 +500,12 @@ final class WebAppServer: @unchecked Sendable {
             if status >= 400 {
                 // Forward error status to client so WebGUI can detect failures
                 let errorBody = "{\"error\":\"Daemon returned \(status)\"}"
-                let resp = "HTTP/1.1 \(status) Error\r\nContent-Type: application/json\r\nContent-Length: \(errorBody.count)\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n\(errorBody)"
+                let resp = "HTTP/1.1 \(status) Error\r\nContent-Type: application/json\r\nContent-Length: \(errorBody.count)\r\nConnection: close\r\n\r\n\(errorBody)"
                 conn.send(content: resp.data(using: .utf8), completion: .contentProcessed { _ in self.conn.cancel() })
                 completionHandler(.cancel)
                 return
             }
-            let headers = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache, no-store\r\nConnection: keep-alive\r\nAccess-Control-Allow-Origin: *\r\nX-Accel-Buffering: no\r\n\r\n"
+            let headers = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache, no-store\r\nConnection: keep-alive\r\nX-Accel-Buffering: no\r\n\r\n"
             conn.send(content: headers.data(using: .utf8), completion: .contentProcessed { _ in })
             headersSent = true
             completionHandler(.allow)
@@ -727,7 +728,7 @@ final class WebAppServer: @unchecked Sendable {
 
     private static func buildHTML() -> String {
         return """
-        <!-- KoboldOS WebGUI v0.3.8 -->
+        <!-- KoboldOS WebGUI v0.3.81 -->
         <!DOCTYPE html>
         <html lang="de">
         <head>
@@ -6615,9 +6616,9 @@ final class WebAppServer: @unchecked Sendable {
                   if(!evData)continue;
                   try{
                     const d=JSON.parse(evData);
-                    if(d.thinking&&streamEl){const sl=streamEl.querySelector('.ns-stream');if(sl)sl.textContent='Denkt...';}
-                    if(d.token){result+=d.token;output.textContent+=d.token;if(streamEl){const sl=streamEl.querySelector('.ns-stream');if(sl){sl.textContent=result.length>140?'...'+result.slice(-140):result;streamEl.scrollTop=streamEl.scrollHeight;}}}
-                    if(d.tool_name&&streamEl){const sl=streamEl.querySelector('.ns-stream');if(sl)sl.textContent='Tool: '+d.tool_name+'...';}
+                    if(d.type==='think'&&streamEl){const sl=streamEl.querySelector('.ns-stream');if(sl)sl.textContent='Denkt...';}
+                    if(d.type==='finalAnswer'&&d.content){result+=d.content;output.textContent+=d.content;if(streamEl){const sl=streamEl.querySelector('.ns-stream');if(sl){sl.textContent=result.length>140?'...'+result.slice(-140):result;streamEl.scrollTop=streamEl.scrollHeight;}}}
+                    if(d.type==='toolCall'&&d.tool&&streamEl){const sl=streamEl.querySelector('.ns-stream');if(sl)sl.textContent='Tool: '+d.tool+'...';}
                   }catch(pe){result+=evData;output.textContent+=evData;}
                 }
                 output.scrollTop=output.scrollHeight;

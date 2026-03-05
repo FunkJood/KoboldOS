@@ -183,9 +183,13 @@ final class TelegramBot: @unchecked Sendable {
               let chat = message["chat"] as? [String: Any],
               let chatId = chat["id"] as? Int64 else { return }
 
-        // Check allowed chat IDs (empty set = allow all)
+        // Check allowed chat IDs (empty set = deny all, require explicit configuration)
         let allowedIds = getAllowedIds()
-        if !allowedIds.isEmpty && !allowedIds.contains(chatId) {
+        if allowedIds.isEmpty {
+            await sendMessage(token: token, chatId: chatId, text: "Zugriff verweigert. Keine erlaubten Chat-IDs konfiguriert. Deine Chat-ID: \(chatId) — bitte in den KoboldOS Einstellungen hinterlegen.")
+            return
+        }
+        if !allowedIds.contains(chatId) {
             await sendMessage(token: token, chatId: chatId, text: "Zugriff verweigert. Deine Chat-ID: \(chatId)")
             return
         }
