@@ -87,7 +87,7 @@ final class WebAppServer: @unchecked Sendable {
         do {
             let params = NWParameters.tcp
             params.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: NWEndpoint.Port(integerLiteral: UInt16(port)))
-            let newListener = try NWListener(using: params, on: NWEndpoint.Port(integerLiteral: UInt16(port)))
+            let newListener = try NWListener(using: params)
 
             newListener.newConnectionHandler = { [weak self] conn in
                 conn.start(queue: .global())
