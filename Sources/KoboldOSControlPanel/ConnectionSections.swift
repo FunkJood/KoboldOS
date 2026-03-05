@@ -1016,6 +1016,62 @@ extension SettingsView {
             }
         )
     }
+
+    // MARK: - Coinbase
+
+    @ViewBuilder
+    func coinbaseConnectionSection() -> some View {
+        let isConnected = !(UserDefaults.standard.string(forKey: "kobold.coinbase.keyName") ?? "").isEmpty
+            && !(UserDefaults.standard.string(forKey: "kobold.coinbase.keySecret") ?? "").isEmpty
+        connectionCard(
+            logo: AnyView(
+                Image(systemName: "bitcoinsign.circle.fill")
+                    .resizable()
+                    .frame(width: 32, height: 32)
+                    .foregroundStyle(.orange)
+            ),
+            name: "Coinbase",
+            subtitle: "Krypto-Wallets & Transaktionen",
+            isConnected: isConnected,
+            connectedDetail: {
+                AnyView(VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Image(systemName: "key.fill").foregroundColor(.secondary)
+                        Text(String((UserDefaults.standard.string(forKey: "kobold.coinbase.keyName") ?? "").suffix(12)))
+                            .font(.system(size: 13, design: .monospaced))
+                    }
+                    Button(l10n.language.signOut) {
+                        UserDefaults.standard.removeObject(forKey: "kobold.coinbase.keyName")
+                        UserDefaults.standard.removeObject(forKey: "kobold.coinbase.keySecret")
+                    }
+                    .font(.system(size: 12)).foregroundColor(.red)
+                })
+            },
+            signInButton: {
+                AnyView(VStack(alignment: .leading, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("API Key Name").font(.system(size: 11)).foregroundColor(.secondary)
+                        TextField("organizations/…/apiKeys/…", text: Binding(
+                            get: { UserDefaults.standard.string(forKey: "kobold.coinbase.keyName") ?? "" },
+                            set: { UserDefaults.standard.set($0, forKey: "kobold.coinbase.keyName") }
+                        )).textFieldStyle(.roundedBorder).font(.system(size: 12, design: .monospaced))
+
+                        Text("API Key Secret (EC Private Key PEM)").font(.system(size: 11)).foregroundColor(.secondary)
+                        TextEditor(text: Binding(
+                            get: { UserDefaults.standard.string(forKey: "kobold.coinbase.keySecret") ?? "" },
+                            set: { UserDefaults.standard.set($0, forKey: "kobold.coinbase.keySecret") }
+                        ))
+                        .font(.system(size: 10, design: .monospaced))
+                        .frame(height: 80)
+                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.3)))
+                    }
+
+                    Text("CDP API Key unter portal.cdp.coinbase.com erstellen (ECDSA / ES256)")
+                        .font(.system(size: 10)).foregroundColor(.secondary).italic()
+                })
+            }
+        )
+    }
 }
 
 // MARK: - WhatsApp Web Sheet (WKWebView mit web.whatsapp.com)

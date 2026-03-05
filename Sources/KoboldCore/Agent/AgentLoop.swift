@@ -249,6 +249,7 @@ public actor AgentLoop {
         await registry.register(UberApiTool())
         await registry.register(SunoApiTool())
         await registry.register(RedditApiTool())
+        await registry.register(CoinbaseApiTool())
         await registry.register(TwilioSmsTool())
         await registry.register(TwilioVoiceCallTool())
         await registry.register(EmailTool())

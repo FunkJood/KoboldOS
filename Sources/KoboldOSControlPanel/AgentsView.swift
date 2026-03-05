@@ -339,6 +339,7 @@ struct AgentsView: View {
         ("suno_api",           "Suno",               "music.note",                 ["general"],                      "KI-Musik generieren über Suno API"),
         ("reddit_api",         "Reddit",             "bubble.left.and.bubble.right.fill", ["general", "web"],        "Reddit durchsuchen, Posts lesen und kommentieren"),
         ("uber_api",           "Uber",               "car.fill",                   ["general"],                      "Uber-Fahrten anfragen, Status prüfen und verwalten"),
+        ("coinbase_api",       "Coinbase",           "bitcoinsign.circle.fill",    ["general"],                      "Krypto-Konten, Balances, Transaktionen und Preise über Coinbase API"),
         ("huggingface_api",    "HuggingFace",        "cpu",                        ["general", "coder"],             "KI-Modelle auf HuggingFace für Inference nutzen"),
         ("lieferando_api",     "Lieferando",         "fork.knife",                 ["general"],                      "Restaurants suchen und Bestellungen über Lieferando"),
 

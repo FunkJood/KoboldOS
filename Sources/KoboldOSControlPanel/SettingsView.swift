@@ -2026,6 +2026,12 @@ struct SettingsView: View {
             sunoConnectionSection()
         }
 
+        // Row 12: Coinbase
+        HStack(alignment: .top, spacing: 12) {
+            coinbaseConnectionSection()
+            Spacer().frame(maxWidth: .infinity)
+        }
+
         // Weitere Integrationen (Phase 2+)
         FuturisticBox(icon: "puzzlepiece.extension.fill", title: "Weitere Integrationen", accent: .koboldGold) {
                 Text("Kommende Integrationen — du kannst bereits jetzt APIs über das Shell- und Web-Tool nutzen.")
