@@ -1,6 +1,6 @@
-# KoboldOS — Architecture Guide (v0.3.8)
+# KoboldOS — Architecture Guide (v0.3.98)
 
-> Stand: 3. März 2026 — Alpha v0.3.8
+> Stand: 6. Maerz 2026 — Alpha v0.3.98
 
 ---
 
@@ -13,6 +13,7 @@ KoboldOS/
 │   ├── KoboldCore/             Core library (shared by CLI + App)
 │   │   ├── Agent/              AgentLoop, ToolCallParser, ToolRuleEngine, AgentWorkerPool
 │   │   ├── Tools/              60+ Tool implementations (FileTool, ShellTool, ContactsTool, etc.)
+│   │   ├── Trading/            Trading Engine, Strategy Engine, Risk Manager, Backtester
 │   │   ├── Memory/             MemoryStore (Tag-based), EmbeddingStore, ConsciousnessEngine
 │   │   ├── Native/             LLMRunner (Ollama only), ModelPuller
 │   │   ├── Headless/           DaemonListener (HTTP/SSE server on port 8080)
@@ -117,7 +118,83 @@ User Input → RuntimeViewModel.sendMessage()
 - NIEMALS SecretStore für OAuth-Tokens (UI und Tools müssen gleiche Keys nutzen)
 - Token-Refresh bei 401/403 automatisch (Google Import)
 
-## 8. Entfernte Features (NIEMALS wieder einbauen)
+## 8. Trading Engine
+
+### Architektur
+```
+TradingEngine (Actor, Singleton)
+  ├── MarketRegimeDetector    → Bull/Bear/Sideways/Crash Erkennung
+  ├── StrategyEngine (Actor)  → 9 Built-in + Custom-Strategien
+  ├── TradingRiskManager      → Circuit Breakers, Regime-Aware Limits
+  ├── TradeExecutor            → Coinbase Advanced Trade API
+  ├── TradingAgent             → KI-Agent-Entscheidungsschicht
+  ├── TradingDatabase (SQLite) → Persistente Trade-Historie
+  ├── TradingActivityLog       → In-Memory Activity Feed (48h)
+  ├── Backtester               → Multi-Coin Auto-Backtest
+  └── TradingForecaster        → Kurzfrist-Prognosen
+```
+
+### Zyklus (alle 60 Sekunden)
+1. Candle-Daten von Coinbase holen (1h + 6h Timeframe)
+2. Indikatoren berechnen (RSI, MACD, EMA, BB, ATR, OBV)
+3. Marktregime erkennen → RiskManager aktualisieren
+4. Circuit Breaker pruefen (Preis-Drop, Volatilitaets-Spike, Stop-Kaskade)
+5. Alle Strategien evaluieren → Familien-Deduplizierung → Konflikt-Resolution
+6. EV-Gate + Daily Limit + Pair Cooldown + EUR-Reserve pruefen
+7. Multi-Timeframe-Bestaetigung (4h-Trend)
+8. Trade ausfuehren (direkt oder via KI-Agent)
+9. Offene Positionen monitoren (TP/SL/Trailing)
+10. Externe Holdings monitoren (DCA + Signal-basierte Verkaeufe)
+
+### Regime-Aware Limits
+| Parameter | Bull | Sideways | Bear | Crash |
+|-----------|------|----------|------|-------|
+| Max Positionen | Basis ×2 | Basis | Basis -1 | 0 |
+| Max pro Coin | 50% | 30% | 15% | 10% |
+| Trade-Size | 2% | 2% | 1% | 0% |
+| Trailing-Stop | Basis | Basis | Basis ×1.5 | Basis ×2.0 |
+
+### Strategien
+9 Built-in-Strategien, jede mit eigenem Regime-Modifier:
+- **Momentum** (RSI + MACD + EMA): Trend-Staerke-Messung
+- **Trend Following** (EMA Crossover): Golden/Death Cross
+- **Breakout** (Period High/Low): Volume-bestaetigt, Sideways-unterdrueckt
+- **Mean Reversion** (Bollinger Bands): Optimiert fuer Sideways
+- **Scalping** (RSI + Momentum + BB): Fee-aware, strenge Thresholds
+- **Ultra Scalp** (6 Checks): A+ Setups only, 4+ Bestaetigungen noetig
+- **Divergence** (Preis vs. RSI): Swing-High/Low Analyse
+- **Accumulation** (OBV): Smart-Money-Detection
+- **Support/Resistance** (Key Levels): Bounce + Rejection Erkennung
+
+### Signal-Pipeline
+```
+evaluateAll() → Familien-Dedup → Gewichtetes Voting
+  → SELL-Veto (>85%) → Fee-Filter → Confidence-Threshold (0.80)
+  → EV-Gate → Multi-TF-Check → Daily Limit → EUR-Reserve → Execute
+```
+
+### Datenbanken
+- **TradingDatabase** (SQLite): Persistente Trade-Records (OPEN/CLOSED)
+- **TradingActivityLog** (In-Memory JSON): 48h Rolling Window fuer UI-Feed
+- Beide werden parallel beschrieben bei jedem Trade
+
+### Key Settings (UserDefaults)
+| Key | Default | Beschreibung |
+|-----|---------|-------------|
+| `kobold.trading.feeRate` | 0.012 | Coinbase Taker Fee (1.2%) |
+| `kobold.trading.takeProfit` | 8.0 | Take-Profit % |
+| `kobold.trading.fixedStopLoss` | 3.0 | Stop-Loss % |
+| `kobold.trading.trailingStop` | 4.0 | Trailing-Stop % (regime-adaptiv) |
+| `kobold.trading.confidenceThreshold` | 0.80 | Min. Signal-Confidence |
+| `kobold.trading.maxOpenPositions` | 3 | Basis (wird per Regime skaliert) |
+| `kobold.trading.maxDailyTrades` | 6 | Max Trades pro Tag |
+| `kobold.trading.pairCooldownMinutes` | 120 | Cooldown pro Pair (Minuten) |
+| `kobold.trading.eurReserve` | 0 | Mindest-EUR-Saldo |
+| `kobold.trading.hodlCoin` | "" | HODL-Coin (nie verkauft) |
+| `kobold.trading.maxDailyLoss` | 3.0 | Max Tagesverlust % |
+| `kobold.trading.maxWeeklyLoss` | 6.0 | Max Wochenverlust % |
+
+## 9. Entfernte Features (NIEMALS wieder einbauen)
 
 MCP, MenuBarController, PopoverView, ImageGenManager, LlamaService, WebGUI Target, docker/, linux/, ApplicationsView, AppMenuManager, DashboardView, Cloud Provider UI, AgentType.planner/.instructor, OllamaAgent.swift, ToolEngine.swift, iMessage-Integration
 

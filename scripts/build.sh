@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Build script for KoboldOS
-VERSION="0.3.81"
+VERSION="0.3.98"
 echo "Building KoboldOS v${VERSION}..."
 
 # Clean previous builds
@@ -63,7 +63,7 @@ cat > dist/KoboldOSv${VERSION}.app/Contents/Info.plist << EOF
     <key>CFBundleShortVersionString</key>
     <string>${VERSION}</string>
     <key>CFBundleVersion</key>
-    <string>20260303</string>
+    <string>20260306</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <key>NSHighResolutionCapable</key>

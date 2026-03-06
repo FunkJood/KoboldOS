@@ -1,5 +1,73 @@
 # KoboldOS Changelog
 
+## Alpha v0.3.98 — 2026-03-06
+
+### Trading Engine — Professionelles Regime-Aware System
+
+KoboldOS verfuegt jetzt ueber ein vollstaendiges, profitabilitaetsoptimiertes Trading-System mit adaptivem Risikomanagement.
+
+#### Regime-Aware Risikomanagement (NEU)
+- **Dynamische Position-Limits je Marktlage**: Bull 6 Positionen / Bear 2 / Crash 0
+- **Dynamische Asset-Konzentration**: Bull 50% pro Coin / Sideways 30% / Bear 15% / Crash 10%
+- **Regime-adaptiver Trailing-Stop**: Bull/Sideways 4% / Bear 6% / Crash 8%
+- **Dynamische Trade-Size**: Bear reduziert auf 50% der normalen Groesse
+- **EUR-Reserve Intelligence**: Gesunde Reserve (>120%) ignoriert schwache Sell-Signale / niedrige Reserve priorisiert Sells
+
+#### Bear-Markt-Schutz (alle 9 Strategien)
+- **Momentum**: Buy ×0.70, Sell ×1.15
+- **Trend Following**: Buy ×0.60 (Bear-Rallyes = Fallen), Sell ×1.15
+- **Breakout**: Bullish Breakouts ×0.55, Near-Breakouts komplett blockiert
+- **Mean Reversion**: Confidence ×0.75 (gegenueber ×1.0 in Sideways)
+- **Scalping**: Buy ×0.65, Sell ×1.10
+- **Ultra Scalp**: Buy ×0.85, Sell ×1.10
+- **Divergence**: Bullish Div ×0.60, Bearish Div +0.10
+- **Accumulation**: Buy ×0.60
+- **Support/Resistance**: Support-Bounce ×0.55 (bricht im Bear), Resistance +0.10
+
+#### Sideways-Markt-Optimierung
+- **Breakout-Unterdrueckung**: Ohne Volume-Bestaetigung ×0.50, mit Vol ×0.80
+- **Near-Breakouts blockiert**: False-Breakout-Schutz im Sideways
+- **Mean Reversion + S/R**: Sideways-Bonus ×1.10 (optimale Marktlage)
+- **Scalping**: Leichter Bonus ×1.05 (Scalp-freundlich)
+
+#### Profitabilitaets-Overhaul
+- **Fee-Rate korrigiert**: 0.5% → 1.2% (Coinbase Taker Fee <$1000/Monat)
+- **TP/SL-Ratio optimiert**: 5%/3% → 8%/3% (netto R:R 1.87:1 statt 0.48:1)
+- **EV-Gate**: Nur Trades mit positivem Expected Value werden ausgefuehrt
+- **Confidence-Threshold**: 0.70 → 0.80 (weniger, aber bessere Trades)
+- **Max Open Positions**: 5 → 3 (Bear: 2, Bull: 6)
+- **Daily/Weekly Loss Limits**: 5%/10% → 3%/6%
+- **Trailing-Stop**: 3% → 4% (mehr Raum, regime-adaptiv)
+
+#### Strategy-Engine Verbesserungen
+- **Familien-Deduplizierung**: RSI/BB/MACD-Familien — nur staerkstes Signal pro Familie
+- **Gewichtete Konflikt-Resolution**: Buy braucht 30% Uebergewicht gegenueber Sell
+- **SELL-Veto**: Einzelnes Sell-Signal >85% blockiert alle Buys
+- **Fee-Awareness**: Scalping + Ultra Scalp pruefen ob ATR > 1.5× Round-Trip-Fees
+
+#### Trade-History & Tracking
+- **Bug-Fix**: DCA-Kaeufe und External-Holding-Verkaeufe werden jetzt in SQLite-DB gespeichert
+- **EUR-Werte**: Aktive Orders und Historie zeigen Euro-Wert (Entry + Aktuell)
+- **HODL P&L**: HODL-Position zeigt investierten Betrag, P&L in EUR und Prozent
+- **SQL-Injection-Fix**: Parameterisierte Query in getClosedTrades()
+- **Fee-Reserve-Check**: Coinbase-Fees werden bei EUR-Reserve-Pruefung beruecksichtigt
+
+#### Daily Trade Limits + Pair Cooldown
+- **Max Daily Trades**: Standard 6 (einstellbar)
+- **Pair Cooldown**: 2 Stunden zwischen Trades am gleichen Pair (einstellbar)
+- **Settings UI**: 3 neue Einstellungsfelder (Max Daily Trades, Pair Cooldown, Fee Rate)
+
+### Versionierung
+- **KoboldVersion.swift**: Single Source of Truth (0.3.98)
+- **Info.plist**: CFBundleVersion + CFBundleShortVersionString aktualisiert
+- **WebGUI**: Version-Tag + Footer-Badge auf v0.3.98
+- **build.sh**: VERSION + Build-Datum aktualisiert
+
+### Statistik
+- **87.192 Lines of Code**
+
+---
+
 ## Alpha v0.3.8 — 2026-03-03
 
 ### WebGUI — Teams Tab (Neu)

@@ -250,6 +250,7 @@ public actor AgentLoop {
         await registry.register(SunoApiTool())
         await registry.register(RedditApiTool())
         await registry.register(CoinbaseApiTool())
+        await registry.register(TradingTool())
         await registry.register(TwilioSmsTool())
         await registry.register(TwilioVoiceCallTool())
         await registry.register(EmailTool())
@@ -1686,6 +1687,24 @@ public actor AgentLoop {
             lines.append("- HuggingFace: VERBUNDEN. API-Token konfiguriert für Modell-Downloads.")
         }
 
+        #if os(macOS)
+        // Coinbase
+        let cbKeyName = UserDefaults.standard.string(forKey: "kobold.coinbase.keyName") ?? ""
+        let cbKeySecret = UserDefaults.standard.string(forKey: "kobold.coinbase.keySecret") ?? ""
+        if !cbKeyName.isEmpty && !cbKeySecret.isEmpty {
+            lines.append("- Coinbase: VERBUNDEN (API-Key konfiguriert). Nutze coinbase_api Tool für Konto, Kauf/Verkauf, Spot-Preise.")
+            let tradingEnabled = UserDefaults.standard.bool(forKey: "kobold.trading.enabled")
+            if tradingEnabled {
+                let pairsStr = UserDefaults.standard.string(forKey: "kobold.trading.pairs") ?? "BTC-EUR,ETH-EUR"
+                lines.append("- Trading Engine: AKTIV. Nutze trading Tool für Status, Analytics, Forecasts, Backtest, Positionen, Emergency Stop, Strategie-Erstellung. Konfigurierte Paare: \(pairsStr)")
+                lines.append("  Du kannst eigene Strategien erstellen: trading(action: create_strategy, name: 'meine_strategie', rules: '[{\"indicator\":\"rsi\",\"condition\":\"below\",\"value\":30,\"weight\":0.6,\"action\":\"buy\"}]', regime_filter: 'BULL,SIDEWAYS')")
+                lines.append("  Verfügbare Indikatoren: rsi, macd_histogram, bb_percentb, volume_ratio, atr, ema_slope, ema_crossover")
+            } else {
+                lines.append("- Trading Engine: Verfügbar aber deaktiviert. Nutze trading Tool (action: start) zum Starten oder aktiviere in Einstellungen → Trading.")
+            }
+        }
+        #endif
+
         if lines.isEmpty {
             return "Keine externen Dienste verbunden."
         }
@@ -2027,6 +2046,47 @@ public actor AgentLoop {
         Args: to (Telefonnummer im E.164 Format), body (Nachrichtentext, max 1600 Zeichen)
         ```json
         {"tool_name": "sms_send", "tool_args": {"to": "+491701234567", "body": "Hallo! Bin in 10 Minuten da."}}
+        ```
+
+        ### coinbase_api
+        Coinbase Advanced Trade API: Konto-Info, Kauf/Verkauf, Spot-Preise, Limit-Orders, Candles.
+        Authentifizierung über JWT (konfiguriert in Einstellungen → Integrationen → Coinbase).
+        ```json
+        {"tool_name": "coinbase_api", "tool_args": {"action": "accounts"}}
+        {"tool_name": "coinbase_api", "tool_args": {"action": "spot_price", "product_id": "BTC-EUR"}}
+        {"tool_name": "coinbase_api", "tool_args": {"action": "buy", "product_id": "BTC-EUR", "amount": "50"}}
+        {"tool_name": "coinbase_api", "tool_args": {"action": "sell", "product_id": "ETH-EUR", "amount": "100"}}
+        {"tool_name": "coinbase_api", "tool_args": {"action": "candles", "product_id": "BTC-EUR", "granularity": "ONE_HOUR", "limit": "100"}}
+        ```
+
+        ### trading
+        Krypto-Trading-System mit automatischem Hintergrund-Trading, Marktanalyse, Forecasting und Risikomanagement.
+        Die Trading Engine läuft als Background-Actor und nutzt die Coinbase-API-Anmeldedaten aus den Integrationen.
+        Aktionen:
+        - status: Engine-Status, Portfolio, offene Positionen, P&L
+        - analytics: Performance-Metriken (Win Rate, Sharpe Ratio, Max Drawdown)
+        - forecast: Markt-Prognose für ein Paar (1h/4h/24h Horizonte)
+        - trade_history: Letzte Trades (optional limit)
+        - open_positions: Alle offenen Positionen
+        - start/stop: Engine starten/stoppen
+        - emergency_stop: NOTFALL — schließt alle Positionen sofort
+        - backtest: Strategie backtesten (strategy + pair + days)
+        - products: Alle handelbaren Coins auf Coinbase
+        - staking: Staking-Rewards anzeigen
+        - regime: Aktuelles Markt-Regime (BULL/BEAR/SIDEWAYS/CRASH)
+        - create_strategy: Custom-Strategie erstellen (name + rules JSON + optional regime_filter)
+        - list_strategies: Alle Strategien (built-in + custom) auflisten
+        - delete_strategy: Custom-Strategie löschen (name)
+        Verfügbare Indikatoren für rules: rsi, macd_histogram, macd_line, macd_signal, bb_percentb, volume_ratio, atr, ema_slope, ema9, ema21, ema50, ema_crossover
+        Conditions: above, below, crosses_above, crosses_below, between (mit value2)
+        ```json
+        {"tool_name": "trading", "tool_args": {"action": "status"}}
+        {"tool_name": "trading", "tool_args": {"action": "forecast", "pair": "BTC-EUR"}}
+        {"tool_name": "trading", "tool_args": {"action": "analytics"}}
+        {"tool_name": "trading", "tool_args": {"action": "backtest", "strategy": "momentum", "pair": "ETH-EUR", "days": "30"}}
+        {"tool_name": "trading", "tool_args": {"action": "create_strategy", "name": "dip_buyer", "rules": "[{\"indicator\":\"rsi\",\"condition\":\"below\",\"value\":30,\"weight\":0.6,\"action\":\"buy\"},{\"indicator\":\"volume_ratio\",\"condition\":\"above\",\"value\":1.5,\"weight\":0.4,\"action\":\"buy\"}]", "regime_filter": "BULL,SIDEWAYS"}}
+        {"tool_name": "trading", "tool_args": {"action": "list_strategies"}}
+        {"tool_name": "trading", "tool_args": {"action": "delete_strategy", "name": "dip_buyer"}}
         ```
         """
     }

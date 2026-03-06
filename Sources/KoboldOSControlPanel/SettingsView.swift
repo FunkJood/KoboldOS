@@ -130,7 +130,42 @@ struct SettingsView: View {
     @State private var showSecretsManager: Bool = false
     @State private var connectionsVerified: Bool = false
 
-    private let sections = ["Allgemein", "Agenten", "Benachrichtigungen", "Berechtigungen", "Kontakte", "Teams", "Datenschutz", "Fähigkeiten", "Gedächtnis", "Persönlichkeit", "Sprache & Audio", "Sicherheit", "Integrationen", "Über"]
+    // Trading
+    @AppStorage("kobold.trading.enabled") private var tradingEnabled: Bool = false
+    @AppStorage("kobold.trading.autoTrade") private var tradingAutoTrade: Bool = false
+    @AppStorage("kobold.trading.pairs") private var tradingPairs: String = "BTC-EUR,ETH-EUR,SOL-EUR,DOGE-EUR,ADA-EUR,XRP-EUR,AVAX-EUR,LINK-EUR,DOT-EUR,MATIC-EUR,SHIB-EUR,UNI-EUR,LTC-EUR,ATOM-EUR,NEAR-EUR,APT-EUR,ARB-EUR,OP-EUR,FIL-EUR,AAVE-EUR,GRT-EUR,RENDER-EUR,FET-EUR,INJ-EUR,SUI-EUR"
+    @AppStorage("kobold.trading.cycleInterval") private var tradingCycleInterval: Int = 60
+    @AppStorage("kobold.trading.maxTradeSize") private var tradingMaxTradeSize: Double = 2.0
+    @AppStorage("kobold.trading.fixedTradeSize") private var tradingFixedTradeSize: Double = 5.0
+    @AppStorage("kobold.trading.eurReserve") private var tradingEurReserve: Double = 5.0
+    @AppStorage("kobold.trading.noLossSell") private var tradingNoLossSell: Bool = false
+    @AppStorage("kobold.trading.maxDailyLoss") private var tradingMaxDailyLoss: Double = 3.0
+    @AppStorage("kobold.trading.maxOpenPositions") private var tradingMaxOpenPositions: Int = 3
+    @AppStorage("kobold.trading.trailingStop") private var tradingTrailingStop: Double = 4.0
+    @AppStorage("kobold.trading.takeProfit") private var tradingTakeProfit: Double = 8.0
+    @AppStorage("kobold.trading.fixedStopLoss") private var tradingFixedStopLoss: Double = 3.0
+    @AppStorage("kobold.trading.tpSlMode") private var tradingTpSlMode: String = "trailing"
+    @AppStorage("kobold.trading.telegramAlerts") private var tradingTelegramAlerts: Bool = true
+    @AppStorage("kobold.trading.telegramDaily") private var tradingTelegramDaily: Bool = true
+    @AppStorage("kobold.trading.dailyReportTime") private var tradingDailyReportTime: String = "22:00"
+    @AppStorage("kobold.trading.selfImprove") private var tradingSelfImprove: Bool = true
+    @AppStorage("kobold.trading.selfImproveHours") private var tradingSelfImproveHours: Int = 6
+    @AppStorage("kobold.trading.confidenceThreshold") private var tradingConfidenceThreshold: Double = 0.8
+    @AppStorage("kobold.trading.circuitBreakers") private var tradingCircuitBreakers: Bool = true
+    @AppStorage("kobold.trading.hodlCoin") private var tradingHodlCoin: String = ""
+    @AppStorage("kobold.trading.atrStopMultiplier") private var tradingAtrStopMultiplier: Double = 1.5
+    @AppStorage("kobold.trading.atrTakeProfitMultiplier") private var tradingAtrTpMultiplier: Double = 3.0
+    @AppStorage("kobold.trading.dcaEnabled") private var tradingDcaEnabled: Bool = false
+    @AppStorage("kobold.trading.dcaDropPct") private var tradingDcaDropPct: Double = 5.0
+    @AppStorage("kobold.trading.dcaBuyAmount") private var tradingDcaBuyAmount: Double = 50.0
+    @AppStorage("kobold.trading.dcaMaxCount") private var tradingDcaMaxCount: Int = 5
+    @AppStorage("kobold.trading.maxWeeklyLoss") private var tradingMaxWeeklyLoss: Double = 6.0
+    @AppStorage("kobold.trading.maxDailyTrades") private var tradingMaxDailyTrades: Int = 6
+    @AppStorage("kobold.trading.pairCooldownMinutes") private var tradingPairCooldown: Double = 120.0
+    @AppStorage("kobold.trading.feeRate") private var tradingFeeRate: Double = 0.012
+    @State private var tradingEngineRunning: Bool = false
+
+    private let sections = ["Allgemein", "Agenten", "Benachrichtigungen", "Berechtigungen", "Kontakte", "Teams", "Datenschutz", "Fähigkeiten", "Gedächtnis", "Persönlichkeit", "Sprache & Audio", "Sicherheit", "Integrationen", "Trading", "Über"]
 
     var body: some View {
         HStack(spacing: 0) {
@@ -180,6 +215,7 @@ struct SettingsView: View {
                     case "Sprache & Audio":    speechAndAudioSection()
                     case "Sicherheit":         debugSecuritySection()
                     case "Integrationen":       connectionsSection()
+                    case "Trading":            tradingSettingsSection()
                     default:                   aboutSection()
                     }
                     Spacer(minLength: 40)
@@ -206,6 +242,7 @@ struct SettingsView: View {
         case "Sicherheit":        return "ladybug.fill"
         case "Sprache & Audio":   return "waveform"
         case "Integrationen":      return "link.circle.fill"
+        case "Trading":            return "chart.line.uptrend.xyaxis"
         default:                   return "info.circle.fill"
         }
     }
@@ -5276,6 +5313,403 @@ struct IdleTasksSettingsView: View {
                     }
                 }
             }
+        }
+    }
+}
+
+// MARK: - Trading Settings Section
+
+extension SettingsView {
+    @ViewBuilder
+    func tradingSettingsSection() -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Trading").font(.title2.bold())
+            Text("Krypto-Trading-Analyse und automatische Ausführung").font(.caption).foregroundColor(.secondary)
+        }
+
+        // Master Toggle
+        FuturisticBox(icon: "chart.line.uptrend.xyaxis", title: "Trading System", accent: .koboldGold) {
+            Toggle("Trading aktiviert", isOn: $tradingEnabled)
+                .onChange(of: tradingEnabled) { _, newVal in
+                    Task {
+                        if newVal { await TradingEngine.shared.start() }
+                        else { await TradingEngine.shared.stop() }
+                        tradingEngineRunning = await TradingEngine.shared.getIsRunning()
+                    }
+                }
+            Toggle("Auto-Trade (Signale automatisch ausführen)", isOn: $tradingAutoTrade)
+            HStack {
+                Circle()
+                    .fill(tradingEngineRunning ? Color.koboldEmerald : Color.red)
+                    .frame(width: 8, height: 8)
+                Text(tradingEngineRunning ? "Engine läuft" : "Engine gestoppt")
+                    .font(.caption).foregroundColor(.secondary)
+            }
+        }
+        .task { tradingEngineRunning = await TradingEngine.shared.getIsRunning() }
+
+        // Trading Pairs
+        FuturisticBox(icon: "bitcoinsign.circle.fill", title: "Handelspaare (\(tradingPairs.split(separator: ",").count))", accent: .orange) {
+            TextField("Paare (kommagetrennt, z.B. BTC-EUR,ETH-EUR,SOL-EUR)", text: $tradingPairs)
+                .textFieldStyle(.roundedBorder)
+            Text("Alle Coinbase-Paare unterstützt. Trennung durch Komma. Aktuell \(tradingPairs.split(separator: ",").count) Paare aktiv.")
+                .font(.caption2).foregroundColor(.secondary)
+            let quickPairs = ["BTC-EUR", "ETH-EUR", "SOL-EUR", "XRP-EUR", "DOGE-EUR", "ADA-EUR",
+                              "AVAX-EUR", "LINK-EUR", "DOT-EUR", "MATIC-EUR", "UNI-EUR", "LTC-EUR"]
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 75))], spacing: 4) {
+                ForEach(quickPairs, id: \.self) { pair in
+                    let alreadyAdded = tradingPairs.contains(pair)
+                    Button(pair.replacingOccurrences(of: "-EUR", with: "")) {
+                        if !alreadyAdded {
+                            tradingPairs += tradingPairs.isEmpty ? pair : ",\(pair)"
+                        }
+                    }
+                    .font(.system(size: 10)).buttonStyle(.bordered)
+                    .tint(alreadyAdded ? .gray : .orange)
+                    .disabled(alreadyAdded)
+                }
+            }
+            HStack {
+                Button("Top 25 laden") {
+                    tradingPairs = "BTC-EUR,ETH-EUR,SOL-EUR,DOGE-EUR,ADA-EUR,XRP-EUR,AVAX-EUR,LINK-EUR,DOT-EUR,MATIC-EUR,SHIB-EUR,UNI-EUR,LTC-EUR,ATOM-EUR,NEAR-EUR,APT-EUR,ARB-EUR,OP-EUR,FIL-EUR,AAVE-EUR,GRT-EUR,RENDER-EUR,FET-EUR,INJ-EUR,SUI-EUR"
+                }.font(.system(size: 11)).buttonStyle(.bordered).tint(.koboldEmerald)
+                Button("Alle entfernen") {
+                    tradingPairs = ""
+                }.font(.system(size: 11)).buttonStyle(.bordered).tint(.red)
+            }
+        }
+
+        // Risk Management
+        FuturisticBox(icon: "shield.lefthalf.filled", title: "Risikomanagement", accent: .red) {
+            VStack(alignment: .leading, spacing: 10) {
+                // Trade-Größe: Fester Betrag hat Vorrang, % ist obere Grenze
+                HStack {
+                    Text("Trade-Größe: \(String(format: "%.0f€", tradingFixedTradeSize))")
+                        .font(.system(size: 13, weight: .medium))
+                    Spacer()
+                    Text("pro Kauf").font(.caption2).foregroundColor(.secondary)
+                }
+                Slider(value: $tradingFixedTradeSize, in: 1...100, step: 1)
+                    .tint(.blue)
+
+                HStack {
+                    Text("Max. Trade (% Portfolio): \(String(format: "%.1f%%", tradingMaxTradeSize))")
+                        .font(.system(size: 13))
+                    Spacer()
+                    Text("Obergrenze").font(.caption2).foregroundColor(.secondary)
+                }
+                Slider(value: $tradingMaxTradeSize, in: 0.5...10, step: 0.5)
+                    .tint(.red)
+
+                Text("Es gilt immer der kleinere Wert: min(Trade-Größe, Portfolio × Max-%)")
+                    .font(.system(size: 10)).foregroundColor(.secondary).italic()
+
+                Divider()
+
+                HStack {
+                    Text("EUR-Reserve: \(String(format: "%.0f€", tradingEurReserve))")
+                        .font(.system(size: 13))
+                    Spacer()
+                    Text("Nicht antasten").font(.caption2).foregroundColor(.secondary)
+                }
+                Slider(value: $tradingEurReserve, in: 0...100, step: 5)
+                    .tint(.orange)
+
+                Toggle(isOn: $tradingNoLossSell) {
+                    Text("Nie im Minus verkaufen")
+                        .font(.system(size: 13))
+                }
+                .toggleStyle(.switch)
+
+                Divider()
+
+                HStack {
+                    Text("Max. Tagesverlust: \(String(format: "%.1f%%", tradingMaxDailyLoss))")
+                        .font(.system(size: 13))
+                    Spacer()
+                }
+                Slider(value: $tradingMaxDailyLoss, in: 1...20, step: 1)
+                    .tint(.red)
+
+                HStack {
+                    Text("Max. Wochenverlust: \(String(format: "%.1f%%", tradingMaxWeeklyLoss))")
+                        .font(.system(size: 13))
+                    Spacer()
+                }
+                Slider(value: $tradingMaxWeeklyLoss, in: 2...30, step: 1)
+                    .tint(.red)
+
+                HStack {
+                    Text("Trailing Stop: \(String(format: "%.1f%%", tradingTrailingStop))")
+                        .font(.system(size: 13))
+                    Spacer()
+                }
+                Slider(value: $tradingTrailingStop, in: 1...10, step: 0.5)
+                    .tint(.red)
+
+                Stepper("Max. offene Positionen: \(tradingMaxOpenPositions)", value: $tradingMaxOpenPositions, in: 1...20)
+                    .font(.system(size: 13))
+
+                Stepper("Max. Trades/Tag: \(tradingMaxDailyTrades)", value: $tradingMaxDailyTrades, in: 1...20)
+                    .font(.system(size: 13))
+
+                HStack {
+                    Text("Pair-Cooldown: \(Int(tradingPairCooldown)) Min.")
+                        .font(.system(size: 13))
+                    Spacer()
+                    Text("Nach Trade warten")
+                        .font(.caption2).foregroundColor(.secondary)
+                }
+                Slider(value: $tradingPairCooldown, in: 30...480, step: 30)
+                    .tint(.orange)
+
+                HStack {
+                    Text("Fee-Rate: \(String(format: "%.2f%%", tradingFeeRate * 100))")
+                        .font(.system(size: 13))
+                    Spacer()
+                    Text("Coinbase Taker")
+                        .font(.caption2).foregroundColor(.secondary)
+                }
+                Slider(value: $tradingFeeRate, in: 0.001...0.02, step: 0.001)
+                    .tint(.yellow)
+            }
+        }
+
+        // TP/SL System
+        FuturisticBox(icon: "target", title: "Take-Profit / Stop-Loss", accent: .orange) {
+            VStack(alignment: .leading, spacing: 10) {
+                Picker("Modus", selection: $tradingTpSlMode) {
+                    Text("Trailing").tag("trailing")
+                    Text("Fixed").tag("fixed")
+                    Text("Beides").tag("both")
+                    Text("ATR-basiert").tag("atr")
+                }
+                .pickerStyle(.segmented)
+
+                if tradingTpSlMode == "atr" {
+                    HStack {
+                        Text("ATR Stop-Multiplier: \(String(format: "%.1fx", tradingAtrStopMultiplier))")
+                            .font(.system(size: 13))
+                        Spacer()
+                        Text("SL = ATR × \(String(format: "%.1f", tradingAtrStopMultiplier))")
+                            .font(.caption2).foregroundColor(.secondary)
+                    }
+                    Slider(value: $tradingAtrStopMultiplier, in: 0.5...3.0, step: 0.5).tint(.red)
+
+                    HStack {
+                        Text("ATR TP-Multiplier: \(String(format: "%.1fx", tradingAtrTpMultiplier))")
+                            .font(.system(size: 13))
+                        Spacer()
+                        Text("TP = ATR × \(String(format: "%.1f", tradingAtrTpMultiplier))")
+                            .font(.caption2).foregroundColor(.secondary)
+                    }
+                    Slider(value: $tradingAtrTpMultiplier, in: 1.0...6.0, step: 0.5).tint(.koboldEmerald)
+                    Text("ATR passt Stops dynamisch an die aktuelle Volatilität an (professioneller Standard).")
+                        .font(.caption2).foregroundColor(.secondary)
+                }
+
+                if tradingTpSlMode == "fixed" || tradingTpSlMode == "both" {
+                    HStack {
+                        Text("Take-Profit: \(String(format: "%.1f%%", tradingTakeProfit))")
+                            .font(.system(size: 13))
+                        Spacer()
+                        Text("Position wird bei +\(String(format: "%.1f%%", tradingTakeProfit)) Gewinn geschlossen")
+                            .font(.caption2).foregroundColor(.secondary)
+                    }
+                    Slider(value: $tradingTakeProfit, in: 1...20, step: 0.5)
+                        .tint(.koboldEmerald)
+
+                    HStack {
+                        Text("Fixed Stop-Loss: \(String(format: "%.1f%%", tradingFixedStopLoss))")
+                            .font(.system(size: 13))
+                        Spacer()
+                        Text("Position wird bei -\(String(format: "%.1f%%", tradingFixedStopLoss)) Verlust geschlossen")
+                            .font(.caption2).foregroundColor(.secondary)
+                    }
+                    Slider(value: $tradingFixedStopLoss, in: 1...10, step: 0.5)
+                        .tint(.red)
+                }
+
+                Text(tpSlModeDescription)
+                    .font(.caption2).foregroundColor(.secondary)
+            }
+        }
+
+        // Strategies
+        FuturisticBox(icon: "brain.head.profile", title: "Strategien", accent: .koboldEmerald) {
+            Toggle("Momentum (RSI + MACD)", isOn: Binding(
+                get: { UserDefaults.standard.object(forKey: "kobold.trading.strategies.momentum") != nil ? UserDefaults.standard.bool(forKey: "kobold.trading.strategies.momentum") : true },
+                set: { UserDefaults.standard.set($0, forKey: "kobold.trading.strategies.momentum") }
+            ))
+            Toggle("Breakout (N-Perioden High/Low)", isOn: Binding(
+                get: { UserDefaults.standard.object(forKey: "kobold.trading.strategies.breakout") != nil ? UserDefaults.standard.bool(forKey: "kobold.trading.strategies.breakout") : true },
+                set: { UserDefaults.standard.set($0, forKey: "kobold.trading.strategies.breakout") }
+            ))
+            Toggle("Mean Reversion (Bollinger Bands)", isOn: Binding(
+                get: { UserDefaults.standard.object(forKey: "kobold.trading.strategies.mean_reversion") != nil ? UserDefaults.standard.bool(forKey: "kobold.trading.strategies.mean_reversion") : true },
+                set: { UserDefaults.standard.set($0, forKey: "kobold.trading.strategies.mean_reversion") }
+            ))
+            Toggle("Trend Following (EMA Crossover)", isOn: Binding(
+                get: { UserDefaults.standard.object(forKey: "kobold.trading.strategies.trend_following") != nil ? UserDefaults.standard.bool(forKey: "kobold.trading.strategies.trend_following") : true },
+                set: { UserDefaults.standard.set($0, forKey: "kobold.trading.strategies.trend_following") }
+            ))
+            Toggle("Scalping (Schnelle Gewinnmitnahmen)", isOn: Binding(
+                get: { UserDefaults.standard.object(forKey: "kobold.trading.strategies.scalping") != nil ? UserDefaults.standard.bool(forKey: "kobold.trading.strategies.scalping") : true },
+                set: { UserDefaults.standard.set($0, forKey: "kobold.trading.strategies.scalping") }
+            ))
+            Toggle("Ultra Scalp (Leverage-Ready, 1-3h)", isOn: Binding(
+                get: { UserDefaults.standard.object(forKey: "kobold.trading.strategies.ultra_scalp") != nil ? UserDefaults.standard.bool(forKey: "kobold.trading.strategies.ultra_scalp") : true },
+                set: { UserDefaults.standard.set($0, forKey: "kobold.trading.strategies.ultra_scalp") }
+            ))
+            Toggle("RSI-Divergenz (Trendwende-Erkennung)", isOn: Binding(
+                get: { UserDefaults.standard.object(forKey: "kobold.trading.strategies.divergence") != nil ? UserDefaults.standard.bool(forKey: "kobold.trading.strategies.divergence") : true },
+                set: { UserDefaults.standard.set($0, forKey: "kobold.trading.strategies.divergence") }
+            ))
+            Toggle("Akkumulation (Smart-Money-Detection)", isOn: Binding(
+                get: { UserDefaults.standard.object(forKey: "kobold.trading.strategies.accumulation") != nil ? UserDefaults.standard.bool(forKey: "kobold.trading.strategies.accumulation") : true },
+                set: { UserDefaults.standard.set($0, forKey: "kobold.trading.strategies.accumulation") }
+            ))
+            Toggle("Support/Resistance (Key-Level-Bounce)", isOn: Binding(
+                get: { UserDefaults.standard.object(forKey: "kobold.trading.strategies.support_resistance") != nil ? UserDefaults.standard.bool(forKey: "kobold.trading.strategies.support_resistance") : true },
+                set: { UserDefaults.standard.set($0, forKey: "kobold.trading.strategies.support_resistance") }
+            ))
+            HStack {
+                Text("Confidence Threshold: \(String(format: "%.0f%%", tradingConfidenceThreshold * 100))")
+                    .font(.system(size: 13))
+                Spacer()
+            }
+            Slider(value: $tradingConfidenceThreshold, in: 0.3...0.95, step: 0.05)
+                .tint(.koboldEmerald)
+
+            // Trading-Stil Presets
+            Text("Trading-Stil Presets").font(.system(size: 12, weight: .semibold)).padding(.top, 4)
+            HStack(spacing: 8) {
+                Button("Scalper") {
+                    tradingConfidenceThreshold = 0.45
+                    tradingTakeProfit = 1.5; tradingFixedStopLoss = 1.0
+                    tradingTpSlMode = "fixed"; tradingCycleInterval = 30
+                }.font(.system(size: 11)).buttonStyle(.bordered).tint(.orange)
+                Button("Day-Trader") {
+                    tradingConfidenceThreshold = 0.55
+                    tradingTakeProfit = 3.0; tradingFixedStopLoss = 2.0
+                    tradingTpSlMode = "both"; tradingCycleInterval = 60
+                }.font(.system(size: 11)).buttonStyle(.bordered).tint(.koboldEmerald)
+                Button("Swing-Trader") {
+                    tradingConfidenceThreshold = 0.70
+                    tradingTakeProfit = 8.0; tradingFixedStopLoss = 4.0
+                    tradingTpSlMode = "trailing"; tradingCycleInterval = 120
+                }.font(.system(size: 11)).buttonStyle(.bordered).tint(.blue)
+            }
+            Text("Presets ändern Threshold, TP/SL, Modus und Zyklus-Intervall auf einmal.")
+                .font(.caption2).foregroundColor(.secondary)
+        }
+
+        // DCA (Dollar Cost Averaging / Nachkaufen)
+        FuturisticBox(icon: "arrow.down.circle.fill", title: "DCA (Progressiv Nachkaufen)", accent: .blue) {
+            VStack(alignment: .leading, spacing: 10) {
+                Toggle("DCA aktiviert", isOn: $tradingDcaEnabled)
+                if tradingDcaEnabled {
+                    HStack {
+                        Text("Dip-Schwelle pro Stufe: \(String(format: "%.0f%%", tradingDcaDropPct))")
+                            .font(.system(size: 13))
+                        Spacer()
+                        Text("Stufe 1: -\(String(format: "%.0f%%", tradingDcaDropPct)), Stufe 2: -\(String(format: "%.0f%%", tradingDcaDropPct * 2)), ...")
+                            .font(.caption2).foregroundColor(.secondary)
+                    }
+                    Slider(value: $tradingDcaDropPct, in: 2...20, step: 1).tint(.blue)
+
+                    HStack {
+                        Text("Max. Nachkauf-Betrag: \(String(format: "%.0f€", tradingDcaBuyAmount))")
+                            .font(.system(size: 13))
+                        Spacer()
+                    }
+                    Slider(value: $tradingDcaBuyAmount, in: 5...200, step: 5).tint(.blue)
+
+                    HStack {
+                        Text("Max. Nachkäufe: \(tradingDcaMaxCount)")
+                            .font(.system(size: 13))
+                        Spacer()
+                    }
+                    Slider(value: Binding(get: { Double(tradingDcaMaxCount) }, set: { tradingDcaMaxCount = Int($0) }), in: 1...10, step: 1).tint(.blue)
+
+                    Text("Progressiv: 1€ → 2€ → 4€ → ... (max \(String(format: "%.0f€", tradingDcaBuyAmount))). Maximal \(tradingDcaMaxCount) Nachkäufe pro Coin. Erfordert Auto-Trade AN.")
+                        .font(.caption2).foregroundColor(.secondary)
+                }
+            }
+        }
+
+        // HODL-Coin (wird nie verkauft)
+        FuturisticBox(icon: "lock.shield.fill", title: "HODL-Coin", accent: .orange) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("Geschützter Coin:").font(.system(size: 13))
+                    TextField("z.B. BTC", text: $tradingHodlCoin)
+                        .textFieldStyle(.roundedBorder).frame(width: 100)
+                    if !tradingHodlCoin.isEmpty {
+                        Button(action: { tradingHodlCoin = "" }) {
+                            Image(systemName: "xmark.circle.fill").foregroundColor(.secondary)
+                        }.buttonStyle(.plain)
+                    }
+                }
+                Text(tradingHodlCoin.isEmpty
+                     ? "Kein HODL-Coin gesetzt. Alle Coins können von der Engine verkauft werden."
+                     : "\(tradingHodlCoin.uppercased()) wird NIEMALS von der Engine verkauft — nur manuell.")
+                    .font(.caption2).foregroundColor(.secondary)
+            }
+        }
+
+        // Circuit Breakers
+        FuturisticBox(icon: "shield.checkered", title: "Circuit Breakers", accent: .red) {
+            VStack(alignment: .leading, spacing: 8) {
+                Toggle("Circuit Breakers aktiv", isOn: $tradingCircuitBreakers)
+                Text("Automatischer Handelsstopp bei Flash-Crash (>5% in 5min), Volatilitäts-Spike (ATR >3x Durchschnitt) oder Kaskaden-Stops (>3 SL in Folge).")
+                    .font(.caption2).foregroundColor(.secondary)
+            }
+        }
+
+        // Notifications
+        FuturisticBox(icon: "bell.badge.fill", title: "Telegram-Benachrichtigungen", accent: .blue) {
+            Toggle("Trade-Alerts", isOn: $tradingTelegramAlerts)
+            Toggle("Tägliche Zusammenfassung", isOn: $tradingTelegramDaily)
+            if tradingTelegramDaily {
+                HStack {
+                    Text("Bericht um:").font(.system(size: 13))
+                    TextField("22:00", text: $tradingDailyReportTime)
+                        .textFieldStyle(.roundedBorder).frame(width: 80)
+                    Text("Uhr").font(.caption).foregroundColor(.secondary)
+                }
+            }
+            Text("Nutzt den Telegram-Bot aus Integrationen → Telegram")
+                .font(.caption2).foregroundColor(.secondary)
+        }
+
+        // Self-Improvement
+        FuturisticBox(icon: "sparkles", title: "Selbstoptimierung", accent: .purple) {
+            Toggle("Automatische Strategieoptimierung", isOn: $tradingSelfImprove)
+            if tradingSelfImprove {
+                Stepper("Intervall: alle \(tradingSelfImproveHours) Stunden", value: $tradingSelfImproveHours, in: 1...24)
+                    .font(.system(size: 13))
+            }
+            Text("Analysiert Performance und passt Strategie-Parameter automatisch an. Neue Version wird nur deployed wenn Drawdown ≤ vorherige.")
+                .font(.caption2).foregroundColor(.secondary)
+        }
+
+        // Advanced
+        FuturisticBox(icon: "wrench.and.screwdriver.fill", title: "Erweitert", accent: .secondary) {
+            Stepper("Zyklus-Intervall: \(tradingCycleInterval) Sek.", value: $tradingCycleInterval, in: 10...300, step: 10)
+                .font(.system(size: 13))
+            Text("Wie oft die Engine Marktdaten abruft und Strategien evaluiert.")
+                .font(.caption2).foregroundColor(.secondary)
+        }
+    }
+
+    private var tpSlModeDescription: String {
+        switch tradingTpSlMode {
+        case "trailing": return "Trailing Stop folgt dem Preis nach oben. Wenn der Kurs um den Stop-% vom Hoch fällt, wird verkauft."
+        case "fixed": return "Take-Profit schließt bei Gewinn-%, Fixed Stop-Loss bei Verlust-%. Kein Trailing."
+        case "both": return "Kombination: TP bei Gewinn-%, SL bei Verlust-%, plus Trailing Stop vom Hoch. Erste Bedingung gewinnt."
+        case "atr": return "ATR-basiert: Stops und Take-Profit werden dynamisch anhand der aktuellen Volatilität (Average True Range) berechnet. Professioneller Standard."
+        default: return ""
         }
     }
 }

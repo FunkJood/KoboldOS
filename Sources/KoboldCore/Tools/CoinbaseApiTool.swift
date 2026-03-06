@@ -33,7 +33,8 @@ public struct CoinbaseApiTool: Tool {
                 "spot_price", "exchange_rates", "user", "addresses", "create_address",
                 "payment_methods", "buy", "sell", "limit_buy", "limit_sell",
                 "cancel_order", "list_orders", "order_detail",
-                "products", "product_detail", "preview_buy", "preview_sell"
+                "products", "product_detail", "preview_buy", "preview_sell",
+                "candles", "staking_rewards"
             ], required: true),
             "account_id": ToolSchemaProperty(type: "string", description: "Coinbase Account/Wallet UUID (von 'accounts' abrufen)"),
             "to": ToolSchemaProperty(type: "string", description: "Empfänger für send: E-Mail, Krypto-Adresse oder User-ID"),
@@ -289,6 +290,25 @@ public struct CoinbaseApiTool: Tool {
         case "order_detail":
             guard let oid = arguments["order_id"], !oid.isEmpty else { return "Error: 'order_id' fehlt." }
             return await coinbaseGET("/api/v3/brokerage/orders/historical/\(oid)")
+
+        case "candles":
+            guard let pid = arguments["product_id"], !pid.isEmpty else {
+                return "Error: 'product_id' fehlt (z.B. BTC-EUR)."
+            }
+            let granularity = arguments["currency"] ?? "ONE_HOUR" // Reuse currency field for granularity
+            let end = Int(Date().timeIntervalSince1970)
+            let seconds: Int
+            switch granularity {
+            case "ONE_HOUR": seconds = 3600
+            case "SIX_HOUR": seconds = 21600
+            case "ONE_DAY": seconds = 86400
+            default: seconds = 3600
+            }
+            let start = end - (seconds * 300)
+            return await coinbaseGET("/api/v3/brokerage/products/\(pid)/candles?start=\(start)&end=\(end)&granularity=\(granularity)")
+
+        case "staking_rewards":
+            return await coinbaseGET("/v2/accounts?limit=100")
 
         default:
             return "Error: Unbekannte Aktion '\(action)'."

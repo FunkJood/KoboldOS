@@ -25,7 +25,7 @@
 
 KoboldOS ist ein **vollautonomes KI-Agent-System**, das komplett lokal auf deinem Rechner läuft. Kein einfacher Chatbot — ein Agent, der selbstständig Tools nutzt, plant, handelt und sich erinnert.
 
-Ein lokales Ollama-Sprachmodell wird mit **55+ Tools**, persistentem Gedächtnis, Aufgabenplanung, Spracheingabe und Agent-zu-Agent Kommunikation verbunden.
+Ein lokales Ollama-Sprachmodell wird mit **55+ Tools**, persistentem Gedaechtnis, Aufgabenplanung, Spracheingabe, Agent-zu-Agent Kommunikation und einer regime-adaptiven **Trading Engine** verbunden.
 
 ### Warum KoboldOS?
 
@@ -52,7 +52,7 @@ brew install ollama && ollama serve
 # 2. KoboldOS bauen
 git clone https://github.com/FunkJood/KoboldOS.git
 cd KoboldOS && bash scripts/build.sh
-# Erstellt ~/Desktop/KoboldOS-0.3.8.dmg
+# Erstellt ~/Desktop/KoboldOS-0.3.98.dmg
 ```
 
 Oder: DMG öffnen, in Programme ziehen, starten.
@@ -153,6 +153,27 @@ KoboldOS-Instanzen kommunizieren miteinander — macOS-App steuert Docker-Agent,
 - **Workflow-Editor**: Visueller Canvas mit 18 Node-Typen, Connection Snap, Inspector
 - **Workflow-Execution**: Node-by-Node mit Live Thought Stream und dediziertem Workflow Chat
 - **Multi-Agent-Teams**: Agent-Teams mit Rollen, System-Prompts und Chat-Diskurs
+
+### Trading Engine (Coinbase)
+
+Automatisierter Krypto-Handel mit 9 Strategien, regime-adaptivem Risikomanagement und KI-Agent-Entscheidungen.
+
+| Feature | Beschreibung |
+|---------|-------------|
+| **9 Strategien** | Momentum, Trend Following, Breakout, Mean Reversion, Scalping, Ultra Scalp, Divergence, Accumulation, Support/Resistance |
+| **Marktregime-Erkennung** | Bull / Bear / Sideways / Crash — automatisch via EMA + ATR |
+| **Regime-Adaptive Limits** | Position-Limits, Asset-Konzentration, Trailing-Stop passen sich der Marktlage an |
+| **Multi-Coin** | Frei konfigurierbare Pair-Liste (z.B. BTC-EUR, ETH-EUR, SOL-EUR) |
+| **EV-Gate** | Nur Trades mit positivem Expected Value werden ausgefuehrt |
+| **DCA** | Dollar-Cost-Averaging fuer externe Holdings |
+| **HODL-Schutz** | Ein Coin kann als HODL markiert werden (nie automatisch verkauft) |
+| **KI-Agent** | Optionaler Agent-Loop prueft jedes Signal mit Marktkontext |
+| **Backtester** | Multi-Coin Auto-Backtest mit historischen Daten |
+| **Risk Management** | Circuit Breakers, Daily/Weekly Loss Limits, ATR-basierte Stops |
+| **Fee-Awareness** | Strategien pruefen ob ATR die Coinbase-Fees (1.2%) deckt |
+| **EUR-Reserve** | Mindest-EUR-Saldo wird nie unterschritten |
+
+> **Hinweis**: Trading erfordert Coinbase Advanced Trade API-Keys (kostenlos). Nutze nur Kapital das du bereit bist zu verlieren. KoboldOS gibt keine Anlageberatung.
 
 ---
 

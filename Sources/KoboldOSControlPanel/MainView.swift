@@ -883,6 +883,7 @@ struct SidebarView: View {
         case .teams:        return "Teams"
         case .contacts:     return "Kontakte"
         case .voice:        return "Sprechen"
+        case .trading:      return "Trading"
         case .settings:     return l10n.language.settings
         }
     }
@@ -896,6 +897,7 @@ struct SidebarView: View {
         case .teams:        return "person.3.fill"
         case .contacts:     return "person.2.fill"
         case .voice:        return "waveform.circle.fill"
+        case .trading:      return "chart.line.uptrend.xyaxis"
         case .settings:     return "gearshape.fill"
         }
     }
@@ -1541,6 +1543,7 @@ struct ContentAreaView: View {
                 case .teams:        TeamsView(viewModel: viewModel)
                 case .contacts:     ContactsView(viewModel: viewModel)
                 case .voice:        VoiceView(viewModel: viewModel)
+                case .trading:      TradingView(viewModel: viewModel)
                 case .settings:     SettingsView(viewModel: viewModel)
                 }
             }
@@ -1748,6 +1751,7 @@ enum SidebarTab: String, CaseIterable {
     case teams
     case contacts
     case memory
+    case trading
     case settings
 }
 

@@ -53,7 +53,7 @@ final class WebAppServer: @unchecked Sendable {
     }
 
     /// Current WebGUI version — bump when HTML changes to auto-update on-disk copy
-    private static let webGUIVersion = "v0.3.81"
+    private static let webGUIVersion = "v0.3.98"
 
     /// Write default index.html to disk if not present or outdated (agent can then edit it)
     func ensureWebGUIFiles() {
@@ -728,7 +728,7 @@ final class WebAppServer: @unchecked Sendable {
 
     private static func buildHTML() -> String {
         return """
-        <!-- KoboldOS WebGUI v0.3.81 -->
+        <!-- KoboldOS WebGUI v0.3.98 -->
         <!DOCTYPE html>
         <html lang="de">
         <head>
@@ -1995,7 +1995,7 @@ final class WebAppServer: @unchecked Sendable {
             <div class="nav-item" onclick="switchTab('crm',this)"><i data-lucide="contact"></i><span>Kontakte</span></div>
             <div class="nav-item" onclick="switchTab('workflows',this)"><i data-lucide="workflow"></i><span>Workflows</span></div>
           </div>
-          <div class="sidebar-footer" id="versionFooter">KoboldOS <span class="version-badge">v0.3.71</span></div>
+          <div class="sidebar-footer" id="versionFooter">KoboldOS <span class="version-badge">v0.3.98</span></div>
         </div>
 
         <div class="main">
