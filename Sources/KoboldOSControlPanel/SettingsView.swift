@@ -138,6 +138,7 @@ struct SettingsView: View {
     @AppStorage("kobold.trading.maxTradeSize") private var tradingMaxTradeSize: Double = 2.0
     @AppStorage("kobold.trading.fixedTradeSize") private var tradingFixedTradeSize: Double = 5.0
     @AppStorage("kobold.trading.eurReserve") private var tradingEurReserve: Double = 5.0
+    @AppStorage("kobold.trading.eurTargetPct") private var tradingEurTargetPct: Double = 15.0
     @AppStorage("kobold.trading.noLossSell") private var tradingNoLossSell: Bool = false
     @AppStorage("kobold.trading.maxDailyLoss") private var tradingMaxDailyLoss: Double = 3.0
     @AppStorage("kobold.trading.maxOpenPositions") private var tradingMaxOpenPositions: Int = 3
@@ -5415,6 +5416,17 @@ extension SettingsView {
                 }
                 Slider(value: $tradingEurReserve, in: 0...100, step: 5)
                     .tint(.orange)
+
+                HStack {
+                    Text("EUR-Zielanteil: \(String(format: "%.0f%%", tradingEurTargetPct)) des Portfolios")
+                        .font(.system(size: 13))
+                    Spacer()
+                    Text("Ziel-Allokation").font(.caption2).foregroundColor(.secondary)
+                }
+                Slider(value: $tradingEurTargetPct, in: 5...50, step: 5)
+                    .tint(.koboldGold)
+                Text("EUR-Anteil wird bei \(String(format: "%.0f%%", tradingEurTargetPct)) gehalten. Über Ziel → keine neuen Käufe blockiert. Unter Ziel → Sells priorisiert.")
+                    .font(.system(size: 10)).foregroundColor(.secondary).italic()
 
                 Toggle(isOn: $tradingNoLossSell) {
                     Text("Nie im Minus verkaufen")

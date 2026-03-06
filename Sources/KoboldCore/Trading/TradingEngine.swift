@@ -493,21 +493,28 @@ public actor TradingEngine {
                     }
 
                     // EUR-Rücklage-Check vor Sell-Signalen
-                    // Wenn EUR-Balance gesund (>120% der Reserve): schwache Sells ignorieren (Positionen halten)
-                    // Wenn EUR unter Reserve: Sells priorisieren (Cash-Aufbau)
+                    // Prüft sowohl feste Reserve (€) als auch Ziel-Anteil (% vom Portfolio)
                     if bestSignal.action == .sell {
                         let eurReserve = UserDefaults.standard.double(forKey: "kobold.trading.eurReserve")
-                        if eurReserve > 0 {
-                            let eurBalance = liveHoldings
-                                .first(where: { $0.currency.uppercased() == "EUR" })?.balance ?? 0
-                            if eurBalance > eurReserve * 1.2 && bestSignal.confidence < 0.70 {
+                        let eurTargetPct = UserDefaults.standard.double(forKey: "kobold.trading.eurTargetPct")
+                        let eurBalance = liveHoldings
+                            .first(where: { $0.currency.uppercased() == "EUR" })?.balance ?? 0
+                        let portfolioValue = liveHoldings.reduce(0.0) { $0 + $1.nativeValue }
+                        // EUR-Ziel: max(feste Reserve, %-Anteil vom Portfolio)
+                        let pctTarget = eurTargetPct > 0 ? portfolioValue * eurTargetPct / 100 : 0
+                        let effectiveReserve = max(eurReserve, pctTarget)
+
+                        if effectiveReserve > 0 {
+                            if eurBalance > effectiveReserve * 1.2 && bestSignal.confidence < 0.70 {
                                 // Reserve gesund → nur sehr schwache Sells ignorieren
-                                await log.add("[\(pair)] SELL-Signal (\(String(format: "%.0f%%", bestSignal.confidence * 100))) ignoriert — EUR-Reserve gesund (\(String(format: "%.0f€", eurBalance))/\(String(format: "%.0f€", eurReserve))). Nur Sells >70% erlaubt.", type: .risk)
+                                let eurPct = portfolioValue > 0 ? (eurBalance / portfolioValue) * 100 : 0
+                                await log.add("[\(pair)] SELL-Signal (\(String(format: "%.0f%%", bestSignal.confidence * 100))) ignoriert — EUR gesund (\(String(format: "%.0f€", eurBalance)) = \(String(format: "%.0f%%", eurPct)), Ziel: \(String(format: "%.0f€", effectiveReserve))). Nur Sells >70% erlaubt.", type: .risk)
                                 continue
                             }
-                            if eurBalance < eurReserve * 0.8 {
+                            if eurBalance < effectiveReserve * 0.8 {
                                 // Reserve kritisch niedrig → Sell priorisieren
-                                await log.add("[\(pair)] EUR-Reserve niedrig (\(String(format: "%.0f€", eurBalance))/\(String(format: "%.0f€", eurReserve))) — Sell priorisiert", type: .risk)
+                                let eurPctLow = portfolioValue > 0 ? (eurBalance / portfolioValue) * 100 : 0
+                                await log.add("[\(pair)] EUR unter Ziel (\(String(format: "%.0f€", eurBalance)) = \(String(format: "%.0f%%", eurPctLow)), Ziel: \(String(format: "%.0f€", effectiveReserve))) — Sell priorisiert", type: .risk)
                             }
                         }
                     }
