@@ -93,6 +93,10 @@ struct TradingView: View {
     // Cost Basis pro Coin (für echtes P&L)
     @State private var costBasis: [String: (avgPrice: Double, totalInvested: Double)] = [:]
 
+    // Fee-Toggle: P&L nach Gebühren (zeigt Break-Even korrekt)
+    @AppStorage("kobold.trading.showFeesInPnL") private var showFeesInPnL = false
+    @State private var observedFeeRate: Double = 0
+
     // Engine-Monitoring-Info pro Coin
     @State private var holdingMonitorInfo: [String: TradingEngine.HoldingMonitorInfo] = [:]
 
@@ -406,7 +410,10 @@ struct TradingView: View {
                 let effectiveInvested = totalInvestedStored > 0 ? totalInvestedStored : autoCostBasis
                 // Bei Cost Basis: nur Crypto-Wert vergleichen (EUR-Saldo ist kein Investment)
                 let cryptoOnlyValue = liveHoldings.filter { $0.currency != "EUR" && $0.currency != "EURC" }.reduce(0.0) { $0 + $1.nativeValue }
-                let compareValue = totalInvestedStored > 0 ? displayPortfolio : cryptoOnlyValue
+                // Fee-Modus: geschätzte Exit-Fees abziehen
+                let exitFeeTotal = showFeesInPnL ? cryptoOnlyValue * observedFeeRate : 0
+                let adjustedCryptoValue = cryptoOnlyValue - exitFeeTotal
+                let compareValue = totalInvestedStored > 0 ? (showFeesInPnL ? displayPortfolio - exitFeeTotal : displayPortfolio) : adjustedCryptoValue
                 let totalPnL = effectiveInvested > 0 ? compareValue - effectiveInvested : 0
                 let totalPnLPctAll = effectiveInvested > 0 ? (totalPnL / effectiveInvested) * 100 : 0
                 VStack(alignment: .leading, spacing: 4) {
@@ -425,6 +432,10 @@ struct TradingView: View {
                         let source = totalInvestedStored > 0 ? "Einlage" : "Cost Basis"
                         Text(String(format: "%+.1f%% (\(source): %.0f€)", totalPnLPctAll, effectiveInvested))
                             .font(.system(size: 10)).foregroundColor(.secondary)
+                        if showFeesInPnL && exitFeeTotal > 0.01 {
+                            Text("Net nach Gebühren (Fee: \(String(format: "%.2f%%", observedFeeRate * 100)) × In+Out)")
+                                .font(.system(size: 9)).foregroundColor(.orange)
+                        }
                     } else {
                         Text("—").font(.system(size: 18, weight: .bold, design: .monospaced))
                         Text("Wird berechnet…").font(.system(size: 10)).foregroundColor(.secondary)
@@ -600,8 +611,8 @@ struct TradingView: View {
                 Text("Coin").frame(width: 55, alignment: .leading)
                 Text("Menge").frame(width: 90, alignment: .trailing)
                 Text("Wert").frame(width: 65, alignment: .trailing)
-                Text("P&L €").frame(width: 60, alignment: .trailing)
-                Text("P&L %").frame(width: 50, alignment: .trailing)
+                Text(showFeesInPnL ? "P&L € net" : "P&L €").frame(width: 60, alignment: .trailing)
+                Text(showFeesInPnL ? "P&L % net" : "P&L %").frame(width: 50, alignment: .trailing)
                 Text("24h €").frame(width: 55, alignment: .trailing)
                 Text("24h %").frame(width: 50, alignment: .trailing)
                 Text("").frame(maxWidth: .infinity)
@@ -622,8 +633,10 @@ struct TradingView: View {
         let dir = priceDirections["\(h.currency)-EUR"] ?? .unchanged
         let change24h = priceChanges24h[h.currency] ?? 0
         let cb = costBasis[h.currency]
-        let dashPnL: Double? = cb.map { h.nativeValue - $0.totalInvested }
-        let dashPnLPct: Double? = cb.flatMap { $0.totalInvested > 0 ? (h.nativeValue - $0.totalInvested) / $0.totalInvested * 100 : nil }
+        // Fee-Modus: Exit-Fee vom aktuellen Wert abziehen für reales Break-Even
+        let effectiveValue = showFeesInPnL && h.currency != "EUR" ? h.nativeValue * (1 - observedFeeRate) : h.nativeValue
+        let dashPnL: Double? = cb.map { effectiveValue - $0.totalInvested }
+        let dashPnLPct: Double? = cb.flatMap { $0.totalInvested > 0 ? (effectiveValue - $0.totalInvested) / $0.totalInvested * 100 : nil }
         let pnlColor: Color = (dashPnL ?? 0) > 0 ? .koboldEmerald : (dashPnL ?? 0) < 0 ? .red : .secondary
         // 24h Wertänderung in EUR berechnen
         let change24hEur = h.currency != "EUR" ? h.nativeValue * (change24h / (100 + change24h)) : 0
@@ -743,8 +756,10 @@ struct TradingView: View {
         let cb = costBasis[h.currency]
         let monitor = holdingMonitorInfo[h.currency]
         let entryPrice = cb?.avgPrice ?? monitor?.entryPrice
-        let realPnL: Double? = cb.map { h.nativeValue - $0.totalInvested }
-        let realPnLPct: Double? = cb.flatMap { $0.totalInvested > 0 ? (h.nativeValue - $0.totalInvested) / $0.totalInvested * 100 : nil }
+        // Fee-Modus: Exit-Fee vom aktuellen Wert abziehen für reales Break-Even
+        let effectiveValue = showFeesInPnL ? h.nativeValue * (1 - observedFeeRate) : h.nativeValue
+        let realPnL: Double? = cb.map { effectiveValue - $0.totalInvested }
+        let realPnLPct: Double? = cb.flatMap { $0.totalInvested > 0 ? (effectiveValue - $0.totalInvested) / $0.totalInvested * 100 : nil }
         let isHodl = !hodlCoin.isEmpty && h.currency.uppercased() == hodlCoin
         let isMonitored = monitor?.isMonitored == true && !isHodl
         let pnlColor: Color = (realPnL ?? 0) > 0 ? .koboldEmerald : (realPnL ?? 0) < 0 ? .red : .secondary
@@ -1427,8 +1442,15 @@ struct TradingView: View {
                     let ct = UserDefaults.standard.double(forKey: "kobold.trading.confidenceThreshold")
                     configCard("Confidence", "\(String(format: "%.0f", (ct > 0 ? ct : 0.7) * 100))%")
                     configCard("TP/SL Modus", UserDefaults.standard.string(forKey: "kobold.trading.tpSlMode") ?? "trailing")
-                    let fr = UserDefaults.standard.double(forKey: "kobold.trading.feeRate")
-                    configCard("Fee Rate", "\(String(format: "%.1f", (fr > 0 ? fr : 0.005) * 100))%")
+                    let fr = observedFeeRate > 0 ? observedFeeRate : (UserDefaults.standard.double(forKey: "kobold.trading.feeRate").nonZeroOr(0.005))
+                    configCard("Fee Rate (echt)", "\(String(format: "%.2f", fr * 100))%")
+                    HStack(spacing: 4) {
+                        Toggle("Fees in P&L", isOn: $showFeesInPnL)
+                            .toggleStyle(.switch).controlSize(.mini)
+                            .font(.system(size: 9))
+                    }
+                    .padding(6).background(showFeesInPnL ? Color.koboldEmerald.opacity(0.15) : Color.koboldSurface.opacity(0.4))
+                    .cornerRadius(6)
                     let hc = UserDefaults.standard.string(forKey: "kobold.trading.hodlCoin") ?? ""
                     configCard("HODL-Coin", hc.isEmpty ? "—" : hc)
                     configCard("Circuit Break", UserDefaults.standard.bool(forKey: "kobold.trading.circuitBreakers") ? "AN" : "AUS")
@@ -2093,6 +2115,9 @@ struct TradingView: View {
             autoBacktestResults = await TradingEngine.shared.getLatestBacktests()
             learningNotes = await TradingEngine.shared.getLearningNotes()
 
+            // 7b2. Observed fee rate für P&L-Anzeige
+            observedFeeRate = await TradeExecutor.shared.getObservedFeeRate()
+
             // 7c. Load cost basis for real P&L
             await withTaskGroup(of: (String, (Double, Double)?).self) { group in
                 for h in liveHoldings where h.currency != "EUR" && h.currency != "EURC" && h.nativeValue > 0.50 {
@@ -2302,4 +2327,10 @@ struct CustomStrategyInfo: Identifiable {
     var enabled: Bool
     var version: Int = 1
     var ruleDetails: [StrategyRule] = []
+}
+
+private extension Double {
+    func nonZeroOr(_ fallback: Double) -> Double {
+        self > 0 ? self : fallback
+    }
 }

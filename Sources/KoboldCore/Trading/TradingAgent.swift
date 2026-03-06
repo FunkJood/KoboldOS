@@ -1,6 +1,10 @@
 #if os(macOS)
 import Foundation
 
+private extension Double {
+    func nonZeroOr(_ fallback: Double) -> Double { self > 0 ? self : fallback }
+}
+
 // MARK: - Trading Agent
 // Standalone KI-Agent der von der TradingEngine getriggert wird.
 // Eigener AgentLoop mit eigenem LLMRunner — blockiert die Chat-UI NICHT.
@@ -99,7 +103,9 @@ public actor TradingAgent {
         Buy-Signale: \(buySignalsOn ? "AKTIV" : "DEAKTIVIERT (keine neuen Käufe!)")
         Sell-Signale: \(sellSignalsOn ? "AKTIV" : "DEAKTIVIERT (nur TP/SL verkauft!)")
         Aktive Strategien: \(activeStrategies.joined(separator: ", "))
+        Fee-Rate: \(String(format: "%.2f%%", (d.double(forKey: "kobold.trading.feeRate").nonZeroOr(0.005)) * 100)) pro Trade (Entry + Exit = \(String(format: "%.2f%%", (d.double(forKey: "kobold.trading.feeRate").nonZeroOr(0.005)) * 200)) Round-Trip)
         WICHTIG: Trade-Größe = min(fester Betrag, Portfolio × Max-%). Bei Kauf: Balance - Reserve = verfügbar.
+        WICHTIG: Bei P&L-Berechnung IMMER Entry- UND Exit-Fee berücksichtigen! Break-Even = Entry + Round-Trip-Fee.
         """
     }
 
