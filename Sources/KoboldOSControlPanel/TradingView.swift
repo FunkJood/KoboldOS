@@ -97,6 +97,9 @@ struct TradingView: View {
     @AppStorage("kobold.trading.showFeesInPnL") private var showFeesInPnL = false
     @State private var observedFeeRate: Double = 0
 
+    // Forecast Accuracy
+    @State private var forecastAccuracy1h: (total: Int, correct: Int, accuracy: Double) = (0, 0, 0)
+
     // Engine-Monitoring-Info pro Coin
     @State private var holdingMonitorInfo: [String: TradingEngine.HoldingMonitorInfo] = [:]
 
@@ -1440,7 +1443,15 @@ struct TradingView: View {
                     let mop = UserDefaults.standard.integer(forKey: "kobold.trading.maxOpenPositions")
                     configCard("Max Positionen", "\(mop > 0 ? mop : 5)")
                     let ct = UserDefaults.standard.double(forKey: "kobold.trading.confidenceThreshold")
-                    configCard("Confidence", "\(String(format: "%.0f", (ct > 0 ? ct : 0.7) * 100))%")
+                    VStack(spacing: 2) {
+                        configCard("Confidence", "\(String(format: "%.0f", (ct > 0 ? ct : 0.7) * 100))%")
+                        if forecastAccuracy1h.total > 0 {
+                            let accColor: Color = forecastAccuracy1h.accuracy >= 54 ? .koboldEmerald : forecastAccuracy1h.accuracy >= 45 ? .orange : .red
+                            Text("Forecast: \(String(format: "%.0f%%", forecastAccuracy1h.accuracy)) (\(forecastAccuracy1h.correct)/\(forecastAccuracy1h.total))")
+                                .font(.system(size: 8, weight: .medium, design: .monospaced))
+                                .foregroundColor(accColor)
+                        }
+                    }
                     configCard("TP/SL Modus", UserDefaults.standard.string(forKey: "kobold.trading.tpSlMode") ?? "trailing")
                     let fr = observedFeeRate > 0 ? observedFeeRate : (UserDefaults.standard.double(forKey: "kobold.trading.feeRate").nonZeroOr(0.005))
                     configCard("Fee Rate (echt)", "\(String(format: "%.2f", fr * 100))%")
@@ -2119,6 +2130,11 @@ struct TradingView: View {
 
             // 7b2. Observed fee rate für P&L-Anzeige
             observedFeeRate = await TradeExecutor.shared.getObservedFeeRate()
+
+            // 7b3. Forecast Accuracy für Dashboard
+            if let acc = try? await TradingDatabase.shared.getForecastAccuracy(horizon: "1h", days: 7) {
+                forecastAccuracy1h = acc
+            }
 
             // 7c. Load cost basis for real P&L
             await withTaskGroup(of: (String, (Double, Double)?).self) { group in
