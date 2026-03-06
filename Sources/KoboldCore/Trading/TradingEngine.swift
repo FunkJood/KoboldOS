@@ -379,7 +379,9 @@ public actor TradingEngine {
 
                     // Position-Size Pre-Filter: Übergewichtete Positionen NICHT nachkaufen
                     // Spart Agent-Calls und verhindert Rejection-Cooldown-Loops
-                    if bestSignal.action == .buy, let holding = existingHolding {
+                    // HODL-Coin ist ausgenommen — darf unbegrenzt akkumuliert werden
+                    let isHodlCoin = !hodlCoin.isEmpty && pairBase.uppercased() == hodlCoin
+                    if bestSignal.action == .buy, let holding = existingHolding, !isHodlCoin {
                         let portfolioValue = liveHoldings.reduce(0.0) { $0 + $1.nativeValue }
                         let maxPosPct = UserDefaults.standard.double(forKey: "kobold.trading.maxPositionPct")
                         let effectiveMaxPos = maxPosPct > 0 ? maxPosPct : 5.0  // Default 5%
