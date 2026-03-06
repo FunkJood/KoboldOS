@@ -379,16 +379,28 @@ public actor TradingEngine {
 
                     // Position-Size Pre-Filter: Übergewichtete Positionen NICHT nachkaufen
                     // Spart Agent-Calls und verhindert Rejection-Cooldown-Loops
-                    // HODL-Coin ist ausgenommen — darf unbegrenzt akkumuliert werden
+                    // HODL-Coin: gleiches Limit wie EUR-Reserve (z.B. 25€) statt Positions-%-Limit
                     let isHodlCoin = !hodlCoin.isEmpty && pairBase.uppercased() == hodlCoin
-                    if bestSignal.action == .buy, let holding = existingHolding, !isHodlCoin {
-                        let portfolioValue = liveHoldings.reduce(0.0) { $0 + $1.nativeValue }
-                        let maxPosPct = UserDefaults.standard.double(forKey: "kobold.trading.maxPositionPct")
-                        let effectiveMaxPos = maxPosPct > 0 ? maxPosPct : 5.0  // Default 5%
-                        let currentPct = portfolioValue > 0 ? (holding.nativeValue / portfolioValue) * 100 : 0
-                        if currentPct > effectiveMaxPos {
-                            await log.add("[\(pair)] BUY-Signal ignoriert — Position bereits \(String(format: "%.1f%%", currentPct)) des Portfolios (Max: \(String(format: "%.0f%%", effectiveMaxPos)))", type: .risk)
-                            continue
+                    if bestSignal.action == .buy, let holding = existingHolding {
+                        if isHodlCoin {
+                            // HODL-Coin: Zielwert = % vom Gesamtportfolio (Default: 15%)
+                            let portfolioValue = liveHoldings.reduce(0.0) { $0 + $1.nativeValue }
+                            let hodlPct = UserDefaults.standard.double(forKey: "kobold.trading.hodlTargetPct")
+                            let effectiveHodlPct = hodlPct > 0 ? hodlPct : 15.0
+                            let hodlTarget = portfolioValue * effectiveHodlPct / 100
+                            if holding.nativeValue >= hodlTarget {
+                                await log.add("[\(pair)] BUY-Signal ignoriert — HODL-Ziel erreicht (\(String(format: "%.2f€", holding.nativeValue))/\(String(format: "%.0f€", hodlTarget)) = \(String(format: "%.0f%%", effectiveHodlPct)))", type: .risk)
+                                continue
+                            }
+                        } else {
+                            let portfolioValue = liveHoldings.reduce(0.0) { $0 + $1.nativeValue }
+                            let maxPosPct = UserDefaults.standard.double(forKey: "kobold.trading.maxPositionPct")
+                            let effectiveMaxPos = maxPosPct > 0 ? maxPosPct : 5.0  // Default 5%
+                            let currentPct = portfolioValue > 0 ? (holding.nativeValue / portfolioValue) * 100 : 0
+                            if currentPct > effectiveMaxPos {
+                                await log.add("[\(pair)] BUY-Signal ignoriert — Position bereits \(String(format: "%.1f%%", currentPct)) des Portfolios (Max: \(String(format: "%.0f%%", effectiveMaxPos)))", type: .risk)
+                                continue
+                            }
                         }
 
                         // DCA-Schutz: Kein Nachkauf am selben Tag wenn Preis nicht deutlich gefallen

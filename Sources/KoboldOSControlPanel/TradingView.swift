@@ -1453,6 +1453,8 @@ struct TradingView: View {
                     .cornerRadius(6)
                     let hc = UserDefaults.standard.string(forKey: "kobold.trading.hodlCoin") ?? ""
                     configCard("HODL-Coin", hc.isEmpty ? "—" : hc)
+                    let hodlPct = UserDefaults.standard.double(forKey: "kobold.trading.hodlTargetPct")
+                    configCard("HODL-Ziel", "\(String(format: "%.0f", hodlPct > 0 ? hodlPct : 15))% Portfolio")
                     configCard("Circuit Break", UserDefaults.standard.bool(forKey: "kobold.trading.circuitBreakers") ? "AN" : "AUS")
                     let bsOn = UserDefaults.standard.object(forKey: "kobold.trading.buySignalsEnabled") == nil || UserDefaults.standard.bool(forKey: "kobold.trading.buySignalsEnabled")
                     let ssOn = UserDefaults.standard.object(forKey: "kobold.trading.sellSignalsEnabled") == nil || UserDefaults.standard.bool(forKey: "kobold.trading.sellSignalsEnabled")

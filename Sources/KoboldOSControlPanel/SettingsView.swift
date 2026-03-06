@@ -153,6 +153,7 @@ struct SettingsView: View {
     @AppStorage("kobold.trading.confidenceThreshold") private var tradingConfidenceThreshold: Double = 0.8
     @AppStorage("kobold.trading.circuitBreakers") private var tradingCircuitBreakers: Bool = true
     @AppStorage("kobold.trading.hodlCoin") private var tradingHodlCoin: String = ""
+    @AppStorage("kobold.trading.hodlTargetPct") private var tradingHodlTargetPct: Double = 15.0
     @AppStorage("kobold.trading.atrStopMultiplier") private var tradingAtrStopMultiplier: Double = 1.5
     @AppStorage("kobold.trading.atrTakeProfitMultiplier") private var tradingAtrTpMultiplier: Double = 3.0
     @AppStorage("kobold.trading.dcaEnabled") private var tradingDcaEnabled: Bool = false
@@ -5651,9 +5652,17 @@ extension SettingsView {
                         }.buttonStyle(.plain)
                     }
                 }
+                if !tradingHodlCoin.isEmpty {
+                    HStack {
+                        Text("Ziel-Anteil:").font(.system(size: 13))
+                        TextField("15", value: $tradingHodlTargetPct, format: .number)
+                            .textFieldStyle(.roundedBorder).frame(width: 60)
+                        Text("% des Portfolios").font(.system(size: 12)).foregroundColor(.secondary)
+                    }
+                }
                 Text(tradingHodlCoin.isEmpty
                      ? "Kein HODL-Coin gesetzt. Alle Coins können von der Engine verkauft werden."
-                     : "\(tradingHodlCoin.uppercased()) wird NIEMALS von der Engine verkauft — nur manuell.")
+                     : "\(tradingHodlCoin.uppercased()) wird NIEMALS verkauft. Nachkäufe bis \(String(format: "%.0f", tradingHodlTargetPct))% des Portfolios erlaubt.")
                     .font(.caption2).foregroundColor(.secondary)
             }
         }
