@@ -266,7 +266,39 @@ public actor TradingAgent {
             sections.append(hm)
         }
 
-        // 6. Letzte Trades (für Kontext: was wurde kürzlich gemacht?)
+        // 6. Forecast-Accuracy (7 Tage)
+        let acc1h = (try? await TradingDatabase.shared.getForecastAccuracy(horizon: "1h", days: 7)) ?? (0, 0, 0.0)
+        let acc4h = (try? await TradingDatabase.shared.getForecastAccuracy(horizon: "4h", days: 7)) ?? (0, 0, 0.0)
+        if acc1h.0 > 0 || acc4h.0 > 0 {
+            var accStr = "== FORECAST-ACCURACY (7 Tage) =="
+            if acc1h.0 > 0 {
+                accStr += "\n1h: \(String(format: "%.0f%%", acc1h.2 * 100)) (\(acc1h.0) Forecasts, \(acc1h.1) korrekt)"
+            }
+            if acc4h.0 > 0 {
+                accStr += "\n4h: \(String(format: "%.0f%%", acc4h.2 * 100)) (\(acc4h.0) Forecasts, \(acc4h.1) korrekt)"
+            }
+            accStr += "\nHINWEIS: Bei Accuracy <50% sind Prognosen unzuverlässig — sei skeptischer bei Forecast-basierten Signalen!"
+            sections.append(accStr)
+        }
+
+        // 7. Strategie Hot/Cold Status
+        let multipliers = await StrategyEngine.shared.getMultipliers()
+        let stratPerfs = await TradingRiskManager.shared.getStrategyPerformance()
+        if !stratPerfs.isEmpty {
+            var hotCold = "== STRATEGIE-STATUS =="
+            for p in stratPerfs {
+                let mul = multipliers[p.name] ?? 1.0
+                let status: String
+                if p.winRate >= 60 { status = "HOT" }
+                else if p.winRate <= 40 { status = "COLD" }
+                else { status = "NEUTRAL" }
+                hotCold += "\n\(p.name): \(status) (WR: \(String(format: "%.0f%%", p.winRate)), \(p.totalTrades) Trades, Multiplier: \(String(format: "%.2f", mul)))"
+            }
+            hotCold += "\nHINWEIS: COLD-Strategien haben reduzierte Confidence. HOT-Strategien sind aktuell profitabel."
+            sections.append(hotCold)
+        }
+
+        // 8. Letzte Trades (für Kontext: was wurde kürzlich gemacht?)
         let recentTrades = (try? await TradingDatabase.shared.getTradeHistory(limit: 5)) ?? []
         if !recentTrades.isEmpty {
             var rt = "== LETZTE 5 TRADES =="
@@ -342,10 +374,28 @@ public actor TradingAgent {
     }
 
     /// Verkauf einer Position (von UI-Button oder TP/SL).
-    public func executeSell(currency: String, reason: String) async -> String {
+    /// holdingInfo: Optional — wird von monitorExternalHoldings() mitgegeben damit der Agent
+    /// auch extern gekaufte Positionen sieht (nicht nur Engine-DB-Trades).
+    public func executeSell(currency: String, reason: String,
+                            holdingInfo: (balance: Double, nativeValue: Double, entryPrice: Double)? = nil) async -> String {
         let settings = buildSettingsContext()
         let pair = "\(currency)-EUR"
         let marketContext = await buildMarketContext(pair: pair)
+
+        // Externe Holding-Info für den Agent-Kontext aufbereiten
+        var holdingContext = ""
+        if let h = holdingInfo {
+            let pnlPct = h.entryPrice > 0 ? ((h.nativeValue / h.balance - h.entryPrice) / h.entryPrice) * 100 : 0
+            holdingContext = """
+
+            == COINBASE-POSITION (VERIFIZIERT) ==
+            \(currency): \(String(format: "%.6f", h.balance)) Stück
+            Wert: \(String(format: "%.2f€", h.nativeValue))
+            Einkaufspreis: \(String(format: "%.4f€", h.entryPrice))
+            P&L: \(String(format: "%+.1f%%", pnlPct))
+            WICHTIG: Diese Position existiert auf Coinbase — auch wenn sie nicht in der Engine-DB ist!
+            """
+        }
 
         let prompt = """
         Verkaufe die gesamte \(currency)-Position.
@@ -354,8 +404,10 @@ public actor TradingAgent {
         \(settings)
 
         \(marketContext)
+        \(holdingContext)
 
-        Prüfe die Marktlage und Prognosen oben. Wenn der Verkauf sinnvoll ist:
+        WICHTIG: Die Position existiert garantiert auf Coinbase (vom Risk-Management verifiziert).
+        Führe den Verkauf aus ohne die Position erneut zu prüfen.
         Nutze coinbase_api mit action "sell" und currency_pair "\(pair)".
         Setze amount auf "all" um alles zu verkaufen.
         Bestätige den Verkauf oder melde den Fehler.

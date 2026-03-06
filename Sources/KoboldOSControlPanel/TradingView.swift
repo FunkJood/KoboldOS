@@ -933,6 +933,10 @@ struct TradingView: View {
             UserDefaults.standard.object(forKey: "kobold.trading.strategies.mean_reversion") == nil || UserDefaults.standard.bool(forKey: "kobold.trading.strategies.mean_reversion") ? "MeanRev" : nil,
             UserDefaults.standard.object(forKey: "kobold.trading.strategies.trend_following") == nil || UserDefaults.standard.bool(forKey: "kobold.trading.strategies.trend_following") ? "Trend" : nil,
             UserDefaults.standard.object(forKey: "kobold.trading.strategies.scalping") == nil || UserDefaults.standard.bool(forKey: "kobold.trading.strategies.scalping") ? "Scalp" : nil,
+            UserDefaults.standard.object(forKey: "kobold.trading.strategies.ultra_scalp") == nil || UserDefaults.standard.bool(forKey: "kobold.trading.strategies.ultra_scalp") ? "UltraScalp" : nil,
+            UserDefaults.standard.object(forKey: "kobold.trading.strategies.divergence") == nil || UserDefaults.standard.bool(forKey: "kobold.trading.strategies.divergence") ? "Divergence" : nil,
+            UserDefaults.standard.object(forKey: "kobold.trading.strategies.accumulation") == nil || UserDefaults.standard.bool(forKey: "kobold.trading.strategies.accumulation") ? "Akkum" : nil,
+            UserDefaults.standard.object(forKey: "kobold.trading.strategies.support_resistance") == nil || UserDefaults.standard.bool(forKey: "kobold.trading.strategies.support_resistance") ? "S/R" : nil,
         ].compactMap { $0 }
         let _ = strategies // suppress unused warning
 
@@ -1514,6 +1518,10 @@ struct TradingView: View {
             strategyCard("Mean Reversion", description: "Bollinger Band Reversion in Sideways-Märkten. Kauft bei Überverkauf, verkauft bei Überkauf.", key: "kobold.trading.strategies.mean_reversion", icon: "arrow.left.and.right")
             strategyCard("Trend Following", description: "EMA Crossover System (Golden/Death Cross) + MACD Richtungswechsel. Folgt etablierten Trends.", key: "kobold.trading.strategies.trend_following", icon: "arrow.up.forward.circle.fill")
             strategyCard("Scalping", description: "Kurzfristige Gewinnmitnahmen: BB-Squeeze, RSI-Dips, Pullback-Erkennung. Für schnelle Trades.", key: "kobold.trading.strategies.scalping", icon: "hare.fill")
+            strategyCard("Ultra Scalp", description: "6-Check Leverage-Ready System (1-3h Haltezeit). Aggressiv mit engem Stop-Loss.", key: "kobold.trading.strategies.ultra_scalp", icon: "bolt.trianglebadge.exclamationmark")
+            strategyCard("Divergence", description: "RSI-Preis-Divergenz (bullish/bearish). Erkennt versteckte Umkehrsignale.", key: "kobold.trading.strategies.divergence", icon: "arrow.triangle.swap")
+            strategyCard("Akkumulation", description: "OBV + Smart-Money-Detection. Erkennt institutionelle Kaufmuster und Distribution.", key: "kobold.trading.strategies.accumulation", icon: "chart.bar.fill")
+            strategyCard("Support/Resistance", description: "Key-Level-Bounce & Break-Erkennung. Handelt an historisch signifikanten Preisniveaus.", key: "kobold.trading.strategies.support_resistance", icon: "rectangle.split.3x1")
 
             // Custom-Strategien
             HStack {
@@ -1610,7 +1618,11 @@ struct TradingView: View {
                         Text("Mean Reversion").tag("mean_reversion")
                         Text("Trend Following").tag("trend_following")
                         Text("Scalping").tag("scalping")
-                    }.frame(width: 160)
+                        Text("Ultra Scalp").tag("ultra_scalp")
+                        Text("Divergence").tag("divergence")
+                        Text("Akkumulation").tag("accumulation")
+                        Text("Support/Resistance").tag("support_resistance")
+                    }.frame(width: 180)
                 }
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Paar").font(.caption.weight(.semibold))

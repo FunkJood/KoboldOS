@@ -1045,6 +1045,7 @@ public actor StrategyEngine {
     private var customStrategies: [CustomStrategy] = []
     private var confidenceThreshold: Double = 0.8
     private let strategiesPath: URL
+    private var strategyMultipliers: [String: Double] = [:]  // 0.5...1.5
 
     private init() {
         let base = FileManager.default.homeDirectoryForCurrentUser
@@ -1060,8 +1061,24 @@ public actor StrategyEngine {
         if threshold > 0 { confidenceThreshold = threshold }
     }
 
+    /// Aktualisiert Confidence-Multipliers basierend auf Win-Rate pro Strategie.
+    /// Win-Rate 60% → 1.2, 40% → 0.8, 50% → 1.0. Min 5 Trades für Anpassung.
+    public func updateMultipliers(performances: [(name: String, winRate: Double, trades: Int)]) {
+        for perf in performances {
+            guard perf.trades >= 5 else { continue }
+            // Linear: WR 50% → 1.0, WR 60% → 1.2, WR 40% → 0.8
+            let multiplier = min(max(0.5 + perf.winRate, 0.5), 1.5)
+            strategyMultipliers[perf.name] = multiplier
+        }
+    }
+
+    /// Gibt aktuelle Multipliers zurück (für Agent-Kontext)
+    public func getMultipliers() -> [String: Double] {
+        return strategyMultipliers
+    }
+
     /// Evaluiert alle aktiven Strategien (built-in + custom) und gibt Signale über dem Threshold zurück
-    public func evaluateAll(pair: String, candles: [Candle], indicators: IndicatorSnapshot, regime: MarketRegime) async -> [TradingSignal] {
+    public func evaluateAll(pair: String, candles: [Candle], indicators: IndicatorSnapshot, regime: MarketRegime, feeRate: Double = 0) async -> [TradingSignal] {
         let d = UserDefaults.standard
         let log = TradingActivityLog.shared
         var signals: [TradingSignal] = []
@@ -1072,10 +1089,19 @@ public actor StrategyEngine {
             let enabled = d.object(forKey: key) != nil ? d.bool(forKey: key) : true
             guard enabled else { continue }
 
-            let signal = strategy.evaluate(pair: pair, candles: candles, indicators: indicators, regime: regime)
+            var signal = strategy.evaluate(pair: pair, candles: candles, indicators: indicators, regime: regime)
+            // Adaptive Confidence-Multiplier: Win-Rate-basiert
+            let multiplier = strategyMultipliers[strategy.name] ?? 1.0
+            if multiplier != 1.0 && signal.action != .hold {
+                let adjusted = min(max(signal.confidence * multiplier, 0), 1)
+                signal = TradingSignal(action: signal.action, confidence: adjusted,
+                                       reason: signal.reason, strategy: signal.strategy,
+                                       pair: signal.pair, suggestedSize: signal.suggestedSize)
+            }
             if signal.action != .hold && signal.confidence >= confidenceThreshold {
+                let mulStr = multiplier != 1.0 ? " [×\(String(format: "%.2f", multiplier))]" : ""
                 signals.append(signal)
-                await log.add("[\(pair)] \(strategy.name) → \(signal.action.rawValue) \(String(format: "%.0f%%", signal.confidence * 100)) ✓", type: .signal)
+                await log.add("[\(pair)] \(strategy.name) → \(signal.action.rawValue) \(String(format: "%.0f%%", signal.confidence * 100))\(mulStr) ✓", type: .signal)
             } else if signal.action != .hold {
                 await log.add("[\(pair)] \(strategy.name) → \(signal.action.rawValue) \(String(format: "%.0f%%", signal.confidence * 100)) < \(String(format: "%.0f%%", confidenceThreshold * 100)) Threshold", type: .signal)
             }
@@ -1147,15 +1173,18 @@ public actor StrategyEngine {
             }
         }
 
-        // === Gebühren-Awareness: BUY-Signale nur wenn erwartete Bewegung > 3× Round-Trip-Gebühren ===
-        let feeRate = d.double(forKey: "kobold.trading.feeRate")
-        let effectiveFee = feeRate > 0 ? feeRate : 0.012
-        let minRequiredMovePct = effectiveFee * 2 * 3 * 100  // 2× Fee × 3 = min. % Bewegung
-
-        let filteredSignals = signals.filter { signal in
-            if signal.action == .sell { return true }
-            let minConfidence = minRequiredMovePct / 10.0
-            return signal.confidence >= minConfidence
+        // === Gebühren-Awareness: BUY-Signale nur wenn Confidence > fee-basiertem Minimum ===
+        // feeRate = 0 bei Coinbase One → kein Filter. feeRate > 0 → proportionaler Threshold.
+        let filteredSignals: [TradingSignal]
+        if feeRate > 0 {
+            let roundTripPct = feeRate * 2 * 100  // z.B. 1.2% → 2.4%
+            let minConfidence = min(roundTripPct * 3 / 10.0, 0.90)  // 2.4% × 3 / 10 = 0.72
+            filteredSignals = signals.filter { signal in
+                if signal.action == .sell { return true }
+                return signal.confidence >= minConfidence
+            }
+        } else {
+            filteredSignals = signals  // 0% Fees (Coinbase One) → kein Fee-Filter
         }
 
         return filteredSignals.sorted { $0.confidence > $1.confidence }

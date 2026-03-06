@@ -41,7 +41,7 @@ public struct Backtester: Sendable {
     /// Realistisch: Echter Trailing Stop, Slippage-Modell, korrekte Gebühren, TP/SL aus Settings.
     public func run(strategy: any TradingStrategy, candles: [Candle], pair: String,
                     initialCapital: Double = 10000, positionSizePct: Double = 2.0,
-                    feeRate: Double = 0.012, slippagePct: Double = 0.0015) -> BacktestResult {
+                    feeRate: Double = 0, slippagePct: Double = 0.0015) -> BacktestResult {
 
         guard candles.count >= 200 else {
             return BacktestResult(strategy: strategy.name, pair: pair, periodDays: 0,

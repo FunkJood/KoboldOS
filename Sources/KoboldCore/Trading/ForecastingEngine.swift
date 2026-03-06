@@ -3,6 +3,13 @@ import Foundation
 
 // MARK: - Forecast Result
 
+public struct FactorScore: Sendable, Codable {
+    public let name: String
+    public let score: Double     // raw score (positive = bull, negative = bear)
+    public let weight: Double    // gewicht (0-1)
+    public let contribution: Double  // score * weight
+}
+
 public struct ForecastResult: Sendable, Codable {
     public let horizon: String          // "1h", "4h", "24h", "48h", "7d"
     public let direction: String        // "UP", "DOWN", "SIDEWAYS"
@@ -11,14 +18,15 @@ public struct ForecastResult: Sendable, Codable {
     public let currentPrice: Double
     public let targetPrice: Double
     public let factors: [String]        // Contributing factors
+    public let factorScores: [FactorScore]  // Detaillierte Faktor-Beiträge
 
     public init(horizon: String, direction: String, confidence: Double, targetPct: Double,
-                currentPrice: Double, factors: [String]) {
+                currentPrice: Double, factors: [String], factorScores: [FactorScore] = []) {
         self.horizon = horizon; self.direction = direction
         self.confidence = min(max(confidence, 0), 1)
         self.targetPct = targetPct; self.currentPrice = currentPrice
         self.targetPrice = currentPrice * (1 + targetPct / 100)
-        self.factors = factors
+        self.factors = factors; self.factorScores = factorScores
     }
 }
 
@@ -71,6 +79,7 @@ public struct ForecastingEngine: Sendable {
         var bullScore = 0.0
         var bearScore = 0.0
         var factors: [String] = []
+        var fScores: [FactorScore] = []
 
         // Regime-adaptive Gewichte: In Trends zählen Trend-Indikatoren mehr,
         // in Seitwärtsmärkten zählen Mean-Reversion-Indikatoren mehr
@@ -85,6 +94,7 @@ public struct ForecastingEngine: Sendable {
             bearScore += abs(rsiScore) * weights.rsi
             factors.append("RSI bearish (\(String(format: "%.1f", indicators.rsi)))")
         }
+        fScores.append(FactorScore(name: "rsi", score: rsiScore, weight: weights.rsi, contribution: rsiScore * weights.rsi))
 
         // === 2. MACD Score + Crossover-Nähe ===
         let macdStrength = min(abs(indicators.macdHistogram) / (currentPrice * 0.001), 1)
@@ -95,6 +105,8 @@ public struct ForecastingEngine: Sendable {
             bearScore += macdStrength * weights.macd
             factors.append("MACD bearish (\(String(format: "%.4f", indicators.macdHistogram)))")
         }
+
+        fScores.append(FactorScore(name: "macd", score: indicators.macdHistogram > 0 ? macdStrength : -macdStrength, weight: weights.macd, contribution: (indicators.macdHistogram > 0 ? macdStrength : -macdStrength) * weights.macd))
 
         // MACD Crossover Proximity: kurz vor Crossover = starkes Signal
         let histAbs = abs(indicators.macdHistogram)
@@ -119,6 +131,8 @@ public struct ForecastingEngine: Sendable {
             bearScore += min(abs(slope) / 0.3, 1) * weights.trend
             factors.append("EMA50-Trend abwärts (\(String(format: "%+.2f%%", slope)))")
         }
+        let trendScore = slope > 0.05 ? min(slope / 0.3, 1) : (slope < -0.05 ? -min(abs(slope) / 0.3, 1) : 0)
+        fScores.append(FactorScore(name: "trend", score: trendScore, weight: weights.trend, contribution: trendScore * weights.trend))
 
         // === 4. EMA Alignment (NEU) ===
         let alignment = emaAlignmentScore(indicators: indicators)
@@ -129,6 +143,7 @@ public struct ForecastingEngine: Sendable {
             bearScore += abs(alignment) * weights.emaAlignment
             factors.append("EMA bearish aligned (9<21<50)")
         }
+        fScores.append(FactorScore(name: "emaAlignment", score: alignment, weight: weights.emaAlignment, contribution: alignment * weights.emaAlignment))
 
         // === 5. Preis vs EMA200 — Long-Term Bias (NEU) ===
         if indicators.ema200 > 0 {
@@ -143,6 +158,11 @@ public struct ForecastingEngine: Sendable {
                 if distPct < -5 { factors.append("Preis \(String(format: "%.1f%%", distPct)) unter EMA200") }
             }
         }
+        do {
+            let ema200Score: Double = indicators.ema200 > 0 ? (currentPrice - indicators.ema200) / indicators.ema200 * 10 : 0
+            let clampedEma200 = min(max(ema200Score, -1), 1)
+            fScores.append(FactorScore(name: "ema200Bias", score: clampedEma200, weight: weights.ema200Bias, contribution: clampedEma200 * weights.ema200Bias))
+        }
 
         // === 6. Bollinger Band Position ===
         if indicators.bbPercentB > 0.8 {
@@ -154,6 +174,10 @@ public struct ForecastingEngine: Sendable {
             bullScore += strength * weights.bollingerBand
             factors.append("Unteres BB-Band (%B=\(String(format: "%.2f", indicators.bbPercentB)))")
         }
+        do {
+            let bbScore: Double = indicators.bbPercentB > 0.8 ? -(indicators.bbPercentB - 0.8) / 0.2 : (indicators.bbPercentB < 0.2 ? (0.2 - indicators.bbPercentB) / 0.2 : 0)
+            fScores.append(FactorScore(name: "bollingerBand", score: bbScore, weight: weights.bollingerBand, contribution: bbScore * weights.bollingerBand))
+        }
 
         // === 7. Volume-Analyse (verbessert) ===
         let volScore = volumeAnalysis(candles: candles, indicators: indicators, slope: slope)
@@ -163,6 +187,7 @@ public struct ForecastingEngine: Sendable {
             bearScore += abs(volScore.score) * weights.volume
         }
         if let volFactor = volScore.factor { factors.append(volFactor) }
+        fScores.append(FactorScore(name: "volume", score: volScore.score, weight: weights.volume, contribution: volScore.score * weights.volume))
 
         // === 8. Linear Regression ===
         let recentN = min(lookback, closes.count)
@@ -178,6 +203,10 @@ public struct ForecastingEngine: Sendable {
                 factors.append("LinReg abwärts (R\u{00B2}=\(String(format: "%.2f", lr.r2)), \(String(format: "%+.1f%%", projectedPct)))")
             }
         }
+        do {
+            let lrScore: Double = lr.r2 > 0.3 ? (projectedPct > 0 ? min(projectedPct / 5, 1) : -min(abs(projectedPct) / 5, 1)) : 0
+            fScores.append(FactorScore(name: "linearRegression", score: lrScore, weight: weights.linearRegression, contribution: lrScore * weights.linearRegression))
+        }
 
         // === 9. Support/Resistance Proximity (NEU) ===
         let srScore = supportResistanceScore(price: currentPrice, sr: sr)
@@ -187,6 +216,7 @@ public struct ForecastingEngine: Sendable {
             bearScore += abs(srScore.score) * weights.supportResistance
         }
         if let srFactor = srScore.factor { factors.append(srFactor) }
+        fScores.append(FactorScore(name: "supportResistance", score: srScore.score, weight: weights.supportResistance, contribution: srScore.score * weights.supportResistance))
 
         // === 10. RSI Divergenz (NEU — eines der stärksten Umkehr-Signale) ===
         let divScore = rsiDivergenceScore(closes: closes, rsiSeries: rsiSeries, lookback: min(lookback, 30))
@@ -196,6 +226,7 @@ public struct ForecastingEngine: Sendable {
             bearScore += abs(divScore.score) * weights.rsiDivergence
         }
         if let divFactor = divScore.factor { factors.append(divFactor) }
+        fScores.append(FactorScore(name: "rsiDivergence", score: divScore.score, weight: weights.rsiDivergence, contribution: divScore.score * weights.rsiDivergence))
 
         // === 11. Candle Pattern Erkennung (NEU) ===
         let patternScore = candlePatternScore(candles: candles)
@@ -205,6 +236,7 @@ public struct ForecastingEngine: Sendable {
             bearScore += abs(patternScore.score) * weights.candlePatterns
         }
         if let patFactor = patternScore.factor { factors.append(patFactor) }
+        fScores.append(FactorScore(name: "candlePatterns", score: patternScore.score, weight: weights.candlePatterns, contribution: patternScore.score * weights.candlePatterns))
 
         // === 12. Momentum Rate of Change (NEU) ===
         let rocPeriod = min(lookback, closes.count - 1)
@@ -220,6 +252,8 @@ public struct ForecastingEngine: Sendable {
                     bearScore += rocStrength * weights.momentum
                     factors.append("Momentum \(String(format: "%.1f%%", roc)) (\(rocPeriod)h)")
                 }
+                let momScore = roc > 1 ? rocStrength : (roc < -1 ? -rocStrength : 0)
+                fScores.append(FactorScore(name: "momentum", score: momScore, weight: weights.momentum, contribution: momScore * weights.momentum))
             }
         }
 
@@ -293,7 +327,8 @@ public struct ForecastingEngine: Sendable {
         let finalConfidence = min(rawConfidence * conflictPenalty, 0.95)
 
         return ForecastResult(horizon: horizon, direction: direction, confidence: finalConfidence,
-                             targetPct: targetPct, currentPrice: currentPrice, factors: factors)
+                             targetPct: targetPct, currentPrice: currentPrice, factors: factors,
+                             factorScores: fScores)
     }
 
     // MARK: - RSI Signal (verbessert mit Stochastic-ähnlicher Bewertung)
@@ -523,59 +558,152 @@ public struct ForecastingEngine: Sendable {
 
     // MARK: - Regime-adaptive Gewichtung
 
-    private struct ForecastWeights {
-        let rsi: Double
-        let macd: Double
-        let trend: Double
-        let emaAlignment: Double
-        let ema200Bias: Double
-        let bollingerBand: Double
-        let volume: Double
-        let linearRegression: Double
-        let supportResistance: Double
-        let rsiDivergence: Double
-        let candlePatterns: Double
-        let momentum: Double
+    public struct ForecastWeights: Codable, Sendable {
+        public var rsi: Double
+        public var macd: Double
+        public var trend: Double
+        public var emaAlignment: Double
+        public var ema200Bias: Double
+        public var bollingerBand: Double
+        public var volume: Double
+        public var linearRegression: Double
+        public var supportResistance: Double
+        public var rsiDivergence: Double
+        public var candlePatterns: Double
+        public var momentum: Double
+
+        /// Alle Faktor-Namen in fester Reihenfolge
+        public static let factorNames = [
+            "rsi", "macd", "trend", "emaAlignment", "ema200Bias", "bollingerBand",
+            "volume", "linearRegression", "supportResistance", "rsiDivergence",
+            "candlePatterns", "momentum"
+        ]
+
+        /// Gewicht für einen Faktor nach Name
+        public func weight(for name: String) -> Double {
+            switch name {
+            case "rsi": return rsi
+            case "macd": return macd
+            case "trend": return trend
+            case "emaAlignment": return emaAlignment
+            case "ema200Bias": return ema200Bias
+            case "bollingerBand": return bollingerBand
+            case "volume": return volume
+            case "linearRegression": return linearRegression
+            case "supportResistance": return supportResistance
+            case "rsiDivergence": return rsiDivergence
+            case "candlePatterns": return candlePatterns
+            case "momentum": return momentum
+            default: return 0
+            }
+        }
+
+        /// Normalisiert Gewichte auf Summe = 1.0
+        public mutating func normalize() {
+            let sum = rsi + macd + trend + emaAlignment + ema200Bias + bollingerBand
+                + volume + linearRegression + supportResistance + rsiDivergence
+                + candlePatterns + momentum
+            guard sum > 0 else { return }
+            let factor = 1.0 / sum
+            rsi *= factor; macd *= factor; trend *= factor
+            emaAlignment *= factor; ema200Bias *= factor; bollingerBand *= factor
+            volume *= factor; linearRegression *= factor; supportResistance *= factor
+            rsiDivergence *= factor; candlePatterns *= factor; momentum *= factor
+        }
+    }
+
+    /// Lädt gespeicherte adaptive Gewichte und wendet sie auf die Basis-Gewichte an
+    private func applyAdaptiveMultipliers(_ base: ForecastWeights) -> ForecastWeights {
+        let path = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/KoboldOS/forecast_weights.json")
+        guard let data = try? Data(contentsOf: path),
+              let multipliers = try? JSONDecoder().decode([String: Double].self, from: data) else {
+            return base
+        }
+
+        var w = base
+        w.rsi *= multipliers["rsi"] ?? 1.0
+        w.macd *= multipliers["macd"] ?? 1.0
+        w.trend *= multipliers["trend"] ?? 1.0
+        w.emaAlignment *= multipliers["emaAlignment"] ?? 1.0
+        w.ema200Bias *= multipliers["ema200Bias"] ?? 1.0
+        w.bollingerBand *= multipliers["bollingerBand"] ?? 1.0
+        w.volume *= multipliers["volume"] ?? 1.0
+        w.linearRegression *= multipliers["linearRegression"] ?? 1.0
+        w.supportResistance *= multipliers["supportResistance"] ?? 1.0
+        w.rsiDivergence *= multipliers["rsiDivergence"] ?? 1.0
+        w.candlePatterns *= multipliers["candlePatterns"] ?? 1.0
+        w.momentum *= multipliers["momentum"] ?? 1.0
+        w.normalize()
+        return w
+    }
+
+    /// Berechnet und speichert adaptive Multipliers basierend auf Forecast-Accuracy pro Faktor.
+    /// Wird aus dem Self-Improvement-Loop aufgerufen.
+    public func updateAdaptiveWeights(forecastAccuracyByFactor: [String: (correct: Int, total: Int)]) {
+        var multipliers: [String: Double] = [:]
+
+        for name in ForecastWeights.factorNames {
+            guard let acc = forecastAccuracyByFactor[name], acc.total >= 50 else {
+                multipliers[name] = 1.0  // Nicht genug Daten → neutral
+                continue
+            }
+            let accuracy = Double(acc.correct) / Double(acc.total)
+            // accuracy > 60% → boost (max 1.5x), < 40% → reduce (min 0.5x)
+            let multiplier: Double
+            if accuracy > 0.60 {
+                multiplier = min(1.0 + (accuracy - 0.60) * 2.5, 1.5)  // 60%→1.0, 80%→1.5
+            } else if accuracy < 0.40 {
+                multiplier = max(0.5, 1.0 - (0.40 - accuracy) * 2.5)  // 40%→1.0, 20%→0.5
+            } else {
+                multiplier = 1.0
+            }
+            multipliers[name] = multiplier
+        }
+
+        let path = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/KoboldOS/forecast_weights.json")
+        if let data = try? JSONEncoder().encode(multipliers) {
+            try? data.write(to: path, options: .atomic)
+        }
     }
 
     private func regimeAdaptiveWeights(regime: MarketRegime) -> ForecastWeights {
+        let base: ForecastWeights
         switch regime {
         case .bull:
-            // Im Aufwärtstrend: Trend-Indikatoren wichtiger
-            return ForecastWeights(
+            base = ForecastWeights(
                 rsi: 0.10, macd: 0.12, trend: 0.15, emaAlignment: 0.10, ema200Bias: 0.08,
                 bollingerBand: 0.06, volume: 0.08, linearRegression: 0.06,
                 supportResistance: 0.06, rsiDivergence: 0.08, candlePatterns: 0.04, momentum: 0.07
             )
         case .bear:
-            // Im Abwärtstrend: RSI-Divergenz und S/R wichtiger (Umkehr finden)
-            return ForecastWeights(
+            base = ForecastWeights(
                 rsi: 0.12, macd: 0.10, trend: 0.12, emaAlignment: 0.08, ema200Bias: 0.08,
                 bollingerBand: 0.08, volume: 0.06, linearRegression: 0.05,
                 supportResistance: 0.10, rsiDivergence: 0.10, candlePatterns: 0.06, momentum: 0.05
             )
         case .sideways:
-            // Seitwärts: Mean-Reversion-Indikatoren dominieren
-            return ForecastWeights(
+            base = ForecastWeights(
                 rsi: 0.14, macd: 0.08, trend: 0.06, emaAlignment: 0.05, ema200Bias: 0.04,
                 bollingerBand: 0.14, volume: 0.06, linearRegression: 0.05,
                 supportResistance: 0.14, rsiDivergence: 0.10, candlePatterns: 0.08, momentum: 0.06
             )
         case .crash:
-            // Crash: Alles bearish, RSI-Divergenz für Boden-Erkennung
-            return ForecastWeights(
+            base = ForecastWeights(
                 rsi: 0.10, macd: 0.08, trend: 0.10, emaAlignment: 0.06, ema200Bias: 0.06,
                 bollingerBand: 0.08, volume: 0.10, linearRegression: 0.04,
                 supportResistance: 0.12, rsiDivergence: 0.14, candlePatterns: 0.06, momentum: 0.06
             )
         case .unknown:
-            // Gleichverteilt
-            return ForecastWeights(
+            base = ForecastWeights(
                 rsi: 0.12, macd: 0.10, trend: 0.10, emaAlignment: 0.08, ema200Bias: 0.06,
                 bollingerBand: 0.10, volume: 0.08, linearRegression: 0.06,
                 supportResistance: 0.08, rsiDivergence: 0.08, candlePatterns: 0.06, momentum: 0.08
             )
         }
+        // Adaptive Multipliers anwenden (aus Forecast-Accuracy-Tracking)
+        return applyAdaptiveMultipliers(base)
     }
 
     // MARK: - Differenzierte Konfidenz (Score-Stärke × Dominanz)

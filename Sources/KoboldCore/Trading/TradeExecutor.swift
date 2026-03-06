@@ -71,13 +71,39 @@ public actor TradeExecutor {
             return nil
         }
 
-        // Trade-Größe: min(fixedSize, portfolioPercent) — der kleinere Wert gewinnt
+        // Trade-Größe: min(fixedSize, portfolioPercent, kellySize) — der kleinste Wert gewinnt
         let fixedSize = UserDefaults.standard.double(forKey: "kobold.trading.fixedTradeSize")
         let effectiveFixed = fixedSize > 0 ? fixedSize : 5.0
         let maxSizePct = UserDefaults.standard.double(forKey: "kobold.trading.maxTradeSize")
         let sizePct = maxSizePct > 0 ? maxSizePct : 2.0
         let pctValue = portfolioValue * (sizePct / 100.0)
-        let tradeValue = pctValue > 0 ? min(effectiveFixed, pctValue) : effectiveFixed
+
+        // Half-Kelly Position-Sizing: konservativ basierend auf Win-Rate und R:R
+        var kellyValue = effectiveFixed  // Fallback = feste Größe
+        let stratPerfs = await TradingRiskManager.shared.getStrategyPerformance()
+        if let perf = stratPerfs.first(where: { signal.strategy.contains($0.name) }), perf.totalTrades >= 10 {
+            let winRate = perf.winRate / 100.0
+            let tp = UserDefaults.standard.double(forKey: "kobold.trading.takeProfit")
+            let sl = UserDefaults.standard.double(forKey: "kobold.trading.fixedStopLoss")
+            let winLossRatio = sl > 0 ? (tp > 0 ? tp : 8.0) / sl : 2.67
+            // EV prüfen: kelly > 0 nur wenn positiver Erwartungswert
+            let ev = winLossRatio * winRate - (1 - winRate)
+            if ev > 0 {
+                let kelly = (ev / winLossRatio) / 2  // Half-Kelly
+                kellyValue = max(portfolioValue * kelly, 1.0)  // Min 1€ (Coinbase Minimum)
+            } else {
+                // Negativer EV → nicht handeln (Kelly = 0)
+                await TradingActivityLog.shared.add("[\(pair)] Kelly=0: EV negativ (WR \(String(format: "%.0f%%", perf.winRate)), R:R \(String(format: "%.1f", winLossRatio)))", type: .risk)
+                return nil
+            }
+        }
+
+        let tradeValue: Double
+        if pctValue > 0 {
+            tradeValue = min(effectiveFixed, pctValue, kellyValue)
+        } else {
+            tradeValue = min(effectiveFixed, kellyValue)
+        }
 
         // EUR-Reserve prüfen bei Kauf (inkl. Fees — Coinbase zieht Fees zusätzlich ab!)
         if side == "BUY" {
@@ -164,6 +190,7 @@ public actor TradeExecutor {
 
         let record = TradeRecord(
             pair: pair, side: side, size: fillSize, price: fillPrice,
+            fee: fillFee,  // Echte Coinbase-Fee (0 bei Coinbase One)
             strategy: signal.strategy, regime: regime.rawValue,
             confidence: signal.confidence,
             status: "OPEN",
@@ -191,12 +218,13 @@ public actor TradeExecutor {
             orderId = await placeMarketBuy(productId: trade.pair, quoteSize: String(format: "%.2f", quoteSize))
         }
 
-        if orderId != nil {
-            // Fee-Berechnung: Coinbase Advanced Trade ~0.4-0.6% Taker
-            let feeRate = UserDefaults.standard.double(forKey: "kobold.trading.feeRate")
-            let effectiveFeeRate = feeRate > 0 ? feeRate : 0.012 // Default 1.2% Coinbase Taker Fee
-            let entryFee = trade.price * trade.size * effectiveFeeRate
-            let exitFee = currentPrice * trade.size * effectiveFeeRate
+        if let oid = orderId {
+            // Fee-Berechnung: Echte Fees aus Coinbase-Fill (0 bei Coinbase One)
+            var exitFee: Double = 0
+            if let fill = await getOrderFill(orderId: oid) {
+                exitFee = fill.fee
+            }
+            let entryFee = trade.fee  // Beim Kauf gespeicherte echte Fee
             let totalFees = entryFee + exitFee
 
             let rawPnl = trade.side == "BUY"
@@ -274,6 +302,43 @@ public actor TradeExecutor {
     /// EUR-Balance (v3 API, mit Holds)
     public func getEURBalance() async -> Double {
         return await getV3AvailableBalance(currency: "EUR") ?? 0
+    }
+
+    /// Beobachtete Fee-Rate aus den letzten echten Coinbase-Fills
+    /// Bei Coinbase One = 0, sonst reale Taker-Fee
+    /// Fallback: UserDefaults kobold.trading.feeRate
+    public func getObservedFeeRate() async -> Double {
+        // Letzte 20 gefuellte Orders holen
+        let path = "/api/v3/brokerage/orders/historical?order_status=FILLED&limit=20"
+        guard let request = buildRequest(method: "GET", path: path) else {
+            // Offline-Fallback: gespeicherter Wert oder 0 (Coinbase One Annahme)
+            return UserDefaults.standard.object(forKey: "kobold.trading.observedFeeRate") != nil
+                ? UserDefaults.standard.double(forKey: "kobold.trading.observedFeeRate") : 0
+        }
+        do {
+            let (data, _) = try await URLSession.shared.data(for: request)
+            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let orders = json["orders"] as? [[String: Any]], !orders.isEmpty else {
+                return UserDefaults.standard.object(forKey: "kobold.trading.observedFeeRate") != nil
+                    ? UserDefaults.standard.double(forKey: "kobold.trading.observedFeeRate") : 0
+            }
+            var totalFees = 0.0
+            var totalValue = 0.0
+            for order in orders {
+                let fee = Double(order["total_fees"] as? String ?? "0") ?? 0
+                let filled = Double(order["filled_value"] as? String ?? "0") ?? 0
+                totalFees += fee
+                totalValue += filled
+            }
+            if totalValue > 0 {
+                let rate = totalFees / totalValue
+                // Cache als eigener Key (0 ist valider Wert bei Coinbase One!)
+                UserDefaults.standard.set(rate, forKey: "kobold.trading.observedFeeRate")
+                return rate
+            }
+        } catch { }
+        return UserDefaults.standard.object(forKey: "kobold.trading.observedFeeRate") != nil
+            ? UserDefaults.standard.double(forKey: "kobold.trading.observedFeeRate") : 0
     }
 
     /// Verkauft ALLES von einer Währung — holt v3-Balance, formatiert korrekt, sendet Order

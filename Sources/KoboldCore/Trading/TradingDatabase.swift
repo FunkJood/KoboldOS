@@ -86,6 +86,27 @@ public actor TradingDatabase {
         CREATE INDEX IF NOT EXISTS idx_trades_status ON trades(status);
         CREATE INDEX IF NOT EXISTS idx_trades_timestamp ON trades(timestamp);
         CREATE INDEX IF NOT EXISTS idx_trades_strategy ON trades(strategy);
+        CREATE TABLE IF NOT EXISTS forecast_log (
+            id TEXT PRIMARY KEY,
+            timestamp TEXT NOT NULL,
+            pair TEXT NOT NULL,
+            horizon TEXT NOT NULL,
+            direction TEXT NOT NULL,
+            confidence REAL NOT NULL,
+            current_price REAL NOT NULL,
+            target_price REAL NOT NULL,
+            regime TEXT NOT NULL,
+            factors TEXT,
+            actual_price REAL,
+            actual_direction TEXT,
+            was_correct INTEGER,
+            error_pct REAL,
+            validated_at TEXT,
+            status TEXT NOT NULL DEFAULT 'PENDING'
+        );
+        CREATE INDEX IF NOT EXISTS idx_forecast_pair ON forecast_log(pair);
+        CREATE INDEX IF NOT EXISTS idx_forecast_status ON forecast_log(status);
+        CREATE INDEX IF NOT EXISTS idx_forecast_horizon ON forecast_log(horizon);
         """
         if sqlite3_exec(db, sql, nil, nil, nil) != SQLITE_OK {
             let msg = db.flatMap { String(cString: sqlite3_errmsg($0)) } ?? "unknown"
@@ -317,6 +338,184 @@ public actor TradingDatabase {
         sqlite3_bind_text(stmt, 1, name, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
         guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
         return (Int(sqlite3_column_int(stmt, 0)), col(stmt, 1))
+    }
+
+    // MARK: - Forecast Log
+
+    public func logForecast(id: String, pair: String, horizon: String, direction: String,
+                            confidence: Double, currentPrice: Double, targetPrice: Double,
+                            regime: String, factors: String?) throws {
+        try ensureOpen()
+        let sql = """
+        INSERT OR IGNORE INTO forecast_log
+        (id, timestamp, pair, horizon, direction, confidence, current_price, target_price, regime, factors, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')
+        """
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
+        let now = ISO8601DateFormatter().string(from: Date())
+        let t = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+        sqlite3_bind_text(stmt, 1, id, -1, t)
+        sqlite3_bind_text(stmt, 2, now, -1, t)
+        sqlite3_bind_text(stmt, 3, pair, -1, t)
+        sqlite3_bind_text(stmt, 4, horizon, -1, t)
+        sqlite3_bind_text(stmt, 5, direction, -1, t)
+        sqlite3_bind_double(stmt, 6, confidence)
+        sqlite3_bind_double(stmt, 7, currentPrice)
+        sqlite3_bind_double(stmt, 8, targetPrice)
+        sqlite3_bind_text(stmt, 9, regime, -1, t)
+        if let f = factors { sqlite3_bind_text(stmt, 10, f, -1, t) }
+        else { sqlite3_bind_null(stmt, 10) }
+        _ = sqlite3_step(stmt)
+    }
+
+    /// Holt Forecasts die validiert werden koennen (aelter als Horizont)
+    public func getPendingForecasts(maxAge: TimeInterval) throws -> [(id: String, pair: String, horizon: String, direction: String, confidence: Double, currentPrice: Double)] {
+        try ensureOpen()
+        let cutoff = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-maxAge))
+        let sql = "SELECT id, pair, horizon, direction, confidence, current_price FROM forecast_log WHERE status='PENDING' AND timestamp < ? LIMIT 50"
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        sqlite3_bind_text(stmt, 1, cutoff, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+        var results: [(String, String, String, String, Double, Double)] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            results.append((col(stmt, 0), col(stmt, 1), col(stmt, 2), col(stmt, 3),
+                           sqlite3_column_double(stmt, 4), sqlite3_column_double(stmt, 5)))
+        }
+        return results
+    }
+
+    /// Validiert einen Forecast mit dem echten Preis
+    public func validateForecast(id: String, actualPrice: Double, forecastPrice: Double) throws {
+        try ensureOpen()
+        let changePct = forecastPrice > 0 ? ((actualPrice - forecastPrice) / forecastPrice) * 100 : 0
+        let actualDir: String
+        if changePct > 0.5 { actualDir = "UP" }
+        else if changePct < -0.5 { actualDir = "DOWN" }
+        else { actualDir = "SIDEWAYS" }
+
+        let sql = "UPDATE forecast_log SET actual_price=?, actual_direction=?, was_correct=?, error_pct=?, validated_at=?, status='VALIDATED' WHERE id=?"
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
+        // Korrektheit: Lese Direction aus dem Forecast
+        let dirSql = "SELECT direction FROM forecast_log WHERE id=?"
+        var dirStmt: OpaquePointer?
+        defer { sqlite3_finalize(dirStmt) }
+        var forecastDir = ""
+        if sqlite3_prepare_v2(db, dirSql, -1, &dirStmt, nil) == SQLITE_OK {
+            sqlite3_bind_text(dirStmt, 1, id, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+            if sqlite3_step(dirStmt) == SQLITE_ROW { forecastDir = col(dirStmt, 0) }
+        }
+        let wasCorrect = forecastDir == actualDir ? 1 : 0
+
+        let now = ISO8601DateFormatter().string(from: Date())
+        let t = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+        sqlite3_bind_double(stmt, 1, actualPrice)
+        sqlite3_bind_text(stmt, 2, actualDir, -1, t)
+        sqlite3_bind_int(stmt, 3, Int32(wasCorrect))
+        sqlite3_bind_double(stmt, 4, changePct)
+        sqlite3_bind_text(stmt, 5, now, -1, t)
+        sqlite3_bind_text(stmt, 6, id, -1, t)
+        _ = sqlite3_step(stmt)
+    }
+
+    /// Forecast-Accuracy Stats (gefiltert nach Horizont, optional Pair)
+    public func getForecastAccuracy(horizon: String? = nil, pair: String? = nil, days: Int = 7) throws -> (total: Int, correct: Int, accuracy: Double) {
+        try ensureOpen()
+        let cutoff = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-Double(days) * 86400))
+        var sql = "SELECT COUNT(*), SUM(CASE WHEN was_correct=1 THEN 1 ELSE 0 END) FROM forecast_log WHERE status='VALIDATED' AND timestamp > ?"
+        var params: [String] = [cutoff]
+        if let h = horizon { sql += " AND horizon=?"; params.append(h) }
+        if let p = pair { sql += " AND pair=?"; params.append(p) }
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return (0, 0, 0) }
+        let t = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+        for (i, p) in params.enumerated() {
+            sqlite3_bind_text(stmt, Int32(i + 1), p, -1, t)
+        }
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return (0, 0, 0) }
+        let total = Int(sqlite3_column_int(stmt, 0))
+        let correct = Int(sqlite3_column_int(stmt, 1))
+        let accuracy = total > 0 ? Double(correct) / Double(total) : 0
+        return (total, correct, accuracy)
+    }
+
+    /// Alte Forecasts aufraeuemen (aelter als 30 Tage)
+    public func purgeForecastLog(olderThanDays: Int = 30) throws {
+        try ensureOpen()
+        let cutoff = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-Double(olderThanDays) * 86400))
+        let sql = "DELETE FROM forecast_log WHERE timestamp < ?"
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
+        sqlite3_bind_text(stmt, 1, cutoff, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+        _ = sqlite3_step(stmt)
+    }
+
+    // MARK: - Forecast Accuracy per Factor
+
+    /// Berechnet Accuracy pro Faktor aus validierten Forecasts (für adaptive Gewichte).
+    /// Parst die `factors`-Spalte als JSON-Array von FactorScore-Objekten.
+    public func getForecastAccuracyByFactor(days: Int = 14) throws -> [String: (correct: Int, total: Int)] {
+        try ensureOpen()
+        let cutoff = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-Double(days) * 86400))
+        let sql = "SELECT factors, was_correct FROM forecast_log WHERE status='VALIDATED' AND timestamp > ? AND factors IS NOT NULL"
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        let t = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [:] }
+        sqlite3_bind_text(stmt, 1, cutoff, -1, t)
+
+        var results: [String: (correct: Int, total: Int)] = [:]
+
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let factorsStr: String = col(stmt, 0)
+            let wasCorrect = sqlite3_column_int(stmt, 1) == 1
+
+            // Versuche JSON-Parsing (neue FactorScore-Format)
+            if let data = factorsStr.data(using: .utf8),
+               let scores = try? JSONDecoder().decode([FactorScore].self, from: data) {
+                for score in scores {
+                    var entry = results[score.name] ?? (correct: 0, total: 0)
+                    entry.total += 1
+                    if wasCorrect { entry.correct += 1 }
+                    results[score.name] = entry
+                }
+            } else {
+                // Fallback: alte Semicolon-Format ("RSI; MACD; Trend")
+                let names = factorsStr.split(separator: ";").map { $0.trimmingCharacters(in: .whitespaces) }
+                for name in names {
+                    let key = mapFactorName(name)
+                    var entry = results[key] ?? (correct: 0, total: 0)
+                    entry.total += 1
+                    if wasCorrect { entry.correct += 1 }
+                    results[key] = entry
+                }
+            }
+        }
+        return results
+    }
+
+    /// Mappt menschenlesbare Faktornamen auf ForecastWeights-Keys
+    private func mapFactorName(_ name: String) -> String {
+        let lower = name.lowercased()
+        if lower.contains("rsi") && lower.contains("div") { return "rsiDivergence" }
+        if lower.contains("rsi") { return "rsi" }
+        if lower.contains("macd") { return "macd" }
+        if lower.contains("trend") || lower.contains("ema") && lower.contains("slope") { return "trend" }
+        if lower.contains("ema") && lower.contains("align") { return "emaAlignment" }
+        if lower.contains("ema200") || lower.contains("200") { return "ema200Bias" }
+        if lower.contains("bollinger") || lower.contains("bb") { return "bollingerBand" }
+        if lower.contains("volume") || lower.contains("vol") { return "volume" }
+        if lower.contains("linear") || lower.contains("regression") { return "linearRegression" }
+        if lower.contains("support") || lower.contains("resist") { return "supportResistance" }
+        if lower.contains("candle") || lower.contains("pattern") { return "candlePatterns" }
+        if lower.contains("momentum") || lower.contains("mom") { return "momentum" }
+        return name
     }
 
     // MARK: - Integrity Check

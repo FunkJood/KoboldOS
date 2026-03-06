@@ -56,6 +56,11 @@ public actor TradingEngine {
     private var dailyTradeCount: Int = 0
     private var dailyTradeDate: String = ""
     private var pairLastTraded: [String: Date] = [:]
+    private var pairLastRejected: [String: Date] = [:]
+    private var lastSignalPerPair: [String: (action: String, strategy: String, confidence: Double)] = [:]
+    private var cachedFeeRate: Double = 0  // Wird pro Zyklus aus Coinbase aktualisiert (0 = Coinbase One default)
+    private var lastLoggedForecast: [String: (String, Double)] = [:]  // "pair-horizon" → (direction, confidence)
+    private var forecastValidationTask: Task<Void, Never>?
 
     // Components
     private let detector = MarketRegimeDetector()
@@ -133,6 +138,12 @@ public actor TradingEngine {
             await self.runDailyReportLoop()
         }
 
+        // Forecast validation loop (alle 30 Min)
+        forecastValidationTask = Task.detached(priority: .background) { [weak self] in
+            guard let self else { return }
+            await self.runForecastValidationLoop()
+        }
+
         Task { await TradingReporter.shared.sendEngineStatus(status: "Trading Engine gestartet") }
     }
 
@@ -144,10 +155,12 @@ public actor TradingEngine {
         selfImprovementTask?.cancel()
         dailyReportTask?.cancel()
         autoBacktestTask?.cancel()
+        forecastValidationTask?.cancel()
         engineTask = nil
         selfImprovementTask = nil
         dailyReportTask = nil
         autoBacktestTask = nil
+        forecastValidationTask = nil
         print("[TradingEngine] Stopped")
         Task { await TradingReporter.shared.sendEngineStatus(status: "Trading Engine gestoppt") }
     }
@@ -204,7 +217,15 @@ public actor TradingEngine {
             let cycleStart = Date()
             cycleCount += 1
 
-            // 0. Get configured pairs + Holdings-Pairs (alle Coinbase-Positionen)
+            // 0. Settings synchronisieren (Threshold, TP/SL etc. live übernehmen)
+            await StrategyEngine.shared.syncFromDefaults()
+            await TradingRiskManager.shared.syncFromDefaults()
+
+            // 0a. Observed Fee-Rate aus echten Coinbase-Fills (1x pro Zyklus)
+            let observedFeeRate = await TradeExecutor.shared.getObservedFeeRate()
+            cachedFeeRate = observedFeeRate
+
+            // 0b. Get configured pairs + Holdings-Pairs (alle Coinbase-Positionen)
             let pairsStr = UserDefaults.standard.string(forKey: "kobold.trading.pairs") ?? "BTC-EUR,ETH-EUR"
             var pairs = pairsStr.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
 
@@ -300,6 +321,31 @@ public actor TradingEngine {
                 let forecasts = forecaster.forecast(pair: pair, candles: candles, indicators: indicators, regime: newRegime)
                 latestForecasts[pair] = forecasts
 
+                // Forecast-Accuracy-Tracking: nur 1h-Forecast loggen (haeufigste Validierung)
+                if let f1h = forecasts.first(where: { $0.horizon == "1h" }) {
+                    let lastKey = "\(pair)-1h"
+                    let changed = lastLoggedForecast[lastKey] == nil
+                        || lastLoggedForecast[lastKey]!.0 != f1h.direction
+                        || abs(lastLoggedForecast[lastKey]!.1 - f1h.confidence) > 0.05
+                    if changed {
+                        let fid = UUID().uuidString
+                        // Alle FactorScores als JSON speichern (für per-Faktor-Accuracy)
+                        var factorsStr = f1h.factors.prefix(3).joined(separator: "; ")
+                        if !f1h.factorScores.isEmpty,
+                           let jsonData = try? JSONEncoder().encode(f1h.factorScores),
+                           let jsonStr = String(data: jsonData, encoding: .utf8) {
+                            factorsStr = jsonStr
+                        }
+                        try? await TradingDatabase.shared.logForecast(
+                            id: fid, pair: pair, horizon: "1h", direction: f1h.direction,
+                            confidence: f1h.confidence, currentPrice: f1h.currentPrice,
+                            targetPrice: f1h.targetPrice, regime: newRegime.rawValue,
+                            factors: factorsStr
+                        )
+                        lastLoggedForecast[lastKey] = (f1h.direction, f1h.confidence)
+                    }
+                }
+
                 // Skip trading in CRASH regime
                 if newRegime == .crash {
                     await log.add("[\(pair)] CRASH-Regime — kein Kauf", type: .risk)
@@ -315,7 +361,8 @@ public actor TradingEngine {
 
                 // Evaluate strategies
                 let signals = await StrategyEngine.shared.evaluateAll(
-                    pair: pair, candles: candles, indicators: indicators, regime: newRegime
+                    pair: pair, candles: candles, indicators: indicators, regime: newRegime,
+                    feeRate: observedFeeRate
                 )
 
                 if !signals.isEmpty {
@@ -350,6 +397,14 @@ public actor TradingEngine {
                             await log.add("[\(pair)] Pair-Cooldown aktiv (noch \(remaining) Min.)", type: .risk)
                             continue
                         }
+
+                        // Rejection-Cooldown: 15 Min nach Agent-Ablehnung (reduziert von 30 Min)
+                        if let lastReject = pairLastRejected[pair],
+                           Date().timeIntervalSince(lastReject) < 900 {
+                            let remaining = Int((900 - Date().timeIntervalSince(lastReject)) / 60)
+                            await log.add("[\(pair)] Rejection-Cooldown aktiv (noch \(remaining) Min.)", type: .risk)
+                            continue
+                        }
                     }
 
                     // Separate Buy/Sell-Signal-Toggles (TP/SL bleibt immer aktiv!)
@@ -381,10 +436,9 @@ public actor TradingEngine {
                     if bestSignal.action == .buy {
                         let tpVal = UserDefaults.standard.double(forKey: "kobold.trading.takeProfit")
                         let slVal = UserDefaults.standard.double(forKey: "kobold.trading.fixedStopLoss")
-                        let feeVal = UserDefaults.standard.double(forKey: "kobold.trading.feeRate")
                         let effTP = (tpVal > 0 ? tpVal : 8.0) / 100.0
                         let effSL = (slVal > 0 ? slVal : 3.0) / 100.0
-                        let effFee = (feeVal > 0 ? feeVal : 0.012) * 2  // Round-trip
+                        let effFee = observedFeeRate * 2  // Round-trip (0 bei Coinbase One)
                         let netReward = effTP - effFee
                         let netRisk = effSL + effFee
                         let ev = (bestSignal.confidence * netReward) - ((1.0 - bestSignal.confidence) * netRisk)
@@ -408,9 +462,9 @@ public actor TradingEngine {
                         if eurReserve > 0 {
                             let eurBalance = liveHoldings
                                 .first(where: { $0.currency.uppercased() == "EUR" })?.balance ?? 0
-                            if eurBalance > eurReserve * 1.2 && bestSignal.confidence < 0.85 {
-                                // Reserve gesund → schwache Sells ignorieren, Positionen halten
-                                await log.add("[\(pair)] SELL-Signal (\(String(format: "%.0f%%", bestSignal.confidence * 100))) ignoriert — EUR-Reserve gesund (\(String(format: "%.0f€", eurBalance))/\(String(format: "%.0f€", eurReserve))). Nur starke Sells (>85%) erlaubt.", type: .risk)
+                            if eurBalance > eurReserve * 1.2 && bestSignal.confidence < 0.70 {
+                                // Reserve gesund → nur sehr schwache Sells ignorieren
+                                await log.add("[\(pair)] SELL-Signal (\(String(format: "%.0f%%", bestSignal.confidence * 100))) ignoriert — EUR-Reserve gesund (\(String(format: "%.0f€", eurBalance))/\(String(format: "%.0f€", eurReserve))). Nur Sells >70% erlaubt.", type: .risk)
                                 continue
                             }
                             if eurBalance < eurReserve * 0.8 {
@@ -436,6 +490,15 @@ public actor TradingEngine {
                             positionContext = nil
                         }
 
+                        // Signal-Cache: identisches Signal wie letzter Zyklus skippen
+                        let sigKey = (action: bestSignal.action.rawValue, strategy: bestSignal.strategy, confidence: (bestSignal.confidence * 10).rounded() / 10)  // 10%-Buckets
+                        if let last = lastSignalPerPair[pair],
+                           last.action == sigKey.action && last.strategy == sigKey.strategy && last.confidence == sigKey.confidence {
+                            await log.add("[\(pair)] Signal-Cache: \(bestSignal.action.rawValue) \(String(format: "%.0f%%", bestSignal.confidence * 100)) [\(bestSignal.strategy)] identisch zum letzten Zyklus — übersprungen", type: .signal)
+                            continue
+                        }
+                        lastSignalPerPair[pair] = sigKey
+
                         await log.add("[\(pair)] SIGNAL: \(bestSignal.action.rawValue) \(String(format: "%.0f%%", bestSignal.confidence * 100)) [\(bestSignal.strategy)]\(hasPosition && bestSignal.action == .buy ? " (Nachkauf)" : "") — \(bestSignal.reason)", type: .signal)
 
                         if agentEnabled {
@@ -448,10 +511,17 @@ public actor TradingEngine {
                                 positionContext: positionContext
                             )
                             // Strategie NUR setzen wenn Agent den Trade NICHT abgelehnt hat
-                            if bestSignal.action == .buy && !agentRejected(response) {
-                                holdingStrategies[pairBase] = bestSignal.strategy
+                            if !agentRejected(response) {
+                                if bestSignal.action == .buy {
+                                    holdingStrategies[pairBase] = bestSignal.strategy
+                                }
                                 dailyTradeCount += 1
                                 pairLastTraded[pair] = Date()
+                                pairLastRejected.removeValue(forKey: pair)
+                            } else {
+                                // Rejection-Cooldown: 30 Min Pause fuer dieses Pair
+                                pairLastRejected[pair] = Date()
+                                await log.add("[\(pair)] Agent-Rejection — 30 Min Cooldown", type: .risk)
                             }
                             cycleTrades += 1
                         } else {
@@ -465,11 +535,14 @@ public actor TradingEngine {
                                 cycleTrades += 1
                                 if bestSignal.action == .buy {
                                     holdingStrategies[pairBase] = bestSignal.strategy
-                                    dailyTradeCount += 1
-                                    pairLastTraded[pair] = Date()
                                 }
+                                dailyTradeCount += 1
+                                pairLastTraded[pair] = Date()
+                                pairLastRejected.removeValue(forKey: pair)
                                 await log.add("[\(pair)] ORDER \(trade.status): \(trade.side) \(String(format: "%.8f", trade.size)) @ \(String(format: "%.2f€", trade.price))\(trade.orderId.map { " (\($0.prefix(12)))" } ?? "")", type: .trade)
                             } else {
+                                // Trade fehlgeschlagen → kurzer Cooldown
+                                pairLastRejected[pair] = Date()
                                 let autoTrade = UserDefaults.standard.bool(forKey: "kobold.trading.autoTrade")
                                 if !autoTrade {
                                     await log.add("[\(pair)] Signal geloggt (Auto-Trade AUS)", type: .signal)
@@ -537,9 +610,7 @@ public actor TradingEngine {
             let holdingHours = Date().timeIntervalSince(
                 ISO8601DateFormatter().date(from: trade.timestamp) ?? Date()
             ) / 3600
-            let feeVal = UserDefaults.standard.double(forKey: "kobold.trading.feeRate")
-            let effFee = feeVal > 0 ? feeVal : 0.012
-            let zombieCheck = await TradingRiskManager.shared.zombieDecayTP(holdingHours: holdingHours, feeRate: effFee)
+            let zombieCheck = await TradingRiskManager.shared.zombieDecayTP(holdingHours: holdingHours, feeRate: cachedFeeRate)
 
             var shouldClose = result.close
             var closeReason = result.reason
@@ -669,9 +740,7 @@ public actor TradingEngine {
                 holdingFirstSeen[holding.currency] = Date()
             }
             let holdingHoursExt = Date().timeIntervalSince(holdingFirstSeen[holding.currency] ?? Date()) / 3600
-            let feeVal = UserDefaults.standard.double(forKey: "kobold.trading.feeRate")
-            let effFeeExt = feeVal > 0 ? feeVal : 0.012
-            let zombieExt = await TradingRiskManager.shared.zombieDecayTP(holdingHours: holdingHoursExt, feeRate: effFeeExt)
+            let zombieExt = await TradingRiskManager.shared.zombieDecayTP(holdingHours: holdingHoursExt, feeRate: cachedFeeRate)
 
             var extShouldClose = result.close
             var extCloseReason = result.reason
@@ -697,9 +766,11 @@ public actor TradingEngine {
 
                 if agentEnabled {
                     // KI-Agent verkauft (TP/SL = Risk Management, übersteuert Strategie)
+                    // Holding-Info mitgeben damit Agent die Coinbase-Position sieht (nicht nur Engine-DB)
                     let response = await TradingAgent.shared.executeSell(
                         currency: holding.currency,
-                        reason: "\(result.reason) (P&L: \(String(format: "%+.1f%%", pnlPct)), Strategie: \(holdingStrategies[holding.currency] ?? "unbekannt"))"
+                        reason: "\(result.reason) (P&L: \(String(format: "%+.1f%%", pnlPct)), Strategie: \(holdingStrategies[holding.currency] ?? "unbekannt"))",
+                        holdingInfo: (balance: holding.balance, nativeValue: holding.nativeValue, entryPrice: entryPrice)
                     )
                     // Tracking NUR löschen wenn Agent den Sell NICHT abgelehnt hat
                     if !agentRejected(response) {
@@ -716,8 +787,7 @@ public actor TradingEngine {
                     if let orderId = sellResult.orderId {
                         let pnl = (currentPrice - entryPrice) * holding.balance
                         // Trade in DB loggen (Fix: fehlte vorher → Trades nicht in Historie sichtbar)
-                        let feeRateVal = UserDefaults.standard.double(forKey: "kobold.trading.feeRate")
-                        let effFee = feeRateVal > 0 ? feeRateVal : 0.012
+                        let effFee = cachedFeeRate
                         let sellRecord = TradeRecord(
                             id: UUID().uuidString, timestamp: ISO8601DateFormatter().string(from: Date()),
                             pair: pair, side: "SELL", type: "MARKET",
@@ -753,7 +823,8 @@ public actor TradingEngine {
 
                 let regime = currentRegimes[pair] ?? .unknown
                 let signals = await StrategyEngine.shared.evaluateAll(
-                    pair: pair, candles: candles, indicators: indicators, regime: regime
+                    pair: pair, candles: candles, indicators: indicators, regime: regime,
+                    feeRate: cachedFeeRate
                 )
 
                 // Starkes SELL-Signal (>75% Konfidenz) → verkaufen NUR wenn Strategie kompatibel + Sell-Signale aktiviert
@@ -943,7 +1014,37 @@ public actor TradingEngine {
             Max Trade: \(d.double(forKey: "kobold.trading.maxTradeSize"))%, Max Daily Loss: \(d.double(forKey: "kobold.trading.maxDailyLoss"))%
             """
 
-            // 6. Wenn Agent aktiv → Agent analysieren lassen (umfassend)
+            // 6. Forecast-Accuracy + Hot/Cold
+            let acc1h = (try? await TradingDatabase.shared.getForecastAccuracy(horizon: "1h", days: 7)) ?? (0, 0, 0.0)
+            let acc4h = (try? await TradingDatabase.shared.getForecastAccuracy(horizon: "4h", days: 7)) ?? (0, 0, 0.0)
+            var forecastAccuracySummary = ""
+            if acc1h.0 > 0 { forecastAccuracySummary += "1h: \(String(format: "%.0f%%", acc1h.2 * 100)) (\(acc1h.0) Forecasts)\n" }
+            if acc4h.0 > 0 { forecastAccuracySummary += "4h: \(String(format: "%.0f%%", acc4h.2 * 100)) (\(acc4h.0) Forecasts)\n" }
+            if forecastAccuracySummary.isEmpty { forecastAccuracySummary = "Noch keine Daten (Tracking läuft)" }
+
+            let multipliers = await StrategyEngine.shared.getMultipliers()
+            var hotColdSummary = ""
+            for p in stratPerfs {
+                let mul = multipliers[p.name] ?? 1.0
+                let status = p.winRate >= 60 ? "HOT" : (p.winRate <= 40 ? "COLD" : "NEUTRAL")
+                hotColdSummary += "\(p.name): \(status) (WR: \(String(format: "%.0f%%", p.winRate)), Multiplier: \(String(format: "%.2f", mul)))\n"
+            }
+            if hotColdSummary.isEmpty { hotColdSummary = "Noch keine Strategie-Daten" }
+
+            // 7. Strategie-Multipliers aus Win-Rate aktualisieren
+            let mulPerfs = stratPerfs.map { (name: $0.name, winRate: $0.winRate / 100.0, trades: $0.totalTrades) }
+            await StrategyEngine.shared.updateMultipliers(performances: mulPerfs)
+
+            // 7b. Forecast-Gewichte adaptiv anpassen (per-Faktor-Accuracy)
+            if let factorAcc = try? await TradingDatabase.shared.getForecastAccuracyByFactor(days: 14) {
+                if !factorAcc.isEmpty {
+                    forecaster.updateAdaptiveWeights(forecastAccuracyByFactor: factorAcc)
+                    let adjusted = factorAcc.filter { $0.value.total >= 50 }.count
+                    await log.add("[Engine] Forecast-Gewichte aktualisiert: \(factorAcc.count) Faktoren, \(adjusted) adaptiv angepasst", type: .info)
+                }
+            }
+
+            // 8. Wenn Agent aktiv → Agent analysieren lassen (umfassend)
             if d.bool(forKey: "kobold.trading.agentEnabled") {
                 let prompt = """
                 Du bist im Self-Improvement-Modus. Analysiere die Daten und gib konkrete Verbesserungsvorschläge.
@@ -967,12 +1068,20 @@ public actor TradingEngine {
                 ## Aktuelle Settings
                 \(settingsSummary)
 
+                ## Forecast-Accuracy (7 Tage)
+                \(forecastAccuracySummary)
+
+                ## Strategie Hot/Cold Status
+                \(hotColdSummary)
+
                 ## Aufgaben
                 1. Recherchiere aktuelle Krypto-News und Markttrends (nutze web_search)
                 2. Bewerte welche Strategien gut/schlecht performen und warum
                 3. Schlage konkrete Settings-Änderungen vor (z.B. TP/SL anpassen, Strategien an/aus)
                 4. Nutze trading_tool mit action "regime" für aktuelle Marktlage
                 5. Wenn du Settings ändern willst, nutze settings_read Tool
+                6. Bewerte ob Forecast-Accuracy ausreicht (Ziel: >60%) — wenn nicht, erkläre mögliche Ursachen
+                7. Prüfe COLD-Strategien: Sollten sie deaktiviert werden?
 
                 Fasse deine Analyse in 3-5 Sätzen zusammen. Wichtig: Begründe WARUM.
                 """
@@ -1073,6 +1182,55 @@ public actor TradingEngine {
         }
     }
 
+    // MARK: - Forecast Validation Loop
+
+    private func runForecastValidationLoop() async {
+        let log = TradingActivityLog.shared
+        // Erster Durchlauf erst nach 10 Minuten (Engine muss erst Forecasts generieren)
+        do { try await Task.sleep(nanoseconds: 600_000_000_000) } catch { return }
+
+        while isRunning && !Task.isCancelled {
+            // 1h-Forecasts validieren (mindestens 70 Min alt — 1h Horizont + 10 Min Puffer)
+            let pending = (try? await TradingDatabase.shared.getPendingForecasts(maxAge: 4200)) ?? []
+
+            var validated = 0
+            for forecast in pending {
+                guard isRunning, !Task.isCancelled else { break }
+
+                // Aktuellen Preis von Coinbase holen
+                guard let actualPrice = await TradeExecutor.shared.getSpotPrice(pair: forecast.pair) else {
+                    continue
+                }
+
+                try? await TradingDatabase.shared.validateForecast(
+                    id: forecast.id,
+                    actualPrice: actualPrice,
+                    forecastPrice: forecast.currentPrice
+                )
+                validated += 1
+            }
+
+            if validated > 0 {
+                // Accuracy-Stats loggen
+                let accuracy = (try? await TradingDatabase.shared.getForecastAccuracy(horizon: "1h", pair: nil, days: 7)) ?? (0, 0, 0.0)
+                let accTotal = accuracy.0
+                let accCorrect = accuracy.1
+                let accPct = accuracy.2
+                if accTotal > 0 {
+                    let pct = Int(accPct * 100)
+                    let msg = "[Forecast] \(validated) validiert — 7d Accuracy: \(pct)% (\(accCorrect)/\(accTotal))"
+                    await log.add(msg, type: .info)
+                }
+            }
+
+            // Alte Forecasts purgen (>30 Tage)
+            try? await TradingDatabase.shared.purgeForecastLog(olderThanDays: 30)
+
+            // Alle 30 Minuten wiederholen
+            do { try await Task.sleep(nanoseconds: 1_800_000_000_000) } catch { break }
+        }
+    }
+
     // MARK: - Health Check
 
     private func healthCheck() async {
@@ -1166,7 +1324,9 @@ public actor TradingEngine {
             return nil
         }
 
-        let result = backtester.run(strategy: strategy, candles: candles, pair: pair)
+        // Echte Fee-Rate nutzen (nicht hardcoded 1.2%)
+        let feeRate = await TradeExecutor.shared.getObservedFeeRate()
+        let result = backtester.run(strategy: strategy, candles: candles, pair: pair, feeRate: feeRate)
 
         // Save report
         let report = backtester.generateReport(result)
@@ -1236,6 +1396,7 @@ public actor TradingEngine {
             }
 
             var backtestCount = 0
+            let btFeeRate = await TradeExecutor.shared.getObservedFeeRate()
 
             for pair in allPairs.sorted() {
                 // Candles einmal pro Pair holen
@@ -1246,7 +1407,7 @@ public actor TradingEngine {
                     guard isRunning && !Task.isCancelled else { break }
                     guard let strategy = await StrategyEngine.shared.getStrategy(name: strat.name) else { continue }
 
-                    let result = backtester.run(strategy: strategy, candles: candles, pair: pair)
+                    let result = backtester.run(strategy: strategy, candles: candles, pair: pair, feeRate: btFeeRate)
                     let key = "\(strat.name):\(pair)"
                     latestBacktests[key] = result
                     backtestCount += 1
