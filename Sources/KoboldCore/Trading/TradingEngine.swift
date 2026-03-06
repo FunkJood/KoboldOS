@@ -377,6 +377,30 @@ public actor TradingEngine {
                     let existingHolding = liveHoldings.first(where: { $0.currency.uppercased() == pairBase.uppercased() && $0.nativeValue > 1.0 })
                     let hasPosition = existingHolding != nil
 
+                    // Position-Size Pre-Filter: Übergewichtete Positionen NICHT nachkaufen
+                    // Spart Agent-Calls und verhindert Rejection-Cooldown-Loops
+                    if bestSignal.action == .buy, let holding = existingHolding {
+                        let portfolioValue = liveHoldings.reduce(0.0) { $0 + $1.nativeValue }
+                        let maxPosPct = UserDefaults.standard.double(forKey: "kobold.trading.maxPositionPct")
+                        let effectiveMaxPos = maxPosPct > 0 ? maxPosPct : 5.0  // Default 5%
+                        let currentPct = portfolioValue > 0 ? (holding.nativeValue / portfolioValue) * 100 : 0
+                        if currentPct > effectiveMaxPos {
+                            await log.add("[\(pair)] BUY-Signal ignoriert — Position bereits \(String(format: "%.1f%%", currentPct)) des Portfolios (Max: \(String(format: "%.0f%%", effectiveMaxPos)))", type: .risk)
+                            continue
+                        }
+
+                        // DCA-Schutz: Kein Nachkauf am selben Tag wenn Preis nicht deutlich gefallen
+                        if let lastTrade = pairLastTraded[pair],
+                           Calendar.current.isDateInToday(lastTrade) {
+                            let cb = holdingCostBasis[pairBase] ?? currentPrice
+                            let priceDrop = ((currentPrice - cb) / cb) * 100
+                            if priceDrop > -5.0 {  // Mindestens 5% unter Cost Basis für DCA
+                                await log.add("[\(pair)] BUY-Signal ignoriert — heute bereits gekauft, Preis nur \(String(format: "%+.1f%%", priceDrop)) vs. Cost Basis (min -5% für DCA)", type: .risk)
+                                continue
+                            }
+                        }
+                    }
+
                     // Daily Trade Limit + Pair Cooldown (nur für BUY — Sells sind immer erlaubt)
                     if bestSignal.action == .buy {
                         let today = ISO8601DateFormatter().string(from: Date()).prefix(10)
